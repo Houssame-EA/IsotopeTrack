@@ -28,33 +28,106 @@ def _darker(color, factor=0.7):
     return (r * factor, g * factor, b * factor)
 
 
+STRIP_COLORS = {
+    'rows': 'Same as the rows',
+    'sample': 'Sample',
+    'class': 'Classifier class',
+    'rules': 'My rules',
+    'combination': 'Element combination',
+}
+"""What the dots of a dot plot can be coloured by, independently of its rows."""
+
+STRIP_SIZES = {'': 'All the same', 'n_elements': 'Number of elements detected'}
+"""What the dot size of a dot plot can show."""
+
+
+def strip_colour_groups(panel, table, mask):
+    """Colour classes for a dot plot: ``[(label, color, particle_mask)]``.
+
+    Rows come from the panel's grouping; the colour can follow another
+    grouping (sample, class, rules) or each particle's element combination,
+    whose most common ``top_n`` get their own colour and the rest are grey.
+    """
+    mode = panel.get('strip_color') or 'rows'
+    if mode == 'rows':
+        return []
+    if mode == 'combination':
+        from results.figure_builder.charts.matrices import combination_keys
+        from results.figure_builder.core.common import panel_palette
+        keys, _v = combination_keys(table, item_exprs(panel, table), mask)
+        keep = mask & (keys != '') & (keys != 'none')
+        uniq, counts = np.unique(keys[keep].astype(str), return_counts=True)
+        order = uniq[np.argsort(-counts, kind='stable')]
+        top = max(1, int(panel.get('top_n') or 8))
+        pal = panel_palette(panel)
+        out = [(str(k), pal[i % len(pal)], keep & (keys == k)) for i, k in enumerate(order[:top])]
+        rest = keep & np.isin(keys.astype(str), order[top:])
+        if rest.any():
+            out.append(('Other', '#c4c8cf', rest))
+        return out
+    alt = {**panel, 'group_by': mode, 'group_colors': {}, 'group_labels': {}, 'hidden_groups': [],
+           'group_order': []}
+    return [(g.label, g.color, g.mask & mask) for g in resolve_groups(alt, table)]
+
+
 def draw_strip(fig, ax, panel, table, report, style):
-    """Every particle as a dot per group, spread by local density (sina) or randomly."""
-    groups = [(g, v) for g, v in value_groups(panel, table) if v.size]
+    """Every particle as a dot per group, spread by local density (sina) or randomly.
+
+    Rows follow the panel's grouping. Dots can be coloured by a second
+    grouping or by element combination, sized by the number of elements in
+    the particle, and laid out with the values along the horizontal axis.
+    """
+    groups = [(g, v, m) for g, v, m in value_groups(panel, table, with_masks=True) if v.size]
     if not groups:
         raise ExpressionError('No finite values to plot')
+    horizontal = bool(panel.get('strip_horizontal'))
     log = bool(panel.get('log_y'))
     if log:
-        ax.set_yscale('log')
+        (ax.set_xscale if horizontal else ax.set_yscale)('log')
     positions = list(range(1, len(groups) + 1))
     width = max(0.05, min(0.48, float(panel.get('jitter') or 0.35)))
     size = max(1.0, float(panel.get('marker_size') or 16) * 0.55)
     alpha = float(panel.get('alpha') or 0.7)
     rng = np.random.default_rng(1)
     summary = panel.get('strip_summary', 'mean_sd')
-    for pos, (g, v) in zip(positions, groups):
-        t = np.log10(v) if log else v
-        if panel.get('sina', True) and v.size > 3 and np.ptp(t) > 0:
+    v_all = evaluate(panel['value'], table)
+    union = np.zeros(len(table), dtype=bool)
+    for _g, _v, m in groups:
+        union |= m
+    colour_groups = strip_colour_groups(panel, table, union)
+    n_el = np.asarray(table.column('n_elements'), dtype=float) if panel.get('strip_size') == 'n_elements' else None
+    seen_labels: set = set()
+    ew = float(panel.get('edge_width') or 0)
+    edge = {'linewidths': ew, 'edgecolors': panel.get('edge_color') or 'none'} if ew else {'linewidths': 0}
+
+    def dots(pos, idx, color, label=None):
+        if not idx.size:
+            return
+        t = np.log10(v_all[idx]) if log else v_all[idx]
+        if panel.get('sina', True) and idx.size > 3 and np.ptp(t) > 0:
             dens = _kde_on(t, t)
             spread = dens / dens.max()
         else:
             spread = np.ones_like(t)
-        xs = pos + rng.uniform(-1, 1, size=v.size) * width * spread
-        ew = float(panel.get('edge_width') or 0)
-        edge = {'linewidths': ew, 'edgecolors': panel.get('edge_color') or 'none'} if ew else {'linewidths': 0}
-        ax.scatter(xs, v, s=size, color=g.color, alpha=alpha, rasterized=True, zorder=2, **edge)
+        offs = pos + rng.uniform(-1, 1, size=idx.size) * width * spread
+        sizes = size if n_el is None else size * (0.45 + 0.55 * np.clip(n_el[idx], 1, None)) ** 1.3
+        xy = (v_all[idx], offs) if horizontal else (offs, v_all[idx])
+        ax.scatter(*xy, s=sizes, color=color, alpha=alpha, rasterized=True, zorder=2,
+                   label=label, **edge)
+
+    for pos, (g, v, m) in zip(positions, groups):
+        if colour_groups:
+            for name, color, cm in colour_groups:
+                idx = np.flatnonzero(m & cm)
+                label = name if (idx.size and name not in seen_labels) else None
+                if label:
+                    seen_labels.add(name)
+                dots(pos, idx, color, label)
+        else:
+            dots(pos, np.flatnonzero(m), g.color)
         if summary == 'none':
             continue
+        t = np.log10(v) if log else v
         if summary == 'gmean':
             pos_v = v[v > 0]
             if not pos_v.size:
@@ -78,27 +151,55 @@ def draw_strip(fig, ax, panel, table, report, style):
                 gm = 10 ** np.mean(t)
                 gsd = 10 ** (np.std(t, ddof=1) if t.size > 1 else 0.0)
                 centre, lo, hi = gm, gm / gsd, gm * gsd
-        ax.vlines(pos, lo, hi, color=ink('#111827'), lw=1.6, zorder=4)
-        ax.hlines(centre, pos - width * 0.7, pos + width * 0.7, color=ink('#111827'), lw=2.2, zorder=4)
+        if horizontal:
+            ax.hlines(pos, lo, hi, color=ink('#111827'), lw=1.6, zorder=4)
+            ax.vlines(centre, pos - width * 0.7, pos + width * 0.7, color=ink('#111827'), lw=2.2, zorder=4)
+        else:
+            ax.vlines(pos, lo, hi, color=ink('#111827'), lw=1.6, zorder=4)
+            ax.hlines(centre, pos - width * 0.7, pos + width * 0.7, color=ink('#111827'), lw=2.2, zorder=4)
         if panel.get('strip_values'):
-            t = ax.annotate(f'{centre:.3g}', (pos + width * 0.75, centre), xytext=(3, 0),
+            at = (centre, pos + width * 0.75) if horizontal else (pos + width * 0.75, centre)
+            t = ax.annotate(f'{centre:.3g}', at, xytext=(3, 0),
                             textcoords='offset points', ha='left', va='center', fontsize='x-small',
                             color=ink('#111827'), zorder=6,
                             bbox={'boxstyle': 'round,pad=0.15', 'fc': 'white', 'ec': 'none', 'alpha': 0.8})
             t._fb_cell = True
-    ax.set_xticks(positions)
-    ax.set_xticklabels([f'{g.label}\n(n={v.size})' if panel.get('show_n', True) else g.label
-                        for g, v in groups])
-    ax.set_xlim(0.4, len(groups) + 0.6)
-    handles(report, panel)['categories'] = {'axis': 'x', 'positions': positions,
-                                            'items': [(g.label, v) for g, v in groups]}
-    report.counts[panel['id']] = int(sum(v.size for _, v in groups))
-    pairs, lines = run_tests([(g.label, v) for g, v in groups], panel)
+    names = [f'{g.label}\n(n={v.size})' if panel.get('show_n', True) else g.label for g, v, _m in groups]
+    if horizontal:
+        ax.set_yticks(positions)
+        ax.set_yticklabels([n.replace('\n', ' ') for n in names])
+        ax.set_ylim(len(groups) + 0.6, 0.4)
+    else:
+        ax.set_xticks(positions)
+        ax.set_xticklabels(names)
+        ax.set_xlim(0.4, len(groups) + 0.6)
+    handles(report, panel)['categories'] = {'axis': 'y' if horizontal else 'x', 'positions': positions,
+                                            'items': [(g.label, v) for g, v, _m in groups]}
+    report.counts[panel['id']] = int(sum(v.size for _g, v, _m in groups))
+    from results.figure_builder.charts.detectability import draw_on_categories
+    draw_on_categories(ax, panel, table, report, [(g, v) for g, v, _m in groups], positions,
+                       panel['value'], horizontal=horizontal)
+    pairs, lines = run_tests([(g.label, v) for g, v, _m in groups], panel)
     report.stats.extend(lines)
-    style_axes(ax, panel, table, style, '', panel['value'])
-    draw_marks(ax, panel, [v for _g, v in groups], vertical=False)
-    draw_brackets(ax, pairs, positions, panel)
-    draw_summary_box(ax, panel, [(g.label, v) for g, v in groups])
+    if horizontal:
+        style_axes(ax, panel, table, style, panel['value'], '')
+    else:
+        style_axes(ax, panel, table, style, '', panel['value'])
+    draw_marks(ax, panel, [v for _g, v, _m in groups], vertical=horizontal)
+    if not horizontal:
+        draw_brackets(ax, pairs, positions, panel)
+    draw_summary_box(ax, panel, [(g.label, v) for g, v, _m in groups])
+    if colour_groups or n_el is not None:
+        extra = []
+        if n_el is not None:
+            from matplotlib.lines import Line2D
+            present = sorted({int(x) for x in n_el[union] if x >= 1})
+            picks = sorted({present[0], present[len(present) // 2], present[-1]}) if present else []
+            for k in picks:
+                extra.append(Line2D([], [], marker='o', linestyle='none', color='#9ca3af',
+                                    markersize=np.sqrt(size * (0.45 + 0.55 * k) ** 1.3),
+                                    label=f'{k} element' + ('s' if k > 1 else '')))
+        add_legend(ax, panel, extra=extra or None, min_items=1)
 
 
 def draw_ridgeline(fig, ax, panel, table, report, style):

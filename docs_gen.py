@@ -65,6 +65,10 @@ SECTIONS = [
     ("Results", "results",
      "All plot/analysis result modules (bar charts, isotope ratios, AI, …).",
      [p for p in _glob("results/results_*.py")]),
+    ("Insights", "insights",
+     "The discovery engine behind the Insights panel: replicate grouping and "
+     "the detectors that search particle data for findings.",
+     _glob("results/insights/*.py", exclude=("__init__.py",))),
     ("Clustering", "cluster",
      "The clustering feature in one package: the dialog, the pipeline sweep, "
      "the animated teaching view and its NumPy stepper engine.",

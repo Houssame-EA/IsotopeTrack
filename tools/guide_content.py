@@ -2124,8 +2124,17 @@ SECTION_RESULTS = dict(
                     title="Insights",
                     rect=(0.834, 0.070, 0.042, 0.029),
                     body="""
-                    <p>Generates automatic observations about the connected
-                    results.</p>
+                    <p>Searches every loaded sample and element on its own
+                    and lists what stands out: correlations, fixed ratios,
+                    oxide and doubly charged interferences, isotope ratios
+                    off natural abundance, rare particles, drift over time,
+                    detection-limit cut-offs and differences between sample
+                    groups. Tick the plot types to search for. Replicates
+                    are recognised from your selector groups, or from names
+                    such as <i>_1, _2, _3</i>, and are compared as groups,
+                    never against each other. <b>+ Add</b> builds the plot
+                    with a selector holding only the finding's samples and
+                    elements.</p>
                     """),
                 dict(
                     id="clear_close",

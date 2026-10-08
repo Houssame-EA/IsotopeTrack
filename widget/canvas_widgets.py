@@ -25,7 +25,7 @@ from results.results_pie_charts import (
     PieChartDisplayDialog, PieChartPlotNode,
     ElementCompositionDisplayDialog, ElementCompositionPlotNode,
 )
-from results.results_reader import (      
+from results.insights.panel import (      
     integrate_insights_panel,
     make_insights_toggle_button,
 )
@@ -1577,34 +1577,21 @@ class MultipleSampleSelectorDialog(QDialog):
 
     def _auto_group(self):
         """Detect sample groups by stripping common replicate suffixes and numeric endings.
-        Handles patterns like:
+
+        Uses :func:`results.insights.replicates.replicate_root`, the same rule
+        Insights uses to recognise replicates. Handles patterns like:
           sample_1, sample_2         → "sample"
           ctrl_R1, ctrl_R2           → "ctrl"
           liver_rep1, liver_rep2     → "liver"
           2024_Au_A, 2024_Au_B       → "2024_Au"
           HgSe_1mg_r1, HgSe_1mg_r2  → "HgSe_1mg"
         """
-        import re
         from collections import defaultdict
-
-        def extract_root(name):
-            patterns = [
-                r'[_\-\s]?(?:replicate|replica|rep|r)[\s_\-]?\d+$',
-                r'[_\-\s]?\d+[_\-\s]?(?:replicate|replica|rep|r)$',
-                r'[_\-\s]?\d+$',
-                r'[_\-\s][A-Za-z]$',
-            ]
-            root = name
-            for pat in patterns:
-                new = re.sub(pat, '', root, flags=re.IGNORECASE).strip('_- ')
-                if new and new != root and len(new) >= 2:
-                    root = new
-                    break
-            return root
+        from results.insights.replicates import replicate_root
 
         groups = defaultdict(list)
         for s in self.samples:
-            root = extract_root(s)
+            root = replicate_root(s)
             groups[root].append(s)
 
         for root, members in groups.items():
@@ -5372,9 +5359,23 @@ class CanvasResultsDialog(QDialog):
         self._insights_btn = None  
     
         def _clear_and_log():
+            """Clear the canvas and record how much was removed."""
+            node_count = len(self.canvas.scene.workflow_nodes)
+            link_count = len(self.canvas.scene.workflow_links)
             self.clear_canvas()
-    
+            ual = _ual()
+            if ual:
+                ual.log_action('CLICK', 'Cleared canvas',
+                               {'nodes_removed': node_count,
+                                'links_removed': link_count})
+
         def _close_and_log():
+            """Record the canvas size, then close the Workflow Builder."""
+            ual = _ual()
+            if ual:
+                ual.log_action('CLICK', 'Closed Workflow Builder',
+                               {'nodes': len(self.canvas.scene.workflow_nodes),
+                                'links': len(self.canvas.scene.workflow_links)})
             self.close()
     
         clr = QPushButton("Clear All")

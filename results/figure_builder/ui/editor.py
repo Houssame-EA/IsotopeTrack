@@ -19,10 +19,13 @@ from PySide6.QtWidgets import (
 from results.figure_builder.core import engine as E
 from results.figure_builder.charts.categorical import BAR_SORTS, PIE_LABELS, PIE_MODES
 from results.figure_builder.charts.distributions import MARKS
-from results.figure_builder.charts.matrices import HEAT_SPREADS, ZERO_HANDLING
+from results.figure_builder.charts.extra import STRIP_COLORS, STRIP_SIZES
+from results.figure_builder.charts.matrices import (
+    HEAT_COL_ORDERS, HEAT_QUANTITIES, HEAT_SEARCH_MODES, HEAT_SORTS, HEAT_SPREADS, ZERO_HANDLING)
 from results.figure_builder.charts.more import LOLLI_STATS, SHARE_MODES, TIME_MODES
 from results.figure_builder.charts.network import NODE_SIZES, PCA_TRANSFORMS
 from results.figure_builder.charts.special import TERNARY_FILTERS
+from results.figure_builder.charts.xy import FIT_LINES
 from results.figure_builder.charts.overlays import ELLIPSES, INSET_LOCS, MARGINALS, TRENDS
 from results.figure_builder.core import styles as S
 from results.figure_builder.core.common import BANDS, GROUP_SORTS, HATCHES, SHAPE_TYPES, TICK_FORMATS
@@ -116,7 +119,7 @@ FIELDS = [
     ('Data', 'What to plot', 'y', 'Y', 'expr', XLINE, 'e.g. Fe/Cu'),
     ('Data', 'What to plot', 'y2', 'Right Y axis', 'expr', {'scatter'}, 'optional, e.g. mass:Fe'),
     ('Data', 'What to plot', 'value', 'Value', 'expr', VALUED, 'e.g. mass:Ag'),
-    ('Data', 'What to plot', 'isotopes', 'Isotopes', 'expr', ITEMS, 'blank = all, or e.g. Ag, Au, Fe/Cu'),
+    ('Data', 'What to plot', 'isotopes', 'Isotopes', 'expr', ITEMS | {'strip'}, 'blank = all, or e.g. Ag, Au, Fe/Cu'),
     ('Data', 'What to plot', 'a', 'Top corner (A)', 'expr', {'ternary'}, 'e.g. Ag'),
     ('Data', 'What to plot', 'b', 'Left corner (B)', 'expr', {'ternary'}, 'e.g. Au'),
     ('Data', 'What to plot', 'c', 'Right corner (C)', 'expr', {'ternary'}, 'e.g. Cu'),
@@ -128,8 +131,15 @@ FIELDS = [
     ('Data', 'What to plot', 'heat_value', 'Cell value', 'combo', {'heatmap'},
      {'mean': 'Mean', 'median': 'Median', 'gmean': 'Geometric mean', 'mode': 'Mode', 'sum': 'Sum',
       'detect': 'Detected in (% of particles)', 'count': 'Particles detected'}),
-    ('Data', 'What to plot', 'heat_sort', 'Rank combinations by', 'combo', {'heatmap'},
-     {'count': 'Number of particles', 'amount': 'Share of the summed amount'}),
+    ('Data', 'What to plot', 'heat_quantity', 'Values shown', 'combo', {'heatmap'}, HEAT_QUANTITIES),
+    ('Data', 'What to plot', 'heat_sort', 'Rank rows by', 'combo', {'heatmap'}, HEAT_SORTS),
+    ('Data', 'What to plot', 'heat_sort_el', 'Element to rank by', 'text', {'heatmap'}, 'e.g. Fe'),
+    ('Data', 'What to plot', 'heat_col_order', 'Order columns', 'combo', {'heatmap'}, HEAT_COL_ORDERS),
+    ('Data', 'What to plot', 'heat_search', 'Only rows with', 'text', {'heatmap'}, 'e.g. Fe, Ti'),
+    ('Data', 'What to plot', 'heat_search_mode', 'Match', 'combo', {'heatmap'}, HEAT_SEARCH_MODES),
+    ('Data', 'What to plot', 'heat_start', 'Start at rank', 'int', {'heatmap'}, (1, 10000)),
+    ('Data', 'What to plot', 'heat_min_share', 'Min share of the amount (%)', 'float', {'heatmap'},
+     (0, 100, 0.5)),
     ('Data', 'What to plot', 'zero_handling', 'Particles in each pair', 'combo', {'corr_matrix'},
      {'': 'Automatic (hide zero values)', **ZERO_HANDLING}),
     ('Data', 'What to plot', 'corr_diff', 'Difference of the first two groups (Δr)', 'check',
@@ -154,7 +164,7 @@ FIELDS = [
     ('Data', 'What to plot', 'share_mode', 'Share out', 'combo', SHARES, SHARE_MODES),
     ('Data', 'What to plot', 'combo_filter', 'Combinations', 'combo', COMBOS,
      {'all': 'All', 'single': 'Single-element only', 'multi': 'Multi-element only'}),
-    ('Data', 'What to plot', 'top_n', 'Show the top', 'int', COMBOS | {'heatmap', 'pie'}, (1, 500)),
+    ('Data', 'What to plot', 'top_n', 'Show the top', 'int', COMBOS | {'heatmap', 'pie', 'strip'}, (1, 500)),
     ('Data', 'What to plot', 'as_percent', 'As % of particles', 'check', {'combinations'}, None),
     ('Data', 'What to plot', 'pairs_upper', 'Upper triangle', 'combo', {'pairs'},
      {'r': 'Correlation value', 'scatter': 'Scatter (mirror)', 'empty': 'Empty'}),
@@ -166,6 +176,8 @@ FIELDS = [
     ('Data', 'What to plot', 'max_lines', 'Max lines per group', 'int', {'parallel'}, (20, 100000)),
     ('Data', 'Which particles', 'filter', 'Only where', 'mask', ALL - {'text'},
      'e.g. Ag > 0 and Au > 0'),
+    ('Data', 'Which particles', 'type_only', 'Only particle type', 'text', ALL - {'text', 'code'},
+     'name of an Insights particle type'),
     ('Data', 'Which particles', 'saturation', 'Drop saturated particles (counts ≥, 0 = off)', 'float',
      ALL - {'text', 'code'}, (0, 1e9, 1000)),
     ('Data', 'Which particles', 'trim_pct', 'Trim outliers: keep up to percentile (0 = off)', 'float',
@@ -262,6 +274,7 @@ FIELDS = [
     ('Style', 'Chart options', 'pie_label_pos', 'Labels', 'combo', {'pie'},
      {'inside': 'Inside the slices', 'outside': 'Outside, with lines'}),
     ('Style', 'Chart options', 'other_pct', 'Group slices below (%) as Others', 'float', {'pie'}, (0, 50, 0.5)),
+    ('Style', 'Chart options', 'sun_outer', 'Companion sets shown per element', 'int', {'pie'}, (1, 20)),
     ('Style', 'Chart options', 'start_angle', 'Start angle (°)', 'float', {'pie'}, (0, 360, 15)),
     ('Style', 'Chart options', 'pie_explode', 'Gap between slices', 'float', {'pie'}, (0, 0.3, 0.02)),
     ('Style', 'Chart options', 'donut_text', 'Text in the centre', 'text', {'pie'}, '{n} = particle count'),
@@ -270,6 +283,9 @@ FIELDS = [
       'median_iqr': 'Median and IQR', 'mean_ci': 'Mean ± 95% CI', 'none': 'Dots only'}),
     ('Style', 'Chart options', 'jitter', 'Spread width', 'float', {'strip'}, (0.05, 0.48, 0.05)),
     ('Style', 'Chart options', 'sina', 'Spread by density (sina)', 'check', {'strip'}, None),
+    ('Style', 'Chart options', 'strip_horizontal', 'Values along the horizontal axis', 'check', {'strip'}, None),
+    ('Style', 'Chart options', 'strip_color', 'Colour dots by', 'combo', {'strip'}, STRIP_COLORS),
+    ('Style', 'Chart options', 'strip_size', 'Dot size shows', 'combo', {'strip'}, STRIP_SIZES),
     ('Style', 'Chart options', 'overlap', 'Overlap', 'float', {'ridgeline'}, (0, 2.5, 0.1)),
     ('Style', 'Chart options', 'levels', 'Contour levels', 'int', {'contour'}, (2, 20)),
     ('Style', 'Chart options', 'filled', 'Filled contours', 'check', {'contour'}, None),
@@ -350,6 +366,8 @@ FIELDS = [
     ('Axes', 'Legend', 'legend_title', 'Title', 'text', LEGENDED, 'optional'),
     ('Axes', 'Legend', 'legend_size', 'Text size', 'combo', LEGENDED, S.FONT_SIZES),
     ('Stats', 'Fit', 'show_fit', 'Fit line', 'check', {'scatter'}, None),
+    ('Stats', 'Fit', 'fit_lines', 'Lines', 'combo', {'scatter'}, FIT_LINES),
+    ('Stats', 'Fit', 'fit_color_points', 'Colour points by their line', 'check', {'scatter'}, None),
     ('Stats', 'Fit', 'fit_band', '95% confidence band', 'check', {'scatter'}, None),
     ('Stats', 'Fit', 'sd_band', 'Fit ± SD of the residuals', 'check', {'scatter'}, None),
     ('Stats', 'Fit', 'show_r', 'Show r and R²', 'check', {'scatter'}, None),
@@ -367,6 +385,21 @@ FIELDS = [
     ('Stats', 'Compare groups', 'p_format', 'Show p as', 'combo', set(),
      {'stars': 'Stars (*, **, ns)', 'p': 'Numbers (p = …)'}),
     ('Stats', 'Compare groups', 'hide_ns', 'Hide non-significant', 'check', set(), None),
+    ('Stats', 'Compare groups', 'test_log', 'Test on log values', 'check', set(), None),
+    ('Stats', 'Could a minor element be seen?', 'ptl_minor', 'Minor elements', 'text',
+     {'box', 'violin', 'strip', 'scatter'}, 'e.g. Ti, Nb (needs element masses)'),
+    ('Stats', 'Could a minor element be seen?', 'ptl_ratio', 'Minor : major mass ratio', 'text',
+     {'box', 'violin', 'strip', 'scatter'}, 'blank = upper crust'),
+    ('Stats', 'Could a minor element be seen?', 'crust_line', 'Upper-crust Y : X line', 'check',
+     {'scatter'}, None),
+    ('Stats', 'Could a minor element be seen?', 'refs_button_ptl', '', 'button',
+     {'box', 'violin', 'strip', 'scatter'}, 'Reference values…'),
+    ('Stats', 'Reference points', 'tern_refs', 'Minerals', 'text', {'ternary'},
+     'e.g. kaolinite, illite, upper crust, my clay: K0.6Al2.3Si3.4O10(OH)2'),
+    ('Stats', 'Reference points', 'tern_bulk', 'Bulk value (A, B, C)', 'text', {'ternary'},
+     'optional, e.g. 8.2, 31.1, 3.9'),
+    ('Stats', 'Reference points', 'tern_ref_color', 'Colour', 'color', {'ternary'}, None),
+    ('Stats', 'Reference points', 'refs_button', '', 'button', {'ternary'}, 'Reference values…'),
     ('Shapes', 'Grey areas, rectangles and lines', 'shapes', '', 'shapes', SHAPED, None),
     ('Notes', 'Text and arrows on this panel', 'annotations', '', 'annotations',
      ALL - {'text'}, None),
@@ -550,7 +583,10 @@ class PanelEditor(QWidget):
             w.changed.connect(self._groups_changed)
         elif kind == 'button':
             w = QPushButton(opts)
-            w.clicked.connect(self.styles_requested if key == 'styles_button' else self.rename_requested)
+            if key in ('refs_button', 'refs_button_ptl'):
+                w.clicked.connect(self._edit_references)
+            else:
+                w.clicked.connect(self.styles_requested if key == 'styles_button' else self.rename_requested)
         elif kind == 'longtext':
             w = QPlainTextEdit()
             w.setMinimumHeight(120)
@@ -566,6 +602,12 @@ class PanelEditor(QWidget):
                 + E.CODE_EXAMPLE)
             w.textChanged.connect(lambda ww=w: self._set('code', ww.toPlainText()))
         return w
+
+    def _edit_references(self):
+        """Open the reference values window and redraw when they changed."""
+        from results.figure_builder.ui.references_dialog import ReferencesDialog
+        if ReferencesDialog(self).exec():
+            self.changed.emit()
 
     def _remember_expr(self, w):
         self._last_expr = w
@@ -692,7 +734,8 @@ class PanelEditor(QWidget):
         if self._loading or self.panel is None:
             return
         self.panel[key] = value
-        if key in ('kind', 'group_by', 'test', 'pie_mode', 'rules', 'y', 'heat_rows', 'show_fit', 'trend',
+        if key in ('kind', 'group_by', 'test', 'pie_mode', 'rules', 'y', 'heat_rows', 'heat_sort',
+                   'heat_search', 'show_fit', 'fit_lines', 'trend',
                    'share_mode', 'facet', 'bin_mode', 'donut', 'color_by', 'agg', 'stat_band',
                    'natural_line', 'dl_value'):
             if key == 'kind' and value == 'code' and not (self.panel.get('code') or '').strip():
@@ -724,10 +767,16 @@ class PanelEditor(QWidget):
         kind = p.get('kind')
         group = p.get('group_by', 'none')
         grouped = kind in GROUPING
-        if key in ('rules', 'show_other', 'other_label'):
+        if key == 'type_only':
+            return kind in kinds and bool((p.get('types') or {}).get('types'))
+        if key in ('show_other', 'other_label'):
+            return group in ('rules', 'types') and grouped
+        if key == 'rules':
             return group == 'rules' and grouped
         if key == 'groups':
             return group != 'none' and grouped
+        if key == 'test_log':
+            return kind in TESTABLE and p.get('test', 'none') != 'none'
         if key in ('pairs', 'correction', 'p_format', 'hide_ns'):
             if kind not in TESTABLE or p.get('test') not in E.PAIRWISE_TESTS:
                 return False
@@ -736,9 +785,17 @@ class PanelEditor(QWidget):
             return kind in kinds and (group == 'none' or not grouped)
         if key == 'value' and kind == 'pie':
             return p.get('pie_mode') == 'values'
+        if kind == 'strip' and key in ('isotopes', 'top_n'):
+            return p.get('strip_color') == 'combination'
         if kind == 'pie' and key in ('isotopes', 'top_n'):
             mode = p.get('pie_mode', 'groups')
-            return mode in ('detect', 'combinations', 'single_multi') and (key == 'isotopes' or mode == 'combinations')
+            return mode in ('detect', 'combinations', 'single_multi', 'sunburst') and (
+                key == 'isotopes' or mode in ('combinations', 'sunburst'))
+        if key == 'sun_outer':
+            return kind == 'pie' and p.get('pie_mode') == 'sunburst'
+        if kind == 'pie' and p.get('pie_mode') == 'sunburst' and key in (
+                'other_pct', 'donut', 'donut_text', 'pie_labels', 'pie_label_pos', 'pie_explode'):
+            return False
         if key == 'per_ml':
             if self.table is None or not self.table.has_per_ml():
                 return False
@@ -756,7 +813,8 @@ class PanelEditor(QWidget):
         if key == 'donut_text':
             return kind == 'pie' and bool(p.get('donut'))
         if key in ('sd_band',):
-            return kind == 'scatter' and bool(p.get('show_fit'))
+            return (kind == 'scatter' and bool(p.get('show_fit'))
+                    and str(p.get('fit_lines') or '1') == '1')
         if key == 'natural_color':
             return kind == 'scatter' and bool(p.get('natural_line'))
         if key == 'band_color':
@@ -764,7 +822,14 @@ class PanelEditor(QWidget):
         if key in ('dl_label', 'dl_color'):
             return kind in kinds and bool(str(p.get('dl_value') or '').strip())
         if key == 'heat_sort':
+            return kind == 'heatmap' and p.get('heat_rows') != 'particles'
+        if key == 'heat_sort_el':
+            return kind == 'heatmap' and p.get('heat_rows') != 'particles' and p.get('heat_sort') == 'element'
+        if key in ('heat_search', 'heat_start', 'heat_min_share'):
             return kind == 'heatmap' and p.get('heat_rows') == 'combinations'
+        if key == 'heat_search_mode':
+            return (kind == 'heatmap' and p.get('heat_rows') == 'combinations'
+                    and bool((p.get('heat_search') or '').strip()))
         if key == 'heat_spread':
             return kind == 'heatmap' and p.get('heat_rows') != 'particles'
         if key in ('c_min', 'c_max') and kind in ('scatter', 'ternary'):
@@ -777,8 +842,15 @@ class PanelEditor(QWidget):
             return p.get('share_mode') == 'combinations'
         if key == 'trend_bins':
             return kind == 'scatter' and p.get('trend', 'none') != 'none'
-        if key == 'fit_band':
+        if key == 'fit_lines':
             return kind == 'scatter' and bool(p.get('show_fit'))
+        if key == 'fit_color_points':
+            return (kind == 'scatter' and bool(p.get('show_fit'))
+                    and str(p.get('fit_lines') or '1') != '1'
+                    and not (p.get('color_by') or '').strip())
+        if key == 'fit_band':
+            return (kind == 'scatter' and bool(p.get('show_fit'))
+                    and str(p.get('fit_lines') or '1') == '1')
         if key == 'max_rows':
             return kind == 'heatmap' and p.get('heat_rows') == 'particles'
         if key == 'top_n' and kind == 'heatmap':

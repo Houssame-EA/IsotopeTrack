@@ -32,7 +32,7 @@ Concentration-Comparison Plot Node – dot-and-circle strip chart.
 ### [`results_correlation.py`](results-correlation.md)
 
 
-**6** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **76** methods
+**6** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **87** methods
 
 ### [`results_heatmap.py`](results-heatmap.md)
 
@@ -68,11 +68,6 @@ Network / Chord Diagram Node – circular element correlation network.
 
 
 **12** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **82** methods
-
-### [`results_reader.py`](results-reader.md)
-Smart Insights for the Workflow Builder canvas.
-
-**7** classes &nbsp;·&nbsp; **38** functions &nbsp;·&nbsp; **45** methods
 
 ### [`results_single_multiple.py`](results-single-multiple.md)
 Single vs Multiple Element Analysis Node – Pie charts & heatmaps.

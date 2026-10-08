@@ -281,6 +281,9 @@ def draw_distribution(fig, ax, panel, table, report, style):
     ax.set_xticklabels([f'{g.label}\n(n={v.size})' if panel.get('show_n', True) else g.label
                         for g, v in groups])
     report.counts[panel['id']] = int(sum(v.size for v in data))
+    from results.figure_builder.charts.detectability import draw_on_categories
+    draw_on_categories(ax, panel, table, report, groups, positions, panel['value'],
+                       to_axis=np.log10 if (log and panel['kind'] == 'violin') else None)
     pairs, lines = run_tests([(g.label, v) for g, v in groups], panel)
     report.stats.extend(lines)
     style_axes(ax, panel, table, style, '', panel['value'])
