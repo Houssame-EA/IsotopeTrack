@@ -5,6 +5,54 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
+## v1.11.0 - 2026-10-08
+
+### What’s Changed
+
+- Release v1.11.0 ([#36](https://github.com/Houssame-EA/IsotopeTrack/pull/36)) [@Houssame-EA](https://github.com/Houssame-EA)
+- Insights and Figure Builder: explained findings, particle types, detection limits, multi-trend correlations ([#35](https://github.com/Houssame-EA/IsotopeTrack/pull/35)) [@Houssame-EA](https://github.com/Houssame-EA)
+- Figure Builder: a canvas node to design any figure from particle data ([#34](https://github.com/Houssame-EA/IsotopeTrack/pull/34)) [@Houssame-EA](https://github.com/Houssame-EA)
+- Particle Classifier → visualization integration (heatmap, correlation matrix) + honest degradation everywhere else ([#32](https://github.com/Houssame-EA/IsotopeTrack/pull/32)) [@1nvertedProtagonist](https://github.com/1nvertedProtagonist)
+- Cluster sweep: export fixes, explicit value lists, cluster sizes ([#33](https://github.com/Houssame-EA/IsotopeTrack/pull/33)) [@Houssame-EA](https://github.com/Houssame-EA)
+
+#### New: Figure Builder (#34)
+
+A canvas node for building publication figures from your particle data: many chart types (scatter, box, violin, histograms, heatmaps, ternary, pie, matrix charts and more), multi-panel layouts, on-figure editing of text and styles, hover read-outs, a movable colour bar and a gallery of starting designs. The result nodes' options and figures can be brought in directly.
+
+#### New: Insights (#35)
+
+- Searches every sample and element automatically, replicate-aware, and shows findings as they arrive.
+- Each finding comes with a plain-language explanation and a lettered figure you can add to the canvas, using each element's calibrated detection limits (LOD, MDL, SDL) and significance tests between samples.
+- Particle types: stable compositional groups (checked by silhouette and bootstrap) with PCA and composition figures.
+- Search around one element: all its correlations, isotope ratios, fixed ratios and companions.
+
+#### Figure Builder additions (#35)
+
+- Ternary plots with reference minerals and upper-crust composition (editable reference values).
+- Sunburst pie charts, bubble dot plots, and minor-element detectability lines.
+- Heatmap in counts, mass, moles, mass % and mole %, with column order by isotope mass, ranking by element and element search.
+- Scatter plots can fit one, two or three trend lines.
+
+#### Correlation plot (#35)
+
+- Fit one, two or three trend lines, or let the data decide; each line shows r, n and, on log-log axes, its ratio.
+- Draw a loop around points to fit a trend line to just those particles.
+
+#### Particle Classifier and result nodes (#32)
+
+- Classifier output now feeds the visualisation nodes; box plot, histogram and element bar chart gain "by definition" and "total particle" display modes.
+- Fixes to the dilution factor, heatmap, correlation matrix and bar chart counts; classifier documentation added.
+
+#### Clustering sweep (#33)
+
+- Sweep export records cluster sizes and true class balance; numeric parameters accept an explicit list of values; export gaps fixed.
+
+### Contributors
+
+@1nvertedProtagonist, @Houssame-EA and [@github-actions[bot]](https://github.com/apps/github-actions)
+
+**Full Changelog**: [v1.10.12...v1.11.0](https://github.com/Houssame-EA/IsotopeTrack/compare/v1.10.12...v1.11.0)
+
 ## v1.10.12 - 2026-08-28
 
 ### What’s Changed
@@ -143,12 +191,14 @@ All notable changes to IsotopeTrack are documented here.
 ### New Features
 
 - CLI support — app can now be launched from terminal with arguments:
+  
   - Load project files directly
   - Load Nu and TOFWERK data files
   - Select isotopes and presets via command line
   - See `tools/cli_utils.py` for details
   
 - Isobaric correction module (still in development)
+  
 
 ### Improvements
 
@@ -307,12 +357,15 @@ Standardizes several Results plot dialogs around the four-button UI contract:Plo
 ### New Features
 
 - Results Canvas completely redesigned with three new figures:
+  
   - **Network** — multi-element particle relationships
   - **Concentration** — particle concentration overview
   - **Matrix** — element correlation matrix
   
 - Intel Mac support — dedicated native bundle for Intel-based Macs (x86_64)
+  
 - Faster project saving and loading
+  
 
 ### Bug Fixes
 
