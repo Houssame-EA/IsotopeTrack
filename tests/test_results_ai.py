@@ -266,3 +266,71 @@ class TestExploration:
         assert len(led) == 2
         assert led.ranked()[0].claim == 'A strong'
         assert 'not supported' in led.as_text()
+
+
+class TestFigurePresentation:
+    """How figures look in the chat and what the model is told about them."""
+
+    def test_dark_preview_leaves_the_figure_white(self, ds):
+        """A dark preview recolours only temporarily; saving still gives white paper."""
+        from matplotlib.colors import to_hex
+        from results.ai.figures import render_png
+        res = sb.execute("fig, ax = plt.subplots()\nax.plot([1, 2], [1, 3], color='k', label='a')\n"
+                         "ax.set_xlabel('x'); ax.set_ylabel('y'); ax.legend()", ds)
+        fig = res.figures[0]['figure']
+        assert render_png(fig, dark=True) != render_png(fig, dark=False)
+        assert to_hex(fig.get_facecolor()) == '#ffffff'
+        assert to_hex(fig.axes[0].lines[0].get_color()) == '#000000'
+
+    def test_failed_code_drops_its_empty_figure(self, ds):
+        """An empty figure left behind by failing code is not shown."""
+        res = sb.execute("fig, ax = plt.subplots()\nax.no_such_method()", ds)
+        assert res.error and not res.figures
+
+    def test_overlapping_titles_are_flagged(self, ds):
+        """Text drawn on top of other text is reported for a fix."""
+        res = sb.execute("fig, ax = plt.subplots()\nax.plot([1, 2])\nax.set_xlabel('x'); ax.set_ylabel('y')\n"
+                         "ax.set_title('A long panel title', y=0.5)\nax.text(0.5, 0.5, 'x', transform=ax.transAxes)\n"
+                         "ax.legend(['A long panel title'], loc='center')", ds)
+        assert any('overlap' in w for w in res.warnings)
+
+    def test_tight_layout_becomes_constrained(self, ds):
+        """A tight_layout call in generated code is replaced by the constrained layout."""
+        res = sb.execute("fig, ax = plt.subplots()\nax.plot([1, 2])\nax.set_xlabel('x'); ax.set_ylabel('y')\n"
+                         "fig.suptitle('Figure'); ax.set_title('Panel')\nfig.tight_layout()", ds)
+        assert not any('overlap' in w for w in res.warnings)
+        assert type(res.figures[0]['figure'].get_layout_engine()).__name__ == 'ConstrainedLayoutEngine'
+
+    def test_prompt_asks_for_designed_figures(self, ds):
+        """The model is told to design a figure for each result."""
+        prompt = build_system_prompt(ds, 8192)
+        assert 'no templates' in prompt and 'designed for that result' in prompt
+
+
+class TestChatWidgets:
+    """Widgets of the chat window."""
+
+    def test_input_grows_and_shrinks(self):
+        """The message box follows the length of the text."""
+        from PySide6.QtWidgets import QApplication
+        from results.ai.widgets import AutoGrowTextEdit
+        app = QApplication.instance() or QApplication([])
+        w = AutoGrowTextEdit()
+        w.resize(400, 40)
+        w.show()
+        app.processEvents()
+        w.setPlainText('one line')
+        small = w.height()
+        w.setPlainText('\n'.join(['line'] * 6))
+        assert w.height() > small
+        w.setPlainText('one line')
+        assert w.height() == small
+        w.close()
+
+    def test_tables_have_no_fixed_chart(self):
+        """Tables show numbers only; figures come from the model."""
+        from PySide6.QtWidgets import QApplication, QPushButton
+        from results.ai.widgets import InteractiveTableBubble
+        QApplication.instance() or QApplication([])
+        t = InteractiveTableBubble(['a', 'b'], [['x', '1'], ['y', '2']], 'T')
+        assert not any(b.text() == 'Chart' for b in t.findChildren(QPushButton))

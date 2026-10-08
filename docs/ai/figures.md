@@ -26,6 +26,9 @@ cannot see the picture, so it can notice and fix a wrong or empty figure.
 | `MAX_FIGURES` | `6` |
 | `MAX_SIZE_IN` | `16.0` |
 | `NAMESPACE` | `{'LogNorm': LogNorm, 'Normalize': Normalize, 'SymLogNorm'…` |
+| `_INK` | `{'#000000', '#111111', '#1f1f1f', '#222222', '#333333', '…` |
+| `_PAPER` | `{'#ffffff', '#fefefe', '#fafafa'}` |
+| `DARK_PREVIEW` | `{'paper': '#252526', 'ink': '#d4d4d4', 'soft': '#9d9d9d'}` |
 
 ## Classes
 
@@ -95,9 +98,12 @@ available; the user saves from the chat.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `style_figure` | `(fig)` | Apply the house tick style so it survives redrawing outside the sandbox. |
-| `render_png` | `(fig, dpi=100)` | Draw a figure off screen and return PNG bytes. |
+| `style_figure` | `(fig)` | Apply the house tick style and layout so they survive redrawing outside the sandbox. |
+| `_hex` | `(color)` | A colour as lower-case hex, or ``None`` when it cannot be read. |
+| `_dark_swaps` | `(fig)` | Recolour a figure's paper and ink for a dark preview. |
+| `render_png` | `(fig, dpi=100, dark=False)` | Draw a figure off screen and return PNG bytes. |
 | `_span` | `(lo, hi)` | Decades covered between two positive limits, or 0. |
 | `_shares_labelled_y` | `(ax, panels)` | Whether *ax* shares its y axis with a panel that has a y label. |
 | `_categorical` | `(ax)` | Whether the x tick labels are names rather than numbers. |
+| `_text_overlaps` | `(fig)` | Pairs of visible titles and labels that are drawn on top of each other. |
 | `describe_figure` | `(fig, index=1)` | Describe what a figure shows, for a model that cannot see it. |

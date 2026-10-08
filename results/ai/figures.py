@@ -314,11 +314,18 @@ class PyplotShim:
 
 
 def style_figure(fig):
-    """Apply the house tick style so it survives redrawing outside the sandbox.
+    """Apply the house tick style and layout so they survive redrawing outside the sandbox.
+
+    A ``tight_layout`` call in generated code is replaced by the constrained
+    layout, which keeps a figure title clear of the panel titles.
 
     Args:
         fig (Figure): Figure to style.
     """
+    try:
+        fig.set_layout_engine('constrained')
+    except Exception:
+        _itk_log.debug("Could not set the constrained layout", exc_info=True)
     for ax in fig.axes:
         try:
             ax.tick_params(labelsize=FONT_SIZE - 1, colors='#333333', direction='out')
@@ -326,7 +333,75 @@ def style_figure(fig):
             _itk_log.debug("Could not style an axes", exc_info=True)
 
 
-def render_png(fig, dpi=100):
+_INK = {'#000000', '#111111', '#1f1f1f', '#222222', '#333333', '#444444'}
+_PAPER = {'#ffffff', '#fefefe', '#fafafa'}
+DARK_PREVIEW = {'paper': '#252526', 'ink': '#d4d4d4', 'soft': '#9d9d9d'}
+
+
+def _hex(color):
+    """A colour as lower-case hex, or ``None`` when it cannot be read."""
+    try:
+        return to_hex(color, keep_alpha=False).lower()
+    except Exception:
+        return None
+
+
+def _dark_swaps(fig):
+    """Recolour a figure's paper and ink for a dark preview.
+
+    Only the default black text, white backgrounds and dark-grey axes are
+    changed; the colours of the data stay as the model chose them.
+
+    Returns:
+        list: ``(setter, original)`` pairs that undo every change.
+    """
+    undo = []
+    paper, ink, soft = DARK_PREVIEW['paper'], DARK_PREVIEW['ink'], DARK_PREVIEW['soft']
+
+    def swap(getter, setter, table, new):
+        """Replace a colour if it is one of the defaults in *table*."""
+        old = getter()
+        if _hex(old) in table:
+            setter(new)
+            undo.append((setter, old))
+
+    swap(fig.get_facecolor, fig.set_facecolor, _PAPER, paper)
+    texts = list(fig.texts)
+    if getattr(fig, '_suptitle', None) is not None:
+        texts.append(fig._suptitle)
+    for ax in fig.axes:
+        swap(ax.get_facecolor, ax.set_facecolor, _PAPER, paper)
+        for spine in ax.spines.values():
+            swap(spine.get_edgecolor, spine.set_edgecolor, _INK, soft)
+        for axis in (ax.xaxis, ax.yaxis):
+            texts.append(axis.label)
+            texts.extend(axis.get_ticklabels(which='both'))
+            for tick in axis.get_major_ticks() + axis.get_minor_ticks():
+                swap(tick.tick1line.get_color, tick.tick1line.set_color, _INK, soft)
+                swap(tick.tick2line.get_color, tick.tick2line.set_color, _INK, soft)
+                swap(tick.label1.get_color, tick.label1.set_color, _INK, ink)
+                swap(tick.label2.get_color, tick.label2.set_color, _INK, ink)
+        texts.extend([ax.title, ax._left_title, ax._right_title] + list(ax.texts))
+        for line in ax.lines:
+            swap(line.get_color, line.set_color, _INK, ink)
+        leg = ax.get_legend()
+        if leg is not None:
+            texts.extend(leg.get_texts())
+            if leg.get_title() is not None:
+                texts.append(leg.get_title())
+            frame = leg.get_frame()
+            swap(frame.get_facecolor, frame.set_facecolor, _PAPER, paper)
+            for h in getattr(leg, 'legend_handles', None) or getattr(leg, 'legendHandles', []):
+                if isinstance(h, Line2D):
+                    swap(h.get_color, h.set_color, _INK, ink)
+                elif hasattr(h, 'get_edgecolor'):
+                    swap(h.get_edgecolor, h.set_edgecolor, _INK, ink)
+    for t in texts:
+        swap(t.get_color, t.set_color, _INK, ink)
+    return undo
+
+
+def render_png(fig, dpi=100, dark=False):
     """Draw a figure off screen and return PNG bytes.
 
     Drawing is where many plotting mistakes surface (bad data, impossible
@@ -335,6 +410,8 @@ def render_png(fig, dpi=100):
     Args:
         fig (Figure): Figure to draw.
         dpi (int): Resolution.
+        dark (bool): Draw a dark-theme preview; the figure itself is left
+            unchanged afterwards, so saving still gives the white version.
 
     Returns:
         bytes: The PNG image.
@@ -343,7 +420,16 @@ def render_png(fig, dpi=100):
     FigureCanvasAgg(fig)
     buf = io.BytesIO()
     with matplotlib.rc_context(STYLE):
-        fig.savefig(buf, format='png', dpi=dpi, facecolor='white')
+        if dark:
+            fig.canvas.draw()
+            undo = _dark_swaps(fig)
+            try:
+                fig.savefig(buf, format='png', dpi=dpi, facecolor=fig.get_facecolor())
+            finally:
+                for setter, old in reversed(undo):
+                    setter(old)
+        else:
+            fig.savefig(buf, format='png', dpi=dpi, facecolor='white')
     return buf.getvalue()
 
 
@@ -375,6 +461,38 @@ def _categorical(ax):
             if not text.startswith('$'):
                 return True
     return False
+
+
+def _text_overlaps(fig):
+    """Pairs of visible titles and labels that are drawn on top of each other."""
+    try:
+        renderer = fig.canvas.get_renderer()
+    except Exception:
+        return []
+    items = []
+    sup = getattr(fig, '_suptitle', None)
+    if sup is not None and sup.get_text():
+        items.append(('figure title', sup))
+    for k, ax in enumerate(fig.axes, start=1):
+        for name, t in (('title', ax.title), ('x label', ax.xaxis.label), ('y label', ax.yaxis.label)):
+            if t.get_text() and t.get_visible():
+                items.append((f'panel {k} {name}', t))
+        leg = ax.get_legend()
+        if leg is not None and leg.get_visible():
+            items.append((f'panel {k} legend', leg))
+    boxes = []
+    for name, artist in items:
+        try:
+            boxes.append((name, artist.get_window_extent(renderer)))
+        except Exception:
+            continue
+    found = []
+    for i in range(len(boxes)):
+        for j in range(i + 1, len(boxes)):
+            a, b = boxes[i][1], boxes[j][1]
+            if a.width and b.width and a.overlaps(b):
+                found.append((boxes[i][0], boxes[j][0]))
+    return found
 
 
 def describe_figure(fig, index=1):
@@ -440,4 +558,6 @@ def describe_figure(fig, index=1):
             if ax.get_yscale() == 'linear' and _span(dl.y0, dl.y1) > 2.5:
                 warnings.append(f"Figure {index} panel {k}: y data span {_span(dl.y0, dl.y1):.1f} "
                                 "decades on a linear axis; a log axis may read better.")
+    for a, b in _text_overlaps(fig)[:3]:
+        warnings.append(f"Figure {index}: the {a} and the {b} overlap; move or shorten one of them.")
     return '\n'.join(lines), warnings

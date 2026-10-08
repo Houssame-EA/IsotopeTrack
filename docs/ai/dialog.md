@@ -49,6 +49,7 @@ Chat window of the AI Assistant node.
 | `_request_answer` | `(self)` | Ask the model for an answer to the latest message. |
 | `_run_codes` | `(self, codes, on_done)` | Run code blocks one after the other in the background. |
 | `_next_code` | `(self)` | Start the next queued code block, or hand all results on. |
+| `_hold_focus` | `(self)` | Keep the chat window in front while results are being added. |
 | `_on_code_result` | `(self, code, res)` | Keep one code block's result and move on to the next. |
 | `_show_result` | `(self, code, res)` | Put a result's tables, figures and text in the chat. |
 | `_record_result` | `(self, code, res)` | Add a successful result to the report transcript. |

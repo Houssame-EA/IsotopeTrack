@@ -291,15 +291,38 @@ class AIChatDialog(QDialog):
             QTimer.singleShot(0, self._next_code)
             return
         self._tlbl.setText("Running the code on your particles…")
+        try:
+            self._ds.limits()
+            self._ds.runs()
+        except Exception:
+            _itk_log.exception("Could not prepare the detection limits")
         park_thread(self._code_worker)
         self._code_worker = CodeWorker(code, self._ds)
         self._code_worker.result_ready.connect(self._on_code_result)
         self._code_worker.start()
 
+    def _hold_focus(self):
+        """Keep the chat window in front while results are being added.
+
+        On macOS, adding results could hand the focus to the main window.
+        If the chat window was active just before, it takes the focus back
+        right away; a window the user switched to on purpose is left alone.
+        """
+        was_active = self.isActiveWindow()
+
+        def restore():
+            """Bring the chat window back if something took the focus."""
+            if was_active and self.isVisible() and not self.isActiveWindow():
+                self.raise_()
+                self.activateWindow()
+        QTimer.singleShot(0, restore)
+        QTimer.singleShot(150, restore)
+
     def _on_code_result(self, code, res):
         """Keep one code block's result and move on to the next."""
         if self._user_stopped or self._code_done is None:
             return
+        self._hold_focus()
         park_thread(self._code_worker)
         self._code_worker = None
         if not res.error:
@@ -378,6 +401,7 @@ class AIChatDialog(QDialog):
         """Show the results, ask for fixes when needed, then ask for the takeaway."""
         if self._turn is None:
             return
+        self._hold_focus()
         prose = self._turn.get('prose', '')
         for code, res in results:
             self._turn['attempt_widgets'].extend(self._show_result(code, res))
@@ -617,6 +641,7 @@ class AIChatDialog(QDialog):
         """Record a turn's result and continue or finish the exploration."""
         if self._user_stopped or not self._exp_mode:
             return
+        self._hold_focus()
         st = self._exp
         code, res = results[0]
         st.ledger.add(res.findings, st.turn)
@@ -1369,6 +1394,37 @@ class AIChatDialog(QDialog):
         }}
         QPushButton#aiStop:hover {{ background: {p.danger_border}; }}
         QPushButton#fbPrimary:disabled {{ background: {p.disabled}; }}
+        QFrame#aiRow {{ background: transparent; border: none; }}
+        QFrame#aiCard QHeaderView {{ background: {p.bg_tertiary}; border: none; }}
+        QFrame#aiCard QTableWidget {{ border-radius: 4px; }}
+        QFrame#aiCard {{
+            background: {p.bg_secondary};
+            border: 1px solid {p.border_subtle};
+            border-radius: 8px;
+        }}
+        QFrame#aiStep {{
+            background: {p.bg_tertiary};
+            border: 1px solid {p.border_subtle};
+            border-radius: 6px;
+        }}
+        QLabel#aiCardTitle {{ color: {p.text_primary}; font-weight: 600; font-size: {fs(-1)}px; }}
+        QLabel#aiNote {{ color: {p.text_secondary}; font-size: {fs(-2)}px; }}
+        QLabel#aiBadge {{
+            color: {p.text_secondary}; background: {p.bg_tertiary};
+            border: 1px solid {p.border_subtle}; border-radius: 9px;
+            padding: 1px 8px; font-size: {fs(-3)}px;
+        }}
+        QPushButton#aiSmall {{
+            padding: 2px 9px; font-weight: 500; font-size: {fs(-3)}px; border-radius: 5px;
+        }}
+        QPushButton#aiSmall:checked {{ background: {p.accent_soft}; border-color: {p.accent}; }}
+        QPushButton#aiLink {{
+            background: transparent; border: none; color: {p.accent};
+            padding: 2px 0; font-weight: 600; font-size: {fs(-2)}px; text-align: left;
+        }}
+        QPushButton#aiLink:hover {{ color: {p.accent_hover}; }}
+        QFrame#aiCard QProgressBar {{ background: {p.border_subtle}; border: none; border-radius: 2px; }}
+        QFrame#aiCard QProgressBar::chunk {{ background: {p.accent}; border-radius: 2px; }}
         """
 
     def _set_dot(self, kind):

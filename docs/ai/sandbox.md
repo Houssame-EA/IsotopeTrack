@@ -67,6 +67,7 @@ Attributes:
 | `format_exec_error` | `(exc, code)` | Error text with the offending line of the generated code. |
 | `_bind` | `(fn, ds)` | Close an analysis function over the dataset, keeping its docstring. |
 | `build_namespace` | `(ds, collector, tables, findings)` | Assemble what generated code can see. |
+| `_has_content` | `(fig)` | Whether any panel of a figure has something drawn on it. |
 | `_finish_figures` | `(collector, result)` | Style, render and describe the figures, collecting any drawing errors. |
 | `execute` | `(code, ds, timeout=CODE_EXEC_TIMEOUT, stop_event=None)` | Run generated code against a dataset. |
 | `compact_table` | `(tbl, max_rows=15)` | Plain-text rendering of a result table for the model. |

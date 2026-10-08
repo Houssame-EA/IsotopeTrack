@@ -24,7 +24,7 @@ is never dropped, and small windows get a compact dataset brief.
 | `_HOW` | `'HOW TO ANSWER\n- For any question about the data: one sh…` |
 | `_DATA` | `"THE SANDBOX\ndf: pandas DataFrame, one row per particle.…` |
 | `_OUTPUT` | `"SHOWING RESULTS\nshow_table(dataframe_or_dict, title='..…` |
-| `_FIGURES` | `"FIGURES — you draw them yourself with matplotlib, exactl…` |
+| `_FIGURES` | `"FIGURES — you design and draw them yourself with matplot…` |
 | `_DOMAIN` | `'SPICP-TOF-MS\n- One event is one particle passing the pl…` |
 | `_EXAMPLE` | `"EXAMPLE\nUser: is Ti bigger in some samples?\nComparing …` |
 

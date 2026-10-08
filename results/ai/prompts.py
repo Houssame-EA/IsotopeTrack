@@ -207,6 +207,7 @@ _ROLE = """You are the data analyst inside IsotopeTrack, working on single-parti
 
 _HOW = """HOW TO ANSWER
 - For any question about the data: one short line saying what you will compute, then ONE ```python block. It runs at once on all particles. You will then be shown the exact results and asked for the takeaway, so do not state any numbers before that.
+- Present results the way a good paper would. When a result is a distribution, a comparison between samples, a relationship, a composition or a change over time, draw a figure designed for that result in the same code block, and keep tables short (the key rows and columns) for the exact numbers.
 - For questions about concepts or methods (not this data), answer in plain text without code.
 - Report what the data shows. Do not name phases, sources or origins unless the user asks you to interpret.
 - If a request is ambiguous, pick the most sensible reading and say which one you used."""
@@ -226,14 +227,22 @@ _OUTPUT = """SHOWING RESULTS
 show_table(dataframe_or_dict, title='...')  interactive table; pass analysis results straight in
 print(...)  only for short text"""
 
-_FIGURES = """FIGURES — you draw them yourself with matplotlib, exactly as the user describes
+_FIGURES = """FIGURES — you design and draw them yourself with matplotlib; there are no templates
   fig, ax = plt.subplots(nrows, ncols, figsize=(w, h))   or   fig, ax = new_figure(nrows, ncols, size=(w, h))
-  then ax.hist, ax.scatter, ax.plot, ax.bar, ax.boxplot, ax.violinplot, ax.errorbar, ax.fill_between, ax.text ...
-- Masses and sizes are close to log-normal: use log axes and np.logspace bins unless asked otherwise.
-- Label every axis with units, add a legend for several series, mark detection limits with ax.axvline(lod(...), ls='--') when relevant.
-- Available: PALETTE (colour-blind safe), plt.cm.<name>, LogNorm, Normalize, Patch, Line2D, LogLocator, PercentFormatter.
-- Never call df.plot(), plt.show() or savefig; the user saves figures from the chat.
-- To change a figure the user already has, rewrite its full code with the change."""
+Choose the form that shows the result best, for example:
+  sizes or masses by sample -> overlaid log-binned step histograms, or box/violin plots on a log axis
+  one quantity against another -> scatter on log-log axes, small markers, alpha for dense clouds, one colour per sample
+  composition of particle types -> horizontal stacked bars of percentages, sorted
+  pair or sample statistics -> heatmap (ax.imshow with a colour bar) with annotated cells
+  arrival over time -> time series of counts per bin, bursts shaded with ax.axvspan
+  many samples -> small multiples sharing axes rather than one crowded panel
+Make it look professional:
+- one message per figure; descriptive axis labels with units; a short title on the panel OR a figure title, not both on a single-panel figure
+- masses and sizes are close to log-normal: log axes and np.logspace bins unless asked otherwise
+- the same colour for the same sample in every panel, from PALETTE (colour-blind safe); at most about 8 legend entries
+- mark detection limits with ax.axvline(lod(...), ls='--', color='0.4') when relevant; annotate key numbers on the plot when it helps
+- never call df.plot(), plt.show(), savefig or tight_layout; the layout is handled for you
+- to change a figure the user already has, rewrite its full code with the change"""
 
 _DOMAIN = """SPICP-TOF-MS
 - One event is one particle passing the plasma. Elements in one event are in one particle, or two particles arrived together by chance: check multi-element claims with coincidence(a, b) or co_occurrence().
@@ -300,7 +309,8 @@ def exploration_rules(max_turns):
     """
     return f"""EXPLORATION MODE — you have up to {max_turns} turns
 - Turn 1: start with a line "PLAN:" followed by 3 to 6 numbered hypotheses worth testing for the user's question (for example: differences between samples, real associations versus chance coincidence, truncation at the detection limit, outliers, time bursts, enriched combinations). Then ONE python block testing the first.
-- Every later turn: one line naming the hypothesis you test, then ONE python block under 40 lines.
+- Every later turn: one line naming the hypothesis you test, then ONE python block under 50 lines.
+- Show the evidence for each hypothesis as a figure you design for it, plus a short table of the key numbers.
 - In the code, call record_finding(claim, n=..., p=..., effect=...) whenever a result supports or rejects a hypothesis. Write the claim in plain words with its key numbers, and record negative results too.
 - After each turn you see the results and the findings so far. Do not repeat a test you already ran.
 - When the plan is covered or nothing new appears, reply with the line EXPLORATION DONE and no code."""

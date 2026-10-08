@@ -8,15 +8,15 @@ import uuid
 
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QCursor, QFont, QPixmap
+from PySide6.QtGui import QColor, QCursor, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
-    QSizePolicy, QStackedWidget, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
+    QSizePolicy, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from results.ai.sandbox import to_float
-from results.ai.theme import CODE_RE, UI_PREFS, Theme, fs, md_to_html, strip_thinking
+from results.ai.theme import CODE_RE, UI_PREFS, Theme, fs, inline_markdown, md_to_html, strip_thinking
 
 _itk_log = logging.getLogger("IsotopeTrack.results.ai.widgets")
 
@@ -42,6 +42,7 @@ class AttachmentChip(QFrame):
             info (str): Extra detail such as the size.
         """
         super().__init__()
+        self.setObjectName('aiRow')
         ext = os.path.splitext(name)[1].lower()
         type_label = self._TYPE_LABELS.get(ext, kind.upper())
         self.setContentsMargins(0, 3, 0, 3)
@@ -181,6 +182,7 @@ class TextBubble(QFrame):
             is_user (bool): Whether the user wrote it.
         """
         super().__init__()
+        self.setObjectName('aiRow')
         self._text = text; self._iu = is_user
         self._ts = time.strftime("%H:%M")
         self.setContentsMargins(0, 2, 0, 2)
@@ -272,6 +274,7 @@ class StreamBubble(QFrame):
     def __init__(self):
         """Create an empty reply that renders at a steady rate."""
         super().__init__()
+        self.setObjectName('aiRow')
         self._raw = ""; self._pend = []
         self.setContentsMargins(0, 2, 0, 2)
         lo = QVBoxLayout(self); lo.setContentsMargins(0,0,0,0)
@@ -330,85 +333,90 @@ class StreamBubble(QFrame):
 
 
 class ExplorationBubble(QFrame):
-    """Card that follows an exploration: plan, live findings, steps and summary.
+    """Panel that follows an exploration: plan, live findings, steps and summary.
 
-    The plan and the findings stay visible while the model works. Each
-    turn's code, tables and figures sit in a collapsible list of steps, and
-    the final summary appears at the bottom.
+    Styled like the app's other panels. The plan and the findings stay
+    visible while the model works; each turn's code, tables and figures sit
+    in a folded list of steps; the summary appears at the bottom.
     """
 
     def __init__(self, question):
-        """Create the card.
+        """Create the panel.
 
         Args:
             question (str): What the user asked to explore.
         """
         super().__init__()
+        self.setObjectName('aiCard')
         self._question = question
         self._steps = 0
         self._expanded = False
-        self.setContentsMargins(0, 4, 0, 4)
+        self._plan = []
+        self._ledger = None
+        self._summary = ''
+        self._rich = []
+        self._children = []
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        self._card = QFrame()
-        cl = QVBoxLayout(self._card)
-        cl.setContentsMargins(14, 12, 14, 12)
-        cl.setSpacing(8)
-        title_row = QHBoxLayout()
-        self._title_lbl = QLabel("Exploring")
-        title_row.addWidget(self._title_lbl)
-        title_row.addStretch()
+        root.setContentsMargins(14, 12, 14, 12)
+        root.setSpacing(8)
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        self._title_lbl = QLabel("Exploration")
+        self._title_lbl.setObjectName('aiCardTitle')
+        head.addWidget(self._title_lbl)
+        head.addStretch()
         self._badge = QLabel("Turn 0")
-        title_row.addWidget(self._badge)
-        cl.addLayout(title_row)
-        self._q_lbl = QLabel(f'"{question}"')
+        self._badge.setObjectName('aiBadge')
+        head.addWidget(self._badge)
+        root.addLayout(head)
+        self._q_lbl = QLabel(question)
+        self._q_lbl.setObjectName('aiNote')
         self._q_lbl.setWordWrap(True)
-        cl.addWidget(self._q_lbl)
-        self._prog_lbl = QLabel("Starting exploration…")
+        root.addWidget(self._q_lbl)
+        prog_row = QHBoxLayout()
+        prog_row.setSpacing(8)
+        self._prog_lbl = QLabel("Starting…")
+        self._prog_lbl.setObjectName('aiNote')
         self._prog_lbl.setWordWrap(True)
-        cl.addWidget(self._prog_lbl)
+        prog_row.addWidget(self._prog_lbl, 1)
         self._prog_bar = QProgressBar()
         self._prog_bar.setRange(0, 0)
-        self._prog_bar.setMaximumHeight(3)
+        self._prog_bar.setFixedWidth(120)
+        self._prog_bar.setMaximumHeight(4)
         self._prog_bar.setTextVisible(False)
-        cl.addWidget(self._prog_bar)
-        self._plan_hdr = QLabel("Plan")
-        self._plan_lbl = QLabel("")
-        self._plan_lbl.setWordWrap(True)
-        self._plan_lbl.setTextFormat(Qt.RichText)
-        self._findings_hdr = QLabel("Findings so far")
-        self._findings_lbl = QLabel("")
-        self._findings_lbl.setWordWrap(True)
-        self._findings_lbl.setTextFormat(Qt.RichText)
-        for w in (self._plan_hdr, self._plan_lbl, self._findings_hdr, self._findings_lbl):
-            w.setVisible(False)
-            cl.addWidget(w)
-        self._toggle_btn = QPushButton("▶  Show 0 steps")
+        prog_row.addWidget(self._prog_bar)
+        root.addLayout(prog_row)
+        self._plan_hdr, self._plan_lbl = self._section(root, "Plan")
+        self._findings_hdr, self._findings_lbl = self._section(root, "Findings")
+        self._summary_hdr, self._summary_lbl = self._section(root, "Summary")
+        self._toggle_btn = QPushButton("Show steps")
+        self._toggle_btn.setObjectName('aiLink')
         self._toggle_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._toggle_btn.clicked.connect(self._toggle_expand)
         self._toggle_btn.setVisible(False)
-        cl.addWidget(self._toggle_btn, alignment=Qt.AlignLeft)
+        root.addWidget(self._toggle_btn, alignment=Qt.AlignLeft)
         self._steps_frame = QFrame()
+        self._steps_frame.setObjectName('aiPlain')
         self._steps_lo = QVBoxLayout(self._steps_frame)
-        self._steps_lo.setContentsMargins(0, 4, 0, 4)
-        self._steps_lo.setSpacing(6)
+        self._steps_lo.setContentsMargins(0, 2, 0, 2)
+        self._steps_lo.setSpacing(8)
         self._steps_frame.setVisible(False)
-        cl.addWidget(self._steps_frame)
-        self._summary_sep = QFrame()
-        self._summary_sep.setFrameShape(QFrame.HLine)
-        self._summary_sep.setVisible(False)
-        cl.addWidget(self._summary_sep)
-        self._summary_hdr = QLabel("Summary")
-        self._summary_hdr.setVisible(False)
-        cl.addWidget(self._summary_hdr)
-        self._summary_lbl = QLabel("")
-        self._summary_lbl.setWordWrap(True)
-        self._summary_lbl.setTextFormat(Qt.RichText)
-        self._summary_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.LinksAccessibleByMouse)
-        self._summary_lbl.setVisible(False)
-        cl.addWidget(self._summary_lbl)
-        root.addWidget(self._card)
+        root.addWidget(self._steps_frame)
         self.apply_theme()
+
+    def _section(self, layout, title):
+        """Add a hidden section header and its rich-text body."""
+        hdr = QLabel(title)
+        hdr.setObjectName('aiSection')
+        body = QLabel("")
+        body.setWordWrap(True)
+        body.setTextFormat(Qt.RichText)
+        body.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.LinksAccessibleByMouse)
+        hdr.setVisible(False)
+        body.setVisible(False)
+        layout.addWidget(hdr)
+        layout.addWidget(body)
+        return hdr, body
 
     def set_progress(self, turn, max_turns, text=""):
         """Show the current turn and what the model is doing.
@@ -418,7 +426,7 @@ class ExplorationBubble(QFrame):
             max_turns (int): Turn budget.
             text (str): Status line.
         """
-        self._badge.setText(f"Turn {turn} / {max_turns}")
+        self._badge.setText(f"Turn {turn} of {max_turns}")
         if text:
             self._prog_lbl.setText(text)
 
@@ -430,9 +438,15 @@ class ExplorationBubble(QFrame):
         """
         if not items:
             return
-        self._plan_lbl.setText(md_to_html('\n'.join(f"{i}. {h}" for i, h in enumerate(items, start=1))))
+        self._plan = list(items)
+        self._render_plan()
         self._plan_hdr.setVisible(True)
         self._plan_lbl.setVisible(True)
+
+    def _render_plan(self):
+        """Render the plan as a numbered list."""
+        if self._plan:
+            self._plan_lbl.setText(md_to_html('\n'.join(f"{i}. {h}" for i, h in enumerate(self._plan, 1))))
 
     def set_findings(self, ledger):
         """Show the findings recorded so far.
@@ -442,20 +456,32 @@ class ExplorationBubble(QFrame):
         """
         if not len(ledger):
             return
-        lines = []
-        for f in ledger.ranked()[:12]:
-            mark = '✓' if f.supported else '✗'
-            lines.append(f"- {mark} {f.line()}")
-        self._findings_lbl.setText(md_to_html('\n'.join(lines)))
+        self._ledger = ledger
+        self._render_findings()
         self._findings_hdr.setVisible(True)
         self._findings_lbl.setVisible(True)
+
+    def _render_findings(self):
+        """Render the findings with a coloured mark for supported ones."""
+        if self._ledger is None:
+            return
+        ok = Theme.c('success_dot')
+        no = Theme.c('text_tertiary')
+        fg = Theme.c('text')
+        rows = []
+        for f in self._ledger.ranked()[:14]:
+            mark = (f'<span style="color:{ok};font-weight:700;">✓</span>' if f.supported
+                    else f'<span style="color:{no};font-weight:700;">✗</span>')
+            rows.append(f'<tr><td style="padding:2px 8px 2px 0;vertical-align:top;">{mark}</td>'
+                        f'<td style="padding:2px 0;color:{fg};">{inline_markdown(f.line(), Theme.c("bg_tertiary"))}</td></tr>')
+        self._findings_lbl.setText('<table cellspacing="0">' + ''.join(rows) + '</table>')
 
     def add_step(self, turn_num, rationale, code, result):
         """Add one turn to the list of steps.
 
         Args:
             turn_num (int): Turn number.
-            rationale (str): The model's one-line reason for the query.
+            rationale (str): The model's short reason for the query.
             code (str): The code that ran.
             result (ExecResult): What it produced.
         """
@@ -470,13 +496,13 @@ class ExplorationBubble(QFrame):
         Args:
             summary_md (str): Summary in markdown.
         """
-        self._prog_lbl.setText(f"✓ Exploration complete — {self._steps} turn{'s' if self._steps != 1 else ''}")
+        self._prog_lbl.setText(f"Finished after {self._steps} turn{'s' if self._steps != 1 else ''}")
         self._badge.setText("Done")
         self._prog_bar.setVisible(False)
-        self._summary_sep.setVisible(True)
+        self._summary = summary_md or "(no summary provided)"
+        self._summary_lbl.setText(md_to_html(self._summary))
         self._summary_hdr.setVisible(True)
         self._summary_lbl.setVisible(True)
-        self._summary_lbl.setText(md_to_html(summary_md or "(no summary provided)"))
         self.apply_theme()
 
     def mark_cancelled(self, reason="stopped by user"):
@@ -485,24 +511,22 @@ class ExplorationBubble(QFrame):
         Args:
             reason (str): Why it ended.
         """
-        self._prog_lbl.setText(f"⏹ Exploration ended — {reason}")
+        self._prog_lbl.setText(f"Ended early — {reason}")
+        self._badge.setText("Stopped")
         self._prog_bar.setVisible(False)
         if self._steps:
-            self._summary_sep.setVisible(True)
+            self._summary = (f"No summary was written. The {self._steps} step"
+                             f"{'s' if self._steps != 1 else ''} and the findings above are still available.")
             self._summary_hdr.setText("Ended early")
+            self._summary_lbl.setText(md_to_html(self._summary))
             self._summary_hdr.setVisible(True)
-            self._summary_lbl.setText(md_to_html(
-                f"No summary was written. The {self._steps} step{'s' if self._steps != 1 else ''} "
-                "and the findings above are still available."))
             self._summary_lbl.setVisible(True)
         self.apply_theme()
 
     def _update_toggle(self):
         """Refresh the show/hide steps button text."""
         n = self._steps
-        self._toggle_btn.setText(
-            f"{'▼' if self._expanded else '▶'}  {'Hide' if self._expanded else 'Show'} "
-            f"{n} step{'s' if n != 1 else ''}")
+        self._toggle_btn.setText(f"{'Hide' if self._expanded else 'Show'} {n} step{'s' if n != 1 else ''}")
 
     def _toggle_expand(self):
         """Show or hide the steps."""
@@ -511,75 +535,64 @@ class ExplorationBubble(QFrame):
         self._update_toggle()
 
     def _build_step_widget(self, turn_num, rationale, code, result):
-        """Build the compact view of one turn."""
+        """Build the view of one turn."""
         f = QFrame()
+        f.setObjectName('aiStep')
         lo = QVBoxLayout(f)
         lo.setContentsMargins(10, 8, 10, 8)
-        lo.setSpacing(4)
-        hdr = QLabel(f"<b>Turn {turn_num}</b>")
-        hdr.setTextFormat(Qt.RichText)
+        lo.setSpacing(6)
+        hdr = QLabel(f"Turn {turn_num}")
+        hdr.setObjectName('aiCardTitle')
         lo.addWidget(hdr)
         if rationale and rationale.strip():
-            r = QLabel(rationale.strip())
+            r = QLabel()
             r.setWordWrap(True)
-            r.setStyleSheet(f"color:{Theme.c('text_secondary')};font-size:{fs(-1)}px;"
-                            f"font-style:italic;background:transparent;border:none;")
+            r.setTextFormat(Qt.RichText)
+            r.setObjectName('aiNote')
+            r.setText(md_to_html(rationale.strip()))
+            self._rich.append((r, rationale.strip()))
             lo.addWidget(r)
-        if code:
-            lo.addWidget(CodeBubble(code))
+        children = []
         if result is not None:
-            if result.error:
-                lo.addWidget(NoticeBubble(result.error, kind='error'))
-            if result.text:
-                shown = result.text if len(result.text) <= 1500 else result.text[:1500] + "\n... [truncated]"
-                lo.addWidget(OutputBubble(shown))
             for tbl in result.tables:
                 try:
-                    lo.addWidget(InteractiveTableBubble(tbl['headers'], tbl['rows'], tbl.get('title', ''),
-                                                        note=tbl.get('note', '')))
+                    children.append(InteractiveTableBubble(tbl['headers'], tbl['rows'], tbl.get('title', ''),
+                                                           note=tbl.get('note', '')))
                 except Exception:
                     _itk_log.exception("Could not show an exploration table")
             for fig in result.figures:
                 try:
-                    lo.addWidget(FigureBubble(fig['figure'], fig.get('title', ''), code=None))
+                    children.append(FigureBubble(fig['figure'], fig.get('title', '')))
                 except Exception:
                     _itk_log.exception("Could not show an exploration figure")
-            for item in result.findings:
-                lo.addWidget(NoticeBubble("Finding: " + str(item.get('claim', '')), kind='info'))
-        f.setStyleSheet(
-            f"QFrame{{background:{Theme.c('bg_secondary')};"
-            f"border:1px solid {Theme.c('border_light')};border-radius:8px;}}"
-            f"QLabel{{background:transparent;border:none;color:{Theme.c('text')};}}")
+            if result.text:
+                shown = result.text if len(result.text) <= 1500 else result.text[:1500] + "\n... [truncated]"
+                children.append(OutputBubble(shown))
+            if result.error:
+                children.append(NoticeBubble(result.error, kind='error'))
+        if code:
+            children.append(CodeBubble(code))
+        for w in children:
+            lo.addWidget(w)
+        self._children.extend(children)
         return f
 
     def apply_theme(self):
-        """Restyle for the current theme and font size."""
-        size, size2, size3 = fs(), fs(-1), fs(1)
-        ac = Theme.c('accent')
-        fg = Theme.c('text')
-        fg2 = Theme.c('text_secondary')
-        bd = Theme.c('border')
-        bg = Theme.c('accent_surface')
-        self._card.setStyleSheet(
-            f"QFrame{{background:{bg};border:1px solid {ac};border-left:4px solid {ac};border-radius:10px;}}")
-        plain = "background:transparent;border:none;"
-        self._title_lbl.setStyleSheet(f"color:{ac};font-size:{size3}px;font-weight:700;{plain}")
-        self._badge.setStyleSheet(f"color:{ac};font-size:{size2}px;font-weight:600;{plain}")
-        self._q_lbl.setStyleSheet(f"color:{fg};font-size:{size}px;font-style:italic;{plain}")
-        self._prog_lbl.setStyleSheet(f"color:{fg2};font-size:{size2}px;{plain}")
-        hdr = (f"color:{ac};font-size:{size2}px;font-weight:700;text-transform:uppercase;"
-               f"letter-spacing:0.6px;{plain}")
-        for w in (self._plan_hdr, self._findings_hdr, self._summary_hdr):
-            w.setStyleSheet(hdr)
-        for w in (self._plan_lbl, self._findings_lbl):
-            w.setStyleSheet(f"color:{fg};font-size:{size2}px;{plain}")
-        self._toggle_btn.setStyleSheet(
-            f"QPushButton{{background:transparent;color:{ac};border:none;"
-            f"font-size:{size2}px;font-weight:600;padding:2px 0;text-align:left;}}"
-            f"QPushButton:hover{{color:{Theme.c('accent_hover')};}}")
-        self._summary_sep.setStyleSheet(f"QFrame{{border:none;border-top:1px solid {bd};background:transparent;}}")
-        self._summary_lbl.setStyleSheet(f"color:{fg};font-size:{size}px;line-height:1.6;{plain}")
-        self._steps_frame.setStyleSheet("QFrame{background:transparent;border:none;}")
+        """Re-render rich text and restyle the nested tables, figures and code."""
+        self._render_plan()
+        self._render_findings()
+        if self._summary:
+            self._summary_lbl.setText(md_to_html(self._summary))
+        for lbl, text in self._rich:
+            try:
+                lbl.setText(md_to_html(text))
+            except RuntimeError:
+                pass
+        for w in self._children:
+            try:
+                w.apply_theme()
+            except RuntimeError:
+                pass
 
 
 class _NumericItem(QTableWidgetItem):
@@ -598,11 +611,13 @@ class _NumericItem(QTableWidgetItem):
 
 
 class InteractiveTableBubble(QFrame):
-    """Sortable, filterable table with stats panel, chart type selector, and CSV export."""
+    """A result table: sortable, filterable, with column statistics and export.
 
-    _CHART_TYPES = [('Bar', 'bar'), ('Barh', 'barh'), ('Line', 'line'), ('Pie', 'pie')]
-    _COLORS = ['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6',
-               '#06B6D4','#F97316','#EC4899','#84CC16','#6B7280']
+    Figures are left to the model, which draws one designed for the result,
+    so the table itself only shows numbers.
+    """
+
+    MAX_COL_W = 280
 
     def __init__(self, headers, rows, title="Query result", note=''):
         """Create the table.
@@ -614,69 +629,74 @@ class InteractiveTableBubble(QFrame):
             note (str): Test results or caveats shown under the caption.
         """
         super().__init__()
-        self._headers   = headers
-        self._all_rows  = rows
-        self._title     = title
-        self._chart_kind = 'barh'  
+        self.setObjectName('aiCard')
+        self._headers = headers
+        self._all_rows = rows
+        self._title = title
         self.setContentsMargins(0, 4, 0, 4)
-        root = QVBoxLayout(self); root.setContentsMargins(0,0,0,0); root.setSpacing(0)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(10, 8, 10, 10)
+        root.setSpacing(6)
 
-        top = QFrame(); tl = QHBoxLayout(top); tl.setContentsMargins(6,4,6,4); tl.setSpacing(6)
-        self._title_lbl = QLabel(f"\u25b6 {title}"); tl.addWidget(self._title_lbl)
+        top = QHBoxLayout()
+        top.setSpacing(6)
+        self._title_lbl = QLabel(title)
+        self._title_lbl.setObjectName('aiCardTitle')
+        top.addWidget(self._title_lbl)
         self._badge = QLabel(f"{len(rows)} rows")
-        self._badge.setFixedHeight(20); tl.addWidget(self._badge)
-        tl.addStretch()
-        self._stats_btn = QPushButton("\u03a3 Stats"); self._stats_btn.setCheckable(True)
-        self._stats_btn.setFixedHeight(26)
+        self._badge.setObjectName('aiBadge')
+        top.addWidget(self._badge)
+        top.addStretch()
+        self._filter = QLineEdit()
+        self._filter.setPlaceholderText("Filter…")
+        self._filter.setFixedWidth(170)
+        self._filter.textChanged.connect(self._apply_filter)
+        top.addWidget(self._filter)
+        self._stats_btn = QPushButton("Σ Stats")
+        self._stats_btn.setObjectName('aiSmall')
+        self._stats_btn.setCheckable(True)
         self._stats_btn.toggled.connect(self._toggle_stats)
-        tl.addWidget(self._stats_btn)
-        self._tab_btn   = QPushButton("Table"); self._tab_btn.setCheckable(True); self._tab_btn.setChecked(True)
-        self._chart_btn = QPushButton("Chart"); self._chart_btn.setCheckable(True)
-        self._tab_btn.setFixedHeight(26); self._chart_btn.setFixedHeight(26)
-        self._tab_btn.clicked.connect(lambda: self._switch(0))
-        self._chart_btn.clicked.connect(lambda: self._switch(1))
-        tl.addWidget(self._tab_btn); tl.addWidget(self._chart_btn)
-        csv_btn = QPushButton("\u2193 CSV"); csv_btn.setFixedHeight(26)
-        csv_btn.clicked.connect(self._export_csv); tl.addWidget(csv_btn)
-        tsv_btn = QPushButton("\u2398 TSV"); tsv_btn.setFixedHeight(26)
-        tsv_btn.clicked.connect(self._copy_tsv); tl.addWidget(tsv_btn)
-        root.addWidget(top); self._top = top
+        top.addWidget(self._stats_btn)
+        copy_btn = QPushButton("Copy")
+        copy_btn.setObjectName('aiSmall')
+        copy_btn.setToolTip("Copy the visible rows, tab-separated, to paste into Excel")
+        copy_btn.clicked.connect(self._copy_tsv)
+        top.addWidget(copy_btn)
+        csv_btn = QPushButton("CSV…")
+        csv_btn.setObjectName('aiSmall')
+        csv_btn.setToolTip("Save the visible rows as a CSV file")
+        csv_btn.clicked.connect(self._export_csv)
+        top.addWidget(csv_btn)
+        root.addLayout(top)
+
         self._note_lbl = QLabel(note or '')
+        self._note_lbl.setObjectName('aiNote')
         self._note_lbl.setWordWrap(True)
         self._note_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self._note_lbl.setVisible(bool(note))
         root.addWidget(self._note_lbl)
 
-        self._stats_frame = QFrame(); self._stats_frame.setVisible(False)
-        sl = QHBoxLayout(self._stats_frame); sl.setContentsMargins(8,4,8,4); sl.setSpacing(8)
-        sl.addWidget(QLabel("Column:"))
+        self._stats_frame = QFrame()
+        self._stats_frame.setVisible(False)
+        sl = QHBoxLayout(self._stats_frame)
+        sl.setContentsMargins(0, 0, 0, 0)
+        sl.setSpacing(8)
+        sl.addWidget(QLabel("Column"))
         self._stats_col = QComboBox()
         self._numeric_cols = []
         for i, h in enumerate(headers):
             vals = [r[i] for r in rows if i < len(r) and r[i]]
             sample = vals[:10]
-            if sample and all(to_float(str(v).replace('%', '')) is not None
-                              for v in sample):
+            if sample and all(to_float(str(v).replace('%', '')) is not None for v in sample):
                 self._numeric_cols.append((i, h))
                 self._stats_col.addItem(h)
         sl.addWidget(self._stats_col)
         self._stats_lbl = QLabel("")
-        self._stats_lbl.setWordWrap(False)
+        self._stats_lbl.setObjectName('aiNote')
+        self._stats_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
         sl.addWidget(self._stats_lbl, stretch=1)
         self._stats_col.currentIndexChanged.connect(self._refresh_stats)
         root.addWidget(self._stats_frame)
-
-        filt_frame = QFrame()
-        fl = QHBoxLayout(filt_frame); fl.setContentsMargins(6,4,6,4); fl.setSpacing(6)
-        self._filter = QLineEdit(); self._filter.setPlaceholderText("Filter rows\u2026")
-        self._filter.setFixedHeight(28)
-        self._filter.textChanged.connect(self._apply_filter)
-        fl.addWidget(self._filter, stretch=1)
-        self._filter_lbl = QLabel(f"{len(rows)} shown")
-        fl.addWidget(self._filter_lbl)
-        root.addWidget(filt_frame); self._filt_frame = filt_frame
-
-        self._stack = QStackedWidget(); root.addWidget(self._stack)
 
         self._table = QTableWidget()
         self._table.setColumnCount(len(headers))
@@ -685,45 +705,16 @@ class InteractiveTableBubble(QFrame):
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setAlternatingRowColors(True)
+        self._table.setWordWrap(False)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.horizontalHeader().setStretchLastSection(False)
         self._table.verticalHeader().setVisible(False)
-        self._table_h = int(min(len(rows) * (fs() + 12) + 62, 420))
-        self._table.setFixedHeight(self._table_h)
         self._table.horizontalHeader().sectionClicked.connect(self._on_col_click)
-        self._stack.addWidget(self._table)
-
-        self._chart_page = QFrame()
-        cl = QVBoxLayout(self._chart_page); cl.setContentsMargins(8,8,8,8); cl.setSpacing(6)
-        chart_ctrl = QHBoxLayout(); chart_ctrl.setSpacing(6)
-        chart_ctrl.addWidget(QLabel("Column:"))
-        self._col_combo = QComboBox()
-        for _, h in self._numeric_cols: self._col_combo.addItem(h)
-        chart_ctrl.addWidget(self._col_combo)
-        chart_ctrl.addSpacing(12)
-        chart_ctrl.addWidget(QLabel("Type:"))
-        self._type_btns = []
-        for label, kind in self._CHART_TYPES:
-            b = QPushButton(label); b.setCheckable(True); b.setFixedHeight(24)
-            b.setChecked(kind == self._chart_kind)
-            b.clicked.connect(lambda checked, k=kind: self._set_chart_kind(k))
-            chart_ctrl.addWidget(b); self._type_btns.append((b, kind))
-        chart_ctrl.addStretch()
-        self._chart_save_btn = QPushButton("\u2193 PNG"); self._chart_save_btn.setFixedHeight(24)
-        self._chart_save_btn.clicked.connect(self._save_chart_png)
-        chart_ctrl.addWidget(self._chart_save_btn)
-        cl.addLayout(chart_ctrl)
-        self._chart_canvas_frame = QFrame()
-        self._chart_canvas_frame.setMinimumHeight(280)
-        cl.addWidget(self._chart_canvas_frame, stretch=1)
-        self._col_combo.currentIndexChanged.connect(self._draw_chart)
-        self._stack.addWidget(self._chart_page)
-
-        self._stack.setFixedHeight(self._table_h)
+        self._table_h = 120
+        root.addWidget(self._table)
         self._populate(rows)
         self._refresh_stats()
         self.apply_theme()
-
 
     def _populate(self, rows):
         """Fill the table with rows.
@@ -733,17 +724,27 @@ class InteractiveTableBubble(QFrame):
         """
         self._table.setSortingEnabled(False)
         self._table.setRowCount(len(rows))
-        font = QFont(self._table.font())
-        font.setPixelSize(fs(-2))
         for r, row in enumerate(rows):
             for c, val in enumerate(row):
                 item = _NumericItem(str(val))
-                item.setFont(font)
+                item.setToolTip(str(val))
+                if to_float(str(val).replace('%', '')) is not None:
+                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self._table.setItem(r, c, item)
         self._table.setSortingEnabled(True)
+        self._fit_columns()
         self._fit_height()
         self._badge.setText(f"{len(rows)} rows")
-        self._filter_lbl.setText(f"{len(rows)} shown")
+
+    def _fit_columns(self):
+        """Size columns to their content, within a maximum width."""
+        t = self._table
+        t.resizeColumnsToContents()
+        for c in range(t.columnCount()):
+            if t.columnWidth(c) > self.MAX_COL_W:
+                t.setColumnWidth(c, self.MAX_COL_W)
+            else:
+                t.setColumnWidth(c, t.columnWidth(c) + 12)
 
     def _fit_height(self):
         """Make the table exactly as tall as its rows, up to a limit."""
@@ -754,12 +755,11 @@ class InteractiveTableBubble(QFrame):
         scroll = t.horizontalScrollBar().sizeHint().height()
         self._table_h = int(min(rows + header + scroll + 2 * t.frameWidth() + 4, 420))
         t.setFixedHeight(self._table_h)
-        if self._stack.currentIndex() == 0:
-            self._stack.setFixedHeight(self._table_h)
 
     def showEvent(self, event):
-        """Refit the height once the table is laid out with its real fonts."""
+        """Refit once the table is laid out with its real fonts."""
         super().showEvent(event)
+        self._fit_columns()
         self._fit_height()
 
     def _apply_filter(self, text):
@@ -769,20 +769,15 @@ class InteractiveTableBubble(QFrame):
             text (str): Filter text.
         """
         text = text.lower()
-        filtered = [r for r in self._all_rows
-                    if not text or any(text in str(v).lower() for v in r)]
+        filtered = [r for r in self._all_rows if not text or any(text in str(v).lower() for v in r)]
         self._populate(filtered)
 
     def _on_col_click(self, col_idx):
-        """Select the clicked column in the stats combo and show stats."""
+        """Select the clicked column in the statistics strip."""
         for ci, (idx, _) in enumerate(self._numeric_cols):
             if idx == col_idx:
                 self._stats_col.setCurrentIndex(ci)
-                if not self._stats_btn.isChecked():
-                    self._stats_btn.setChecked(True)
-                    self._stats_frame.setVisible(True)
                 break
-
 
     def _toggle_stats(self, checked):
         """Show or hide the column statistics.
@@ -791,220 +786,55 @@ class InteractiveTableBubble(QFrame):
             checked (bool): Show them.
         """
         self._stats_frame.setVisible(checked)
-        if checked: self._refresh_stats()
+        if checked:
+            self._refresh_stats()
 
     def _refresh_stats(self):
         """Compute statistics of the selected numeric column."""
-        if not self._numeric_cols: return
+        if not self._numeric_cols:
+            self._stats_lbl.setText("No numeric column")
+            return
         ci = self._stats_col.currentIndex()
-        if ci < 0: return
+        if ci < 0:
+            return
         col_idx = self._numeric_cols[ci][0]
-        vals = []
-        for r in self._all_rows:
-            if col_idx < len(r):
-                try: vals.append(float(str(r[col_idx]).replace(",","").replace("%","")))
-                except Exception:
-                    _itk_log.exception("Handled exception in _refresh_stats")
+        vals = [to_float(str(r[col_idx]).replace('%', '')) for r in self._all_rows if col_idx < len(r)]
+        vals = [v for v in vals if v is not None]
         if not vals:
-            self._stats_lbl.setText("No numeric data"); return
+            self._stats_lbl.setText("No numeric data")
+            return
         a = np.array(vals)
         self._stats_lbl.setText(
-            f"N: {len(a):,}  \u2022  "
-            f"Mean: {np.mean(a):.4g}  \u2022  "
-            f"Median: {np.median(a):.4g}  \u2022  "
-            f"Std: {np.std(a):.4g}  \u2022  "
-            f"Min: {np.min(a):.4g}  \u2022  "
-            f"Max: {np.max(a):.4g}  \u2022  "
-            f"P95: {np.percentile(a,95):.4g}")
+            f"N {len(a):,}  ·  mean {np.mean(a):.4g}  ·  median {np.median(a):.4g}  ·  "
+            f"SD {np.std(a):.4g}  ·  min {np.min(a):.4g}  ·  max {np.max(a):.4g}")
 
-
-    def _switch(self, idx):
-        """Show the table (0) or the quick chart (1)."""
-        self._stack.setCurrentIndex(idx)
-        self._stack.setFixedHeight(self._table_h if idx == 0 else 360)
-        self._tab_btn.setChecked(idx == 0)
-        self._chart_btn.setChecked(idx == 1)
-        if idx == 1: self._draw_chart()
-        self.apply_theme()
-
-    def _set_chart_kind(self, kind):
-        """Change the quick chart type.
-
-        Args:
-            kind (str): ``bar``, ``barh``, ``line`` or ``pie``.
-        """
-        self._chart_kind = kind
-        for b, k in self._type_btns:
-            b.setChecked(k == kind)
-        self._draw_chart()
-
-    def _draw_chart(self):
-        """Draw the selected numeric column as a quick chart of the table."""
-        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-        from matplotlib.figure import Figure
-        if not self._numeric_cols:
-            return
-        ci = self._col_combo.currentIndex()
-        if ci < 0 or ci >= len(self._numeric_cols):
-            return
-        col_idx, col_name = self._numeric_cols[ci]
-        is_dark = Theme.is_dark()
-        bg = "#0F172A" if is_dark else "#F8FAFC"
-        fg = "#F1F5F9" if is_dark else "#0F172A"
-        gc = "#334155" if is_dark else "#E2E8F0"
-        dpi = UI_PREFS["chart_dpi"]
-        size = fs(-4)
-        labels, values = [], []
-        for r in self._all_rows[:25]:
-            v = to_float(str(r[col_idx]).replace("%", "")) if col_idx < len(r) else None
-            if v is not None:
-                labels.append(str(r[0]))
-                values.append(v)
-        if not values:
-            return
-        kind = self._chart_kind
-        cols = (self._COLORS * 4)[:len(labels)]
-        if kind == "pie":
-            fig = Figure(figsize=(5, 4.5), dpi=dpi)
-            ax = fig.subplots()
-            _, _, autos = ax.pie(values, labels=labels, autopct="%1.1f%%", colors=cols, startangle=90,
-                                 textprops={"color": fg, "fontsize": size})
-            for at in autos:
-                at.set_color(fg)
-                at.set_fontsize(size - 1)
-            ax.set_title(col_name, color=fg, fontsize=size + 1)
-        elif kind == "barh":
-            fig = Figure(figsize=(5.5, max(2.2, len(labels) * 0.34)), dpi=dpi)
-            ax = fig.subplots()
-            ax.barh(range(len(labels)), values[::-1], color="#3B82F6", alpha=0.88)
-            ax.set_yticks(range(len(labels)))
-            ax.set_yticklabels(labels[::-1], fontsize=size, color=fg)
-            ax.set_xlabel(col_name, fontsize=size, color=fg)
-            ax.xaxis.grid(True, color=gc, linewidth=0.5)
-        elif kind == "line":
-            fig = Figure(figsize=(6, 3.5), dpi=dpi)
-            ax = fig.subplots()
-            ax.plot(range(len(values)), values, color="#3B82F6", lw=2, marker="o", ms=3)
-            step = max(1, len(labels) // 15)
-            ax.set_xticks(range(0, len(labels), step))
-            ax.set_xticklabels(labels[::step], rotation=35, ha="right", fontsize=size, color=fg)
-            ax.set_ylabel(col_name, fontsize=size, color=fg)
-            ax.yaxis.grid(True, color=gc, linewidth=0.5)
-        else:
-            fig = Figure(figsize=(max(4, len(labels) * 0.4), 3.5), dpi=dpi)
-            ax = fig.subplots()
-            ax.bar(range(len(labels)), values, color=cols, alpha=0.88)
-            step = max(1, len(labels) // 15)
-            ax.set_xticks(range(0, len(labels), step))
-            ax.set_xticklabels(labels[::step], rotation=35, ha="right", fontsize=size, color=fg)
-            ax.set_ylabel(col_name, fontsize=size, color=fg)
-            ax.yaxis.grid(True, color=gc, linewidth=0.5)
-        fig.patch.set_facecolor(bg)
-        ax.set_facecolor(bg)
-        ax.tick_params(colors=fg)
-        for sp in ax.spines.values():
-            sp.set_edgecolor(gc)
-        fig.tight_layout(pad=1.0)
-        self._last_fig = fig
-        for child in self._chart_canvas_frame.findChildren(FigureCanvasQTAgg):
-            child.setParent(None)
-            child.deleteLater()
-        canvas = FigureCanvasQTAgg(fig)
-        lay = self._chart_canvas_frame.layout() or QVBoxLayout(self._chart_canvas_frame)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(canvas)
-        canvas.draw()
-
-    def _save_chart_png(self):
-        """Save the quick chart as a PNG."""
-        fig = getattr(self, "_last_fig", None)
-        if not fig: return
-        path, _ = QFileDialog.getSaveFileName(self, "Save chart", "", "PNG (*.png)")
-        if path:
-            fig.savefig(path, dpi=max(UI_PREFS["chart_dpi"], 150),
-                        bbox_inches="tight", facecolor=fig.get_facecolor())
-
+    def _visible_rows(self):
+        """The rows currently shown, in their current order."""
+        t = self._table
+        return [[t.item(r, c).text() if t.item(r, c) else '' for c in range(t.columnCount())]
+                for r in range(t.rowCount())]
 
     def _copy_tsv(self):
         """Copy the visible rows as tab-separated text."""
-        rows = ['\t'.join(self._headers)]
-        for r in range(self._table.rowCount()):
-            rows.append('\t'.join(
-                self._table.item(r, c).text()
-                for c in range(self._table.columnCount())))
-        QApplication.clipboard().setText('\n'.join(rows))
+        lines = ['\t'.join(self._headers)] + ['\t'.join(r) for r in self._visible_rows()]
+        QApplication.clipboard().setText('\n'.join(lines))
 
     def _export_csv(self):
         """Save the visible rows as a CSV file."""
-        path, _ = QFileDialog.getSaveFileName(self, "Export CSV", "", "CSV (*.csv)")
-        if not path: return
-        import csv as _csv
+        import csv
+        safe = re.sub(r'[^\w\- ]+', '', self._title).strip().replace(' ', '_') or 'table'
+        path, _ = QFileDialog.getSaveFileName(self, "Export CSV", f"{safe}.csv", "CSV (*.csv)")
+        if not path:
+            return
         with open(path, "w", newline="", encoding="utf-8") as f:
-            w = _csv.writer(f); w.writerow(self._headers)
-            for r in range(self._table.rowCount()):
-                w.writerow(self._table.item(r, c).text()
-                           for c in range(self._table.columnCount()))
-
+            w = csv.writer(f)
+            w.writerow(self._headers)
+            w.writerows(self._visible_rows())
 
     def apply_theme(self):
-        """Restyle for the current theme."""
-        fs2 = fs(-2); fs3 = fs(-3)
-        bg = Theme.c("bg_secondary"); fg = Theme.c("text")
-        fg2 = Theme.c("text_secondary"); bd = Theme.c("border")
-        ac = Theme.c("accent"); sf = Theme.c("surface")
-
-        self._top.setStyleSheet(f"QFrame{{background:{bg};border-radius:8px 8px 0 0;}}")
-        self._title_lbl.setStyleSheet(
-            f"color:{fg2};font-size:{fs2}px;font-weight:600;")
-        self._note_lbl.setStyleSheet(
-            f"color:{fg2};font-size:{fs3}px;font-style:italic;padding:2px 8px;background:transparent;")
-        self._badge.setStyleSheet(
-            f"background:{Theme.c('accent_surface')};color:{ac};"
-            f"border-radius:10px;padding:0 8px;font-size:{fs3}px;")
-        tog = (f"QPushButton{{background:transparent;border:0.5px solid {bd};"
-               f"border-radius:5px;padding:2px 10px;font-size:{fs3}px;color:{fg2};}}"
-               f"QPushButton:checked{{background:{ac};color:white;border-color:{ac};}}"
-               f"QPushButton:hover{{border-color:{ac};}}")
-        self._tab_btn.setStyleSheet(tog); self._chart_btn.setStyleSheet(tog)
-        self._stats_btn.setStyleSheet(tog)
-        smll = (f"QPushButton{{background:transparent;border:0.5px solid {bd};"
-                f"border-radius:5px;padding:2px 8px;font-size:{fs3}px;color:{fg2};}}"
-                f"QPushButton:hover{{background:{Theme.c('accent_surface')};color:{ac};}}")
-        for child in self._top.findChildren(QPushButton):
-            if child not in (self._tab_btn, self._chart_btn, self._stats_btn):
-                child.setStyleSheet(smll)
-        self._stats_frame.setStyleSheet(
-            f"QFrame{{background:{Theme.c('bg_tertiary')};border-bottom:1px solid {bd};}}"
-            f"QLabel{{color:{fg2};font-size:{fs3}px;}}"
-            f"QComboBox{{background:{sf};color:{fg};border:1px solid {bd};"
-            f"border-radius:4px;padding:2px 6px;font-size:{fs3}px;}}")
-        self._stats_lbl.setStyleSheet(
-            f"color:{fg};font-size:{fs3}px;font-family:monospace;")
-        self._filt_frame.setStyleSheet(f"QFrame{{background:{bg};}}")
-        self._filter.setStyleSheet(
-            f"QLineEdit{{border:0.5px solid {bd};border-radius:6px;"
-            f"padding:4px 10px;font-size:{fs2}px;background:{sf};color:{fg};}}")
-        self._filter_lbl.setStyleSheet(
-            f"color:{fg2};font-size:{fs3}px;")
-        self._table.setStyleSheet(
-            f"QTableWidget{{background:{sf};color:{fg};border:0.5px solid {bd};"
-            f"gridline-color:{bd};font-size:{fs2}px;alternate-background-color:{bg};}}"
-            f"QHeaderView::section{{background:{bg};color:{fg2};border:none;"
-            f"border-bottom:0.5px solid {bd};padding:4px 8px;"
-            f"font-size:{fs2}px;font-weight:600;}}"
-            f"QTableWidget::item{{padding:4px 8px;}}"
-            f"QTableWidget::item:selected{{background:{Theme.c('accent_surface')};color:{ac};}}"
-            f"QTableWidget::item:hover{{background:{Theme.c('surface_hover')};}}")
-        self._table.verticalHeader().setDefaultSectionSize(fs() + 12)
-        for b, _ in self._type_btns: b.setStyleSheet(tog)
-        smll2 = smll
-        self._chart_save_btn.setStyleSheet(smll2)
-        for child in self._chart_page.findChildren(QLabel):
-            child.setStyleSheet(f"color:{fg2};font-size:{fs3}px;")
-        if hasattr(self, "_col_combo"):
-            self._col_combo.setStyleSheet(
-                f"QComboBox{{background:{sf};color:{fg};border:0.5px solid {bd};"
-                f"border-radius:4px;padding:2px 6px;font-size:{fs3}px;}}")
+        """Refit after a font or theme change; colours come from the window stylesheet."""
+        self._fit_columns()
+        self._fit_height()
 
 
 class OutputBubble(QFrame):
@@ -1016,6 +846,7 @@ class OutputBubble(QFrame):
             text (str): Printed output.
         """
         super().__init__()
+        self.setObjectName('aiRow')
         self.setContentsMargins(0,4,0,4)
         lo = QVBoxLayout(self); lo.setContentsMargins(0,0,0,0); lo.setSpacing(2)
         hdr = QLabel("▶ Query result")
@@ -1039,11 +870,9 @@ class OutputBubble(QFrame):
 
 
 class NoticeBubble(QFrame):
-    """A short coloured notice: an error, a warning or a note."""
+    """A short notice in the app's toast style: an error, a warning or a note."""
 
-    _KINDS = {'error': ('error_bg', 'error_border', 'error_text', '⚠'),
-              'warn': ('warn_bg', 'warn_border', 'warn_text', '⚠'),
-              'info': ('accent_surface', 'border', 'text', 'ℹ')}
+    _KINDS = {'error': ('error_dot', '⚠'), 'warn': ('warn_dot', '⚠'), 'info': ('accent', 'ℹ')}
 
     def __init__(self, text, kind='warn'):
         """Create the notice.
@@ -1053,27 +882,35 @@ class NoticeBubble(QFrame):
             kind (str): ``error``, ``warn`` or ``info``.
         """
         super().__init__()
+        self.setObjectName('aiRow')
         self._kind = kind if kind in self._KINDS else 'warn'
         self.setContentsMargins(0, 3, 0, 3)
         lo = QVBoxLayout(self)
         lo.setContentsMargins(0, 0, 0, 0)
         self._card = QFrame()
-        cl = QVBoxLayout(self._card)
-        cl.setContentsMargins(12, 7, 12, 7)
-        self._lbl = QLabel(f"{self._KINDS[self._kind][3]} {text}")
+        self._card.setObjectName('aiNotice')
+        cl = QHBoxLayout(self._card)
+        cl.setContentsMargins(10, 6, 12, 6)
+        cl.setSpacing(8)
+        self._icon = QLabel(self._KINDS[self._kind][1])
+        self._icon.setAlignment(Qt.AlignTop)
+        cl.addWidget(self._icon)
+        self._lbl = QLabel(text)
         self._lbl.setWordWrap(True)
         self._lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        cl.addWidget(self._lbl)
+        cl.addWidget(self._lbl, 1)
         lo.addWidget(self._card)
         self.apply_theme()
 
     def apply_theme(self):
         """Restyle for the current theme."""
-        bg, bd, fg, _ = self._KINDS[self._kind]
+        accent = Theme.c(self._KINDS[self._kind][0])
         self._card.setStyleSheet(
-            f"QFrame{{background:{Theme.c(bg)};border:1px solid {Theme.c(bd)};border-radius:10px;}}")
+            f"QFrame#aiNotice{{background:{Theme.c('surface')};border:1px solid {Theme.c('border_light')};"
+            f"border-left:3px solid {accent};border-radius:6px;}}")
+        self._icon.setStyleSheet(f"color:{accent};font-size:{fs(-1)}px;background:transparent;border:none;")
         self._lbl.setStyleSheet(
-            f"color:{Theme.c(fg)};font-size:{fs(-2)}px;background:transparent;border:none;")
+            f"color:{Theme.c('text')};font-size:{fs(-2)}px;background:transparent;border:none;")
 
 
 class CodeBubble(QFrame):
@@ -1087,6 +924,7 @@ class CodeBubble(QFrame):
             expanded (bool): Start unfolded.
         """
         super().__init__()
+        self.setObjectName('aiRow')
         self._code = code
         self.setContentsMargins(0, 2, 0, 2)
         lo = QVBoxLayout(self)
@@ -1197,10 +1035,12 @@ class FigureBubble(QFrame):
             code (str): The code that drew it, shown folded.
         """
         super().__init__()
+        self.setObjectName('aiRow')
         self._fig = figure
         self._title = title or 'Figure'
         self._window = None
         self._pix = None
+        self._dark = None
         self.setContentsMargins(0, 4, 0, 4)
         lo = QVBoxLayout(self)
         lo.setContentsMargins(0, 0, 0, 0)
@@ -1233,10 +1073,11 @@ class FigureBubble(QFrame):
         self.apply_theme()
 
     def _render(self):
-        """Draw the preview image."""
+        """Draw the preview image in the current theme."""
         from results.ai.figures import render_png
+        self._dark = Theme.is_dark()
         try:
-            png = render_png(self._fig, dpi=self.PREVIEW_DPI)
+            png = render_png(self._fig, dpi=self.PREVIEW_DPI, dark=self._dark)
         except Exception as e:
             _itk_log.exception("Figure preview failed")
             self._img.setText(f"⚠ Could not draw the figure: {e}")
@@ -1267,9 +1108,16 @@ class FigureBubble(QFrame):
         self._fit()
 
     def _copy_image(self):
-        """Copy the figure image to the clipboard."""
-        if self._pix is not None:
-            QApplication.clipboard().setPixmap(self._pix)
+        """Copy the figure, in its white publication version, to the clipboard."""
+        from results.ai.figures import render_png
+        try:
+            pix = QPixmap()
+            pix.loadFromData(render_png(self._fig, dpi=200))
+        except Exception:
+            _itk_log.exception("Could not copy the figure")
+            return
+        if not pix.isNull():
+            QApplication.clipboard().setPixmap(pix)
             self._btns[1].setText("✓ Copied")
             QTimer.singleShot(1500, lambda: self._btns[1].setText("⎘ Copy"))
 
@@ -1309,7 +1157,12 @@ class FigureBubble(QFrame):
                 f"QPushButton{{background:transparent;border:0.5px solid {Theme.c('border')};"
                 f"border-radius:5px;padding:2px 8px;font-size:{fs(-3)}px;color:{Theme.c('text_secondary')};}}"
                 f"QPushButton:hover{{background:{Theme.c('accent_surface')};color:{Theme.c('accent')};}}")
-        self._img.setStyleSheet("background:white;border-radius:6px;padding:4px;")
+        from results.ai.figures import DARK_PREVIEW
+        paper = DARK_PREVIEW['paper'] if Theme.is_dark() else '#ffffff'
+        self._img.setStyleSheet(f"background:{paper};border:1px solid {Theme.c('border_light')};"
+                                f"border-radius:6px;padding:4px;")
+        if getattr(self, '_dark', None) is not None and self._dark != Theme.is_dark():
+            self._render()
         if self._code is not None:
             self._code.apply_theme()
 
@@ -1359,23 +1212,32 @@ class AutoGrowTextEdit(QPlainTextEdit):
         self.char_changed.emit(len(self.toPlainText()))
         self._adjust()
 
-    def _adjust(self):
-        """Fit the height to the text, or keep the forced height."""
-        if self._forced_h is not None:
-            if self.height() != self._forced_h:
-                self.setFixedHeight(self._forced_h)
-            doc = self.document()
-            vw = self.viewport().width()
-            if vw > 10: doc.setTextWidth(vw)
-            h = doc.size().height() + 2 * self.frameWidth() + 12
-            self.setVerticalScrollBarPolicy(
-                Qt.ScrollBarAsNeeded if h > self._forced_h else Qt.ScrollBarAlwaysOff)
-            return
+    def _content_height(self):
+        """Pixel height the current text needs, wrapped lines included.
+
+        A QPlainTextEdit reports its document height in lines, not pixels,
+        so the line count is turned into pixels with the font's line spacing.
+        """
         doc = self.document()
         vw = self.viewport().width()
         if vw > 10:
             doc.setTextWidth(vw)
-        h = doc.size().height() + 2 * self.frameWidth() + 12
+        lines = max(1.0, doc.size().height())
+        spacing = self.fontMetrics().lineSpacing()
+        margins = self.contentsMargins().top() + self.contentsMargins().bottom()
+        vm = self.viewportMargins() if hasattr(self, 'viewportMargins') else None
+        extra = (vm.top() + vm.bottom()) if vm is not None else 0
+        return int(lines * spacing + 2 * doc.documentMargin() + margins + extra + 2 * self.frameWidth() + 6)
+
+    def _adjust(self):
+        """Fit the height to the text, or keep the forced height."""
+        h = self._content_height()
+        if self._forced_h is not None:
+            if self.height() != self._forced_h:
+                self.setFixedHeight(self._forced_h)
+            self.setVerticalScrollBarPolicy(
+                Qt.ScrollBarAsNeeded if h > self._forced_h else Qt.ScrollBarAlwaysOff)
+            return
         target = int(min(max(self._MIN_H, h), self._AUTO_MAX_H))
         if self.height() != target:
             self.setFixedHeight(target)

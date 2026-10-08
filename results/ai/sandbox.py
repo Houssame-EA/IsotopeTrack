@@ -22,6 +22,7 @@ import sys
 import threading
 import time
 import traceback
+import warnings
 from collections import Counter, defaultdict
 from contextlib import redirect_stdout
 from dataclasses import dataclass, field
@@ -419,6 +420,14 @@ def build_namespace(ds, collector, tables, findings):
     return ns
 
 
+def _has_content(fig):
+    """Whether any panel of a figure has something drawn on it."""
+    for ax in fig.axes:
+        if ax.lines or ax.patches or ax.images or ax.texts or ax.collections:
+            return True
+    return False
+
+
 def _finish_figures(collector, result):
     """Style, render and describe the figures, collecting any drawing errors."""
     for i, fig in enumerate(collector.figures, start=1):
@@ -487,7 +496,8 @@ def execute(code, ds, timeout=CODE_EXEC_TIMEOUT, stop_event=None):
         sys.settrace(on_call)
         try:
             compiled = compile(code, '<generated>', 'exec')
-            with redirect_stdout(out), matplotlib.rc_context(STYLE):
+            with redirect_stdout(out), matplotlib.rc_context(STYLE), warnings.catch_warnings():
+                warnings.simplefilter('ignore', UserWarning)
                 exec(compiled, ns)
         except BaseException as e:
             err[0] = format_exec_error(e, code)
@@ -517,6 +527,7 @@ def execute(code, ds, timeout=CODE_EXEC_TIMEOUT, stop_event=None):
     result.findings = findings
     if err[0]:
         result.error = err[0]
+        collector.figures = [f for f in collector.figures if _has_content(f)]
     _finish_figures(collector, result)
     nums = floats_in_text(text)
     for t in tables:

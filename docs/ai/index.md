@@ -27,7 +27,7 @@ The particle data the assistant works on, as one pandas table.
 ### [`dialog.py`](dialog.md)
 The AI Data Assistant chat window.
 
-**1** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **82** methods
+**1** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **83** methods
 
 ### [`exploration.py`](exploration.md)
 State of an agentic exploration: the plan, the findings and the steps.
@@ -37,7 +37,7 @@ State of an agentic exploration: the plan, the findings and the steps.
 ### [`figures.py`](figures.md)
 Figures the model draws itself, with matplotlib, inside the sandbox.
 
-**5** classes &nbsp;·&nbsp; **6** functions &nbsp;·&nbsp; **25** methods
+**5** classes &nbsp;·&nbsp; **9** functions &nbsp;·&nbsp; **25** methods
 
 ### [`node.py`](node.md)
 The AI Assistant canvas node.
@@ -57,7 +57,7 @@ Export a conversation as one self-contained HTML report.
 ### [`sandbox.py`](sandbox.md)
 Running the Python the model writes, safely enough for a local tool.
 
-**1** classes &nbsp;·&nbsp; **17** functions &nbsp;·&nbsp; **1** methods
+**1** classes &nbsp;·&nbsp; **18** functions &nbsp;·&nbsp; **1** methods
 
 ### [`servers.py`](servers.md)
 Local model servers: discovery, launching, stopping and thread housekeeping.
@@ -87,4 +87,4 @@ Colours, font sizes and markdown rendering shared by the AI chat widgets.
 ### [`widgets.py`](widgets.md)
 Chat window building blocks: message bubbles, tables, figures and inputs.
 
-**16** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **86** methods
+**16** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **88** methods

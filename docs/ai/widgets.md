@@ -57,25 +57,28 @@ The assistant's reply while it is being written.
 
 ### `ExplorationBubble` *(extends `QFrame`)*
 
-Card that follows an exploration: plan, live findings, steps and summary.
+Panel that follows an exploration: plan, live findings, steps and summary.
 
-The plan and the findings stay visible while the model works. Each
-turn's code, tables and figures sit in a collapsible list of steps, and
-the final summary appears at the bottom.
+Styled like the app's other panels. The plan and the findings stay
+visible while the model works; each turn's code, tables and figures sit
+in a folded list of steps; the summary appears at the bottom.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, question)` | Create the card. |
+| `__init__` | `(self, question)` | Create the panel. |
+| `_section` | `(self, layout, title)` | Add a hidden section header and its rich-text body. |
 | `set_progress` | `(self, turn, max_turns, text='')` | Show the current turn and what the model is doing. |
 | `set_plan` | `(self, items)` | Show the model's hypotheses. |
+| `_render_plan` | `(self)` | Render the plan as a numbered list. |
 | `set_findings` | `(self, ledger)` | Show the findings recorded so far. |
+| `_render_findings` | `(self)` | Render the findings with a coloured mark for supported ones. |
 | `add_step` | `(self, turn_num, rationale, code, result)` | Add one turn to the list of steps. |
 | `set_summary` | `(self, summary_md)` | Show the final summary and stop the progress bar. |
 | `mark_cancelled` | `(self, reason='stopped by user')` | Show that the exploration ended early. |
 | `_update_toggle` | `(self)` | Refresh the show/hide steps button text. |
 | `_toggle_expand` | `(self)` | Show or hide the steps. |
-| `_build_step_widget` | `(self, turn_num, rationale, code, result)` | Build the compact view of one turn. |
-| `apply_theme` | `(self)` | Restyle for the current theme and font size. |
+| `_build_step_widget` | `(self, turn_num, rationale, code, result)` | Build the view of one turn. |
+| `apply_theme` | `(self)` | Re-render rich text and restyle the nested tables, figures and code. |
 
 ### `_NumericItem` *(extends `QTableWidgetItem`)*
 
@@ -87,25 +90,26 @@ QTableWidgetItem that sorts numerically when possible.
 
 ### `InteractiveTableBubble` *(extends `QFrame`)*
 
-Sortable, filterable table with stats panel, chart type selector, and CSV export.
+A result table: sortable, filterable, with column statistics and export.
+
+Figures are left to the model, which draws one designed for the result,
+so the table itself only shows numbers.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, headers, rows, title='Query result', note='')` | Create the table. |
 | `_populate` | `(self, rows)` | Fill the table with rows. |
+| `_fit_columns` | `(self)` | Size columns to their content, within a maximum width. |
 | `_fit_height` | `(self)` | Make the table exactly as tall as its rows, up to a limit. |
-| `showEvent` | `(self, event)` | Refit the height once the table is laid out with its real fonts. |
+| `showEvent` | `(self, event)` | Refit once the table is laid out with its real fonts. |
 | `_apply_filter` | `(self, text)` | Show only rows containing the filter text. |
-| `_on_col_click` | `(self, col_idx)` | Select the clicked column in the stats combo and show stats. |
+| `_on_col_click` | `(self, col_idx)` | Select the clicked column in the statistics strip. |
 | `_toggle_stats` | `(self, checked)` | Show or hide the column statistics. |
 | `_refresh_stats` | `(self)` | Compute statistics of the selected numeric column. |
-| `_switch` | `(self, idx)` | Show the table (0) or the quick chart (1). |
-| `_set_chart_kind` | `(self, kind)` | Change the quick chart type. |
-| `_draw_chart` | `(self)` | Draw the selected numeric column as a quick chart of the table. |
-| `_save_chart_png` | `(self)` | Save the quick chart as a PNG. |
+| `_visible_rows` | `(self)` | The rows currently shown, in their current order. |
 | `_copy_tsv` | `(self)` | Copy the visible rows as tab-separated text. |
 | `_export_csv` | `(self)` | Save the visible rows as a CSV file. |
-| `apply_theme` | `(self)` | Restyle for the current theme. |
+| `apply_theme` | `(self)` | Refit after a font or theme change; colours come from the window stylesheet. |
 
 ### `OutputBubble` *(extends `QFrame`)*
 
@@ -118,7 +122,7 @@ Fallback plain-text output for non-tabular results.
 
 ### `NoticeBubble` *(extends `QFrame`)*
 
-A short coloured notice: an error, a warning or a note.
+A short notice in the app's toast style: an error, a warning or a note.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -157,10 +161,10 @@ original size at publication resolution.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, figure, title='', code=None)` | Create the card. |
-| `_render` | `(self)` | Draw the preview image. |
+| `_render` | `(self)` | Draw the preview image in the current theme. |
 | `_fit` | `(self)` | Scale the preview to the available width. |
 | `resizeEvent` | `(self, event)` | Keep the preview within the chat width. |
-| `_copy_image` | `(self)` | Copy the figure image to the clipboard. |
+| `_copy_image` | `(self)` | Copy the figure, in its white publication version, to the clipboard. |
 | `_save` | `(self)` | Save the figure at its original size and publication resolution. |
 | `_pop_out` | `(self)` | Open the figure in its own window. |
 | `apply_theme` | `(self)` | Restyle for the current theme. |
@@ -177,6 +181,7 @@ bypassed and the input stays at the user-chosen height.
 | `set_forced_height` | `(self, h)` | Lock the input to a specific height (in px). Pass None to re-enable |
 | `get_forced_height` | `(self)` | Return the height the user dragged to, or ``None``. |
 | `_on_changed` | `(self)` | Report the length and resize after an edit. |
+| `_content_height` | `(self)` | Pixel height the current text needs, wrapped lines included. |
 | `_adjust` | `(self)` | Fit the height to the text, or keep the forced height. |
 | `resizeEvent` | `(self, event)` | Refit the height when the width changes. |
 | `keyPressEvent` | `(self, event)` | Send on Enter; Shift+Enter inserts a new line. |
