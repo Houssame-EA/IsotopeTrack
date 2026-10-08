@@ -5359,9 +5359,23 @@ class CanvasResultsDialog(QDialog):
         self._insights_btn = None  
     
         def _clear_and_log():
+            """Clear the canvas and record how much was removed."""
+            node_count = len(self.canvas.scene.workflow_nodes)
+            link_count = len(self.canvas.scene.workflow_links)
             self.clear_canvas()
-    
+            ual = _ual()
+            if ual:
+                ual.log_action('CLICK', 'Cleared canvas',
+                               {'nodes_removed': node_count,
+                                'links_removed': link_count})
+
         def _close_and_log():
+            """Record the canvas size, then close the Workflow Builder."""
+            ual = _ual()
+            if ual:
+                ual.log_action('CLICK', 'Closed Workflow Builder',
+                               {'nodes': len(self.canvas.scene.workflow_nodes),
+                                'links': len(self.canvas.scene.workflow_links)})
             self.close()
     
         clr = QPushButton("Clear All")

@@ -487,7 +487,7 @@ class _Card(QFrame):
                 self._cluster_btn.setToolTip(
                     "Adds a Clustering node fed by a selector with these samples and elements, "
                     "to explore the particle types further with your own settings")
-                self._cluster_btn.clicked.connect(lambda: self._on_cluster(self._s))
+                self._cluster_btn.clicked.connect(self._cluster_clicked)
                 figure_row.addWidget(self._cluster_btn)
             figure_row.addWidget(self._figure_btn)
             root.addLayout(figure_row)
@@ -532,11 +532,15 @@ class _Card(QFrame):
         if self._details is None:
             return
         shown = not self._details.isVisible()
+        log_click(f"Insights: {'showed' if shown else 'hid'} details of '{self._s.title}'",
+                  {"category": self._s.category})
         self._details.setVisible(shown)
         self._details_btn.setText("Hide details" if shown else "Show details")
 
     def _figure_clicked(self):
         """Add the explained figure, and confirm on the button."""
+        log_click(f"Insights: added figure for '{self._s.title}'",
+                  {"category": self._s.category, "samples": len(self._s.samples or ())})
         self._on_figure(self._s)
         original = self._figure_btn.text()
         self._figure_btn.setText("Figure added")
@@ -552,8 +556,16 @@ class _Card(QFrame):
 
         QTimer.singleShot(1400, restore)
 
+    def _cluster_clicked(self):
+        """Add a Clustering node for this particle-type finding."""
+        log_click(f"Insights: explored '{self._s.title}' in Clustering",
+                  {"category": self._s.category})
+        self._on_cluster(self._s)
+
     def _clicked(self):
         """Add the plot, and confirm on the button."""
+        log_click(f"Insights: added plot for '{self._s.title}'",
+                  {"category": self._s.category, "node_type": self._s.node_type})
         self._on_add(self._s)
         original = self._add_btn.text()
         self._add_btn.setText("Added")
@@ -685,6 +697,26 @@ def _discard(widget: QWidget):
     widget.deleteLater()
 
 
+def log_click(description: str, context: dict | None = None):
+    """Record a click in Insights in the user-action log.
+
+    Every button and menu in the panel goes through here, so a session log
+    shows what was pressed and in what order, like the rest of the app.
+
+    Args:
+        description: What the click did, e.g. ``"Insights: added plot"``.
+        context: Extra fields stored with the entry.
+    """
+    try:
+        from tools.logging_utils import logging_manager
+        ual = logging_manager.get_user_action_logger()
+    except Exception:
+        _itk_log.debug("[Insights] user-action logger unavailable")
+        return
+    if ual is not None:
+        ual.log_action("CLICK", description, context or {})
+
+
 def element_symbols(particles) -> list[str]:
     """Element symbols detected in *particles*, lightest first.
 
@@ -805,7 +837,7 @@ class SmartInsightsPanel(QWidget):
         self._refresh_btn.setFixedSize(28, 28)
         self._refresh_btn.setToolTip("Search again from scratch")
         self._refresh_btn.setCursor(Qt.PointingHandCursor)
-        self._refresh_btn.clicked.connect(self.refresh)
+        self._refresh_btn.clicked.connect(self._refresh_clicked)
         top.addWidget(self._refresh_btn, 0, Qt.AlignTop)
         head.addLayout(top)
 
@@ -830,14 +862,14 @@ class SmartInsightsPanel(QWidget):
         self._all_action = self._types_menu.addAction("All plot types")
         self._all_action.setCheckable(True)
         group.addAction(self._all_action)
-        self._all_action.triggered.connect(lambda: self._set_filter(None))
+        self._all_action.triggered.connect(lambda: self._pick_filter(None))
         self._types_menu.addSeparator()
         self._type_actions = {}
         for key in node_type_keys():
             action = self._types_menu.addAction(NODE_TYPE_META[key])
             action.setCheckable(True)
             group.addAction(action)
-            action.triggered.connect(lambda _checked=False, k=key: self._set_filter(k))
+            action.triggered.connect(lambda _checked=False, k=key: self._pick_filter(k))
             self._type_actions[key] = action
         self._sync_filter_actions()
         self._types_btn.setMenu(self._types_menu)
@@ -876,7 +908,7 @@ class SmartInsightsPanel(QWidget):
         self._new_bar.setObjectName("iNewBar")
         self._new_bar.setCursor(Qt.PointingHandCursor)
         self._new_bar.setVisible(False)
-        self._new_bar.clicked.connect(self._release_held)
+        self._new_bar.clicked.connect(self._new_bar_clicked)
         root.addWidget(self._new_bar)
 
         scroll = QScrollArea()
@@ -989,7 +1021,7 @@ class SmartInsightsPanel(QWidget):
         every.setCheckable(True)
         every.setChecked(not self._focus)
         group.addAction(every)
-        every.triggered.connect(lambda: self.set_focus(""))
+        every.triggered.connect(lambda: self._pick_focus(""))
         if symbols:
             self._focus_menu.addSeparator()
         for symbol in symbols:
@@ -997,7 +1029,7 @@ class SmartInsightsPanel(QWidget):
             action.setCheckable(True)
             action.setChecked(symbol == self._focus)
             group.addAction(action)
-            action.triggered.connect(lambda _checked=False, sym=symbol: self.set_focus(sym))
+            action.triggered.connect(lambda _checked=False, sym=symbol: self._pick_focus(sym))
         self._focus_btn.setText(f"Element: {self._focus or 'all'}  ▾")
 
     def current_focus(self) -> str:
@@ -1114,6 +1146,28 @@ class SmartInsightsPanel(QWidget):
         self._worker.results_ready.connect(
             lambda _found, keys=frozenset(needed), key=scope.key: self._on_done(keys, key))
         self._worker.start()
+
+    def _refresh_clicked(self):
+        """Search again from scratch after the refresh button is pressed."""
+        log_click("Insights: searched again from scratch")
+        self.refresh()
+
+    def _pick_filter(self, node_type: str | None):
+        """Show the plot type picked from the menu, and log the choice."""
+        name = NODE_TYPE_META.get(node_type, "All plot types") if node_type else "All plot types"
+        log_click(f"Insights: showing {name}", {"node_type": node_type or "all"})
+        self._set_filter(node_type)
+
+    def _pick_focus(self, symbol: str):
+        """Search around the element picked from the menu, and log the choice."""
+        log_click(f"Insights: searching around {symbol}" if symbol
+                  else "Insights: searching all elements", {"element": symbol or "all"})
+        self.set_focus(symbol)
+
+    def _new_bar_clicked(self):
+        """Show the findings that were held back, and log the click."""
+        log_click("Insights: showed new findings")
+        self._release_held()
 
     def refresh(self):
         """Search everything again from scratch."""
@@ -1697,6 +1751,7 @@ def make_insights_toggle_button(canvas_dialog, splitter: QSplitter) -> QPushButt
     def _toggle():
         """Show or hide the panel, resizing the splitter to match."""
         panel = canvas_dialog.insights_panel
+        log_click("Closed Insights" if panel.isVisible() else "Opened Insights")
         if panel.isVisible():
             width = splitter.sizes()[-1]
             if width >= panel.MIN_WIDTH:
