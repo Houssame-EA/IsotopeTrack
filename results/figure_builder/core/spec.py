@@ -285,6 +285,8 @@ PANEL_DEFAULTS = {
     'pie_mode': 'groups',
     'donut': False,
     'show_fit': False,
+    'fit_lines': '1',
+    'fit_color_points': False,
     'show_r': False,
     'hlines': '',
     'vlines': '',

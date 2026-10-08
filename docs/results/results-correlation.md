@@ -2,6 +2,13 @@
 
 ---
 
+## Constants
+
+| Name | Value |
+|------|-------|
+| `TREND_LINE_CHOICES` | `{'1': 'One line', 'auto': 'Find how many (1 to 3)', '2': …` |
+| `TREND_LINE_COLORS` | `['#1D4ED8', '#047857', '#B45309']` |
+
 ## Classes
 
 ### `CorrelationSettingsDialog` *(extends `QDialog`)*
@@ -135,3 +142,10 @@ Correlation plot node with multiple sample support and auto-detection.
 | `_auto_configure_elements` | `(self)` |  |
 | `_get_elements` | `(self) → list` |  |
 | `extract_plot_data` | `(self)` |  |
+
+## Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `_fit_trend_lines` | `(x, y, cfg)` | Fit the configured number of lines to already-prepared plot data. |
+| `_draw_trend_lines` | `(pi, x, y, trends, cfg, color, series=None)` | Draw each fitted line over its own particles, with its r and ratio. |

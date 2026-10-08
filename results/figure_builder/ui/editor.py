@@ -25,6 +25,7 @@ from results.figure_builder.charts.matrices import (
 from results.figure_builder.charts.more import LOLLI_STATS, SHARE_MODES, TIME_MODES
 from results.figure_builder.charts.network import NODE_SIZES, PCA_TRANSFORMS
 from results.figure_builder.charts.special import TERNARY_FILTERS
+from results.figure_builder.charts.xy import FIT_LINES
 from results.figure_builder.charts.overlays import ELLIPSES, INSET_LOCS, MARGINALS, TRENDS
 from results.figure_builder.core import styles as S
 from results.figure_builder.core.common import BANDS, GROUP_SORTS, HATCHES, SHAPE_TYPES, TICK_FORMATS
@@ -365,6 +366,8 @@ FIELDS = [
     ('Axes', 'Legend', 'legend_title', 'Title', 'text', LEGENDED, 'optional'),
     ('Axes', 'Legend', 'legend_size', 'Text size', 'combo', LEGENDED, S.FONT_SIZES),
     ('Stats', 'Fit', 'show_fit', 'Fit line', 'check', {'scatter'}, None),
+    ('Stats', 'Fit', 'fit_lines', 'Lines', 'combo', {'scatter'}, FIT_LINES),
+    ('Stats', 'Fit', 'fit_color_points', 'Colour points by their line', 'check', {'scatter'}, None),
     ('Stats', 'Fit', 'fit_band', '95% confidence band', 'check', {'scatter'}, None),
     ('Stats', 'Fit', 'sd_band', 'Fit ± SD of the residuals', 'check', {'scatter'}, None),
     ('Stats', 'Fit', 'show_r', 'Show r and R²', 'check', {'scatter'}, None),
@@ -732,7 +735,7 @@ class PanelEditor(QWidget):
             return
         self.panel[key] = value
         if key in ('kind', 'group_by', 'test', 'pie_mode', 'rules', 'y', 'heat_rows', 'heat_sort',
-                   'heat_search', 'show_fit', 'trend',
+                   'heat_search', 'show_fit', 'fit_lines', 'trend',
                    'share_mode', 'facet', 'bin_mode', 'donut', 'color_by', 'agg', 'stat_band',
                    'natural_line', 'dl_value'):
             if key == 'kind' and value == 'code' and not (self.panel.get('code') or '').strip():
@@ -810,7 +813,8 @@ class PanelEditor(QWidget):
         if key == 'donut_text':
             return kind == 'pie' and bool(p.get('donut'))
         if key in ('sd_band',):
-            return kind == 'scatter' and bool(p.get('show_fit'))
+            return (kind == 'scatter' and bool(p.get('show_fit'))
+                    and str(p.get('fit_lines') or '1') == '1')
         if key == 'natural_color':
             return kind == 'scatter' and bool(p.get('natural_line'))
         if key == 'band_color':
@@ -838,8 +842,15 @@ class PanelEditor(QWidget):
             return p.get('share_mode') == 'combinations'
         if key == 'trend_bins':
             return kind == 'scatter' and p.get('trend', 'none') != 'none'
-        if key == 'fit_band':
+        if key == 'fit_lines':
             return kind == 'scatter' and bool(p.get('show_fit'))
+        if key == 'fit_color_points':
+            return (kind == 'scatter' and bool(p.get('show_fit'))
+                    and str(p.get('fit_lines') or '1') != '1'
+                    and not (p.get('color_by') or '').strip())
+        if key == 'fit_band':
+            return (kind == 'scatter' and bool(p.get('show_fit'))
+                    and str(p.get('fit_lines') or '1') == '1')
         if key == 'max_rows':
             return kind == 'heatmap' and p.get('heat_rows') == 'particles'
         if key == 'top_n' and kind == 'heatmap':

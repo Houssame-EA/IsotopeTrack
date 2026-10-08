@@ -44,6 +44,85 @@ except Exception:
     _CUSTOM_PLOT_AVAILABLE = False
 
 
+TREND_LINE_CHOICES = {
+    '1': 'One line',
+    'auto': 'Find how many (1 to 3)',
+    '2': 'Two lines',
+    '3': 'Three lines',
+}
+"""How many straight trend lines the correlation plot fits."""
+
+TREND_LINE_COLORS = ['#1D4ED8', '#047857', '#B45309']
+"""Colours of the second and third lines when one sample's points split."""
+
+
+def _fit_trend_lines(x, y, cfg):
+    """Fit the configured number of lines to already-prepared plot data.
+
+    Returns ``None`` with too few points, so the caller draws the usual
+    single line instead.
+    """
+    from results.multi_trend import fit_trends
+    choice = str(cfg.get('trend_lines', '1'))
+    try:
+        return fit_trends(x, y, 'auto' if choice == 'auto' else int(choice))
+    except Exception:
+        _itk_log.exception("Several-line fit failed")
+        return None
+
+
+def _draw_trend_lines(pi, x, y, trends, cfg, color, series=None):
+    """Draw each fitted line over its own particles, with its r and ratio.
+
+    A one-line result is drawn like the usual trend line. With several,
+    each line gets its own colour (the first keeps the sample's colour), is
+    drawn over the x range of its own particles, and is named in the plot's
+    legend with its r and, on log-log axes with a slope near one, the ratio
+    it stands for. Points can be recoloured to show which line each belongs
+    to; they are drawn first so every line stays on top.
+    """
+    from results.multi_trend import describe
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    log_xy = bool(cfg.get('log_x')) and bool(cfg.get('log_y'))
+    several = len(trends.lines) > 1
+    colors = [color if j == 0 else TREND_LINE_COLORS[(j - 1) % len(TREND_LINE_COLORS)]
+              for j in range(len(trends.lines))]
+    if several and cfg.get('trend_color_points', False):
+        for j in range(len(trends.lines)):
+            pick = trends.labels == j
+            if pick.any():
+                create_single_color_scatter(pi, x[pick], y[pick], cfg, colors[j])
+    if several and cfg.get('show_correlation', True) and pi.legend is None:
+        pi.addLegend(offset=(10, 10), labelTextSize='9pt')
+    for j, line in enumerate(trends.lines):
+        pick = trends.labels == j
+        if int(pick.sum()) < 2:
+            continue
+        lo, hi = np.percentile(x[pick], [2, 98])
+        xs = np.linspace(lo, hi, 100)
+        name = None
+        if several and cfg.get('show_correlation', True):
+            ratio = (f", ratio {10 ** line.intercept:.3g}" if log_xy and abs(line.slope - 1) <= 0.1
+                     else "")
+            prefix = f"{series}, " if series else ""
+            name = f"{prefix}line {j + 1}: r = {line.r:.3f}{ratio} (n = {line.n:,})"
+        ys = line.intercept + line.slope * xs
+        if several:
+            halo = pg.PlotDataItem(x=xs, y=ys, pen=pg.mkPen(color='w', width=5.5))
+            halo.setZValue(10)
+            pi.addItem(halo)
+            shade = QColor(colors[j]).darker(150)
+        else:
+            shade = QColor(colors[j])
+        item = pg.PlotDataItem(x=xs, y=ys, name=name,
+                               pen=pg.mkPen(color=shade, style=Qt.DashLine, width=2.5))
+        item.setZValue(11)
+        pi.addItem(item)
+        _itk_log.debug("Trend line %d: %s", j + 1, describe(line, bool(cfg.get('log_x')),
+                                                            bool(cfg.get('log_y'))))
+
+
 class CorrelationSettingsDialog(QDialog):
     """Full settings dialog opened from the right-click → Configure… action."""
 
@@ -327,6 +406,25 @@ class CorrelationSettingsDialog(QDialog):
             gl.addWidget(corr_btn)
             layout.addWidget(g)
             self._quantity_groups.append(g)
+
+        g = QGroupBox("Trend lines")
+        fl = QFormLayout(g)
+        self.trend_lines_combo = QComboBox()
+        for key, label in TREND_LINE_CHOICES.items():
+            self.trend_lines_combo.addItem(label, key)
+        current = str(self._config.get('trend_lines', '1'))
+        self.trend_lines_combo.setCurrentIndex(max(0, list(TREND_LINE_CHOICES).index(current)
+                                                   if current in TREND_LINE_CHOICES else 0))
+        self.trend_lines_combo.setToolTip(
+            "Fit one straight line, or let the plot find two or three separate trends (for "
+            "example two Fe/Mn ratios from two particle types). A line is only added when the "
+            "data clearly support it.")
+        fl.addRow("Lines:", self.trend_lines_combo)
+        self.trend_color_points_cb = QCheckBox()
+        self.trend_color_points_cb.setChecked(self._config.get('trend_color_points', False))
+        fl.addRow("Colour points by their line:", self.trend_color_points_cb)
+        layout.addWidget(g)
+        self._format_groups.append(g)
 
         g = QGroupBox("SD Envelope (around trend line)")
         fl = QFormLayout(g)
@@ -645,6 +743,8 @@ class CorrelationSettingsDialog(QDialog):
 
         if self._scope in {"format", "all"}:
             cfg['show_box'] = self.show_box_cb.isChecked()
+            cfg['trend_lines'] = self.trend_lines_combo.currentData()
+            cfg['trend_color_points'] = self.trend_color_points_cb.isChecked()
             cfg['show_sd_band'] = self.show_sd_band.isChecked()
             cfg['sd_band_color'] = self._sd_color
             cfg['sd_band_alpha'] = self._sd_alpha.value()
@@ -1106,6 +1206,17 @@ class CorrelationPlotDisplayDialog(QDialog):
             a.setChecked(cfg.get(key, default))
             a.triggered.connect(lambda checked, k=key: self._toggle(k, checked))
 
+        tl_menu = menu.addMenu("Trend Lines")
+        current = str(cfg.get('trend_lines', '1'))
+        for key, label in TREND_LINE_CHOICES.items():
+            a = tl_menu.addAction(label); a.setCheckable(True)
+            a.setChecked(key == current)
+            a.triggered.connect(lambda _, k=key: self._set_elem('trend_lines', k))
+        tl_menu.addSeparator()
+        a = tl_menu.addAction("Colour points by their line"); a.setCheckable(True)
+        a.setChecked(cfg.get('trend_color_points', False))
+        a.triggered.connect(lambda checked: self._toggle('trend_color_points', checked))
+
         lm_menu = menu.addMenu("Isotope Label")
         cur_lm = cfg.get('label_mode', 'Symbol')
         for mode in LABEL_MODES:
@@ -1555,7 +1666,12 @@ class CorrelationPlotDisplayDialog(QDialog):
                     scatter._color_identity_role = 'sample'
                     scatter._color_identity_key = sample_key
 
-        if cfg.get('show_trendline', True) and len(x) > 1:
+        trends = None
+        if cfg.get('show_trendline', True) and str(cfg.get('trend_lines', '1')) != '1':
+            trends = _fit_trend_lines(x, y, cfg)
+        if trends is not None:
+            _draw_trend_lines(pi, x, y, trends, cfg, color, sample_key or correlation_label)
+        elif cfg.get('show_trendline', True) and len(x) > 1:
             add_trend_line(pi, x, y, color)
 
             if cfg.get('show_sd_band', False) and len(x) > 2:
@@ -1582,7 +1698,9 @@ class CorrelationPlotDisplayDialog(QDialog):
                     _itk_log.exception("Handled exception in _plot_scatter")
                     _itk_log.error(f'[SD envelope] {e}')
 
-        if cfg.get('show_correlation', True) and len(x) > 1 and show_r:
+        if trends is not None and len(trends.lines) > 1:
+            pass
+        elif cfg.get('show_correlation', True) and len(x) > 1 and show_r:
             if correlation_label:
                 try:
                     r = float(np.corrcoef(x, y)[0, 1])
@@ -1834,6 +1952,7 @@ class CorrelationPlotNode(QObject):
         'outlier_percentile': 99.0,
         'saturation_threshold': 10000,
         'show_correlation': True, 'show_trendline': True,
+        'trend_lines': '1', 'trend_color_points': False,
         'show_sd_band': False,
         'sd_band_color': '#3B82F6',
         'sd_band_alpha': 0.18,
