@@ -29,7 +29,6 @@ from results.shared_plot_utils import (
 )
 from results.utils_sort import (
     sort_elements_by_mass,
-    sort_element_dict_by_mass,
     element_alphabetical_key,
 )
 import logging
@@ -439,6 +438,7 @@ class BoxPlotSettingsDialog(QDialog):
         self.show_x_grid_cb = None
         self.show_y_grid_cb = None
         self.grid_alpha_spin = None
+        self._classifier_group = None
 
         self._build_ui()
 
@@ -457,6 +457,13 @@ class BoxPlotSettingsDialog(QDialog):
         lay = QVBoxLayout(inner)
         scroll.setWidget(inner)
         root.addWidget(scroll)
+
+        if self._scope in ('all', 'quantities'):
+            from results.shared_plot_utils import ClassifierViewGroup
+            from results import classifier_view as cv
+            self._classifier_group = ClassifierViewGroup(
+                self._cfg, self._input_data, cv.ARITY_PER_KEY)
+            lay.addWidget(self._classifier_group.build())
 
         if self._scope == 'all':
             g1 = QGroupBox("Plot Shape")
@@ -782,6 +789,8 @@ class BoxPlotSettingsDialog(QDialog):
         """
         d = {
         }
+        if self._classifier_group is not None:
+            d.update(self._classifier_group.collect())
         if self.shape_combo is not None:
             d['plot_shape'] = self.shape_combo.currentText()
             d['violin_bandwidth'] = self.bw_spin.value()
@@ -1250,7 +1259,7 @@ class BoxPlotDisplayDialog(QDialog):
         show_outliers.triggered.connect(lambda _: self._toggle('show_outliers'))
 
         can_export_subplot = (
-            display_mode == 'Subplots by isotope'
+            display_mode in ('Subplots by isotope', 'Subplots by sample')
             and clicked_plot is not None
             and subplot_ctx is not None
         )
@@ -1318,12 +1327,17 @@ class BoxPlotDisplayDialog(QDialog):
         The export dialog/options are reused from ``download_pyqtgraph_figure``
         so format/resolution behavior remains consistent with full-figure
         export. Only the clicked ``PlotItem`` is targeted when available.
+
+        Works for either subplot mode's panel identity: ``Subplots by
+        isotope`` panels key off ``'element'`` (one isotope or classifier
+        group, boxes-by-sample inside); ``Subplots by sample`` panels key
+        off ``'sample'`` (one sample, boxes-by-isotope-or-group inside).
         """
-        raw_elem = subplot_ctx.get('element') if subplot_ctx else None
-        title = subplot_ctx.get('title') if subplot_ctx else None
-        stem = (
-            f"boxplot_{self._sanitize_filename_part(raw_elem or title)}_by_sample"
-        )
+        ctx = subplot_ctx or {}
+        raw_id = ctx.get('element') or ctx.get('sample')
+        title = ctx.get('title')
+        suffix = '_by_sample' if 'element' in ctx else '_by_element'
+        stem = f"boxplot_{self._sanitize_filename_part(raw_id or title)}{suffix}"
         download_pyqtgraph_figure(
             self.pw,
             self,
@@ -1795,9 +1809,10 @@ class BoxPlotDisplayDialog(QDialog):
         Returns:
             bool: ``True`` when at least one element distribution was drawn.
         """
+        from results import classifier_view as cv
         min_count = cfg.get('min_particle_count', 0)
         sort_mode = self._category_sort_mode(cfg)
-        sorted_data = sort_element_dict_by_mass(data)
+        sorted_data = cv.sort_label_dict_by_mass(self.node.input_data, data)
         category_records = []
         for el, vals in sorted_data.items():
             if min_count > 0 and len(vals) < min_count:
@@ -1860,13 +1875,14 @@ class BoxPlotDisplayDialog(QDialog):
         and sample name. Font and grid style are still applied from config so
         format settings remain consistent with subplot modes.
         """
+        from results import classifier_view as cv
         min_count = cfg.get('min_particle_count', 0)
         sort_mode = self._category_sort_mode(cfg)
         category_records = []
         for sn, sdata in plot_data.items():
             if not sdata:
                 continue
-            for el, vals in sort_element_dict_by_mass(sdata).items():
+            for el, vals in cv.sort_label_dict_by_mass(self.node.input_data, sdata).items():
                 if min_count > 0 and len(vals) < min_count:
                     continue
                 fv = _filter_values(vals, cfg.get('data_type_display'),
@@ -1920,6 +1936,7 @@ class BoxPlotDisplayDialog(QDialog):
         position/title. Empty sample panels show a visible ``No valid data``
         note.
         """
+        from results import classifier_view as cv
         sample_order = cfg.get('sample_order', [])
         if sample_order:
             names = [s for s in sample_order if s in plot_data]
@@ -1938,7 +1955,7 @@ class BoxPlotDisplayDialog(QDialog):
                 """Draw one stacked broken-axis panel (see _render_broken_or_plain)."""
                 if sd:
                     self._draw_single_sample(
-                        pi, sort_element_dict_by_mass(sd), cfg)
+                        pi, cv.sort_label_dict_by_mass(self.node.input_data, sd), cfg)
                 elif is_top:
                     _add_empty_panel_message(pi, "No valid data")
                 self._apply_effective_axis_labels(
@@ -1949,6 +1966,13 @@ class BoxPlotDisplayDialog(QDialog):
                         'left': {'text': _y_label(cfg), 'units': None},
                     },
                 )
+                self._subplot_context_by_plotitem[pi] = {
+                    "mode": "Subplots by sample",
+                    "sample": sn,
+                    "title": self._effective_title_for_key(
+                        self._title_key_for_sample_plot(sn),
+                        get_display_name(sn, cfg)),
+                }
                 _apply_boxplot_grid(pi, cfg)
                 apply_font_to_pyqtgraph(pi, cfg)
 
@@ -1977,6 +2001,7 @@ class BoxPlotDisplayDialog(QDialog):
         computed statistics. Axis/tick font, grid styling, and figure overlays
         (including frame) are applied per subplot from config.
         """
+        from results import classifier_view as cv
         min_count = cfg.get('min_particle_count', 0)
         sort_mode = self._category_sort_mode(cfg)
         sample_order = cfg.get('sample_order', [])
@@ -1989,7 +2014,7 @@ class BoxPlotDisplayDialog(QDialog):
         all_elems = set()
         for sd in plot_data.values():
             all_elems.update(sd.keys())
-        all_elems = sort_elements_by_mass(list(all_elems))
+        all_elems = cv.sort_labels_by_mass(self.node.input_data, list(all_elems))
         cols = min(3, len(all_elems))
         rows = math.ceil(len(all_elems) / cols)
         cuts = _get_broken_cuts(cfg)
@@ -2162,7 +2187,8 @@ class BoxPlotNode(QObject):
         self._has_output = False
         self.input_channels = ["input"]
         self.output_channels = []
-        self.config = dict(DEFAULT_CONFIG)
+        from results.shared_plot_utils import deep_copy_config
+        self.config = deep_copy_config(DEFAULT_CONFIG)
         self.input_data = None
 
     def set_position(self, pos):
@@ -2182,6 +2208,22 @@ class BoxPlotNode(QObject):
         self.input_data = input_data
         self.configuration_changed.emit()
 
+    def classifier_role(self):
+        """The GROUPS-or-OFF role in force for this render (see
+        ``results.classifier_view``). Box/strip plot reads one composition
+        key at a time regardless of which data type is selected, so it is
+        ``ARITY_PER_KEY`` like histogram and element bar chart."""
+        from results import classifier_view as cv
+        return cv.effective_role(self.config, self.input_data, cv.ARITY_PER_KEY)
+
+    def classifier_scope(self):
+        """The DEFINITION-or-TOTAL-PARTICLE aggregation scope in force for
+        this render (see ``results.classifier_view``'s scope-axis docs).
+        Only changes anything under GROUPS role; harmless to resolve and
+        pass through unconditionally otherwise."""
+        from results import classifier_view as cv
+        return cv.effective_scope(self.config, self.input_data)
+
     def extract_plot_data(self):
         if not self.input_data:
             return None
@@ -2198,27 +2240,33 @@ class BoxPlotNode(QObject):
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
+        from results import classifier_view as cv
+        role = self.classifier_role()
+        scope = self.classifier_scope()
         result = {}
         for p in particles:
-            for el, val in p.get(data_key, {}).items():
+            for el, val in cv.composition_items_for_role(p, data_key, role, scope):
                 if data_key == 'elements':
                     if val > 0:
                         result.setdefault(el, []).append(val)
                 else:
                     if val > 0 and not np.isnan(val):
                         result.setdefault(el, []).append(val)
-        return sort_element_dict_by_mass(result) if result else None
+        return cv.sort_label_dict_by_mass(self.input_data, result) if result else None
 
     def _extract_multi(self, data_key):
         particles = self.input_data.get('particle_data', [])
         names = self.input_data.get('sample_names', [])
         if not particles:
             return None
+        from results import classifier_view as cv
+        role = self.classifier_role()
+        scope = self.classifier_scope()
         sd = {n: {} for n in names}
         for p in particles:
             src = p.get('source_sample')
             if src and src in sd:
-                for el, val in p.get(data_key, {}).items():
+                for el, val in cv.composition_items_for_role(p, data_key, role, scope):
                     if data_key == 'elements':
                         if val > 0:
                             sd[src].setdefault(el, []).append(val)
@@ -2228,6 +2276,6 @@ class BoxPlotNode(QObject):
         result = {}
         for sn, d in sd.items():
             if d:
-                result[sn] = sort_element_dict_by_mass(d)
+                result[sn] = cv.sort_label_dict_by_mass(self.input_data, d)
         return result if result else None
 

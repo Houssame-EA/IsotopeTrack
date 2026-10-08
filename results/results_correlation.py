@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QScrollArea, QWidget, QMenu, QDialogButtonBox, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
     QColorDialog, QTabWidget,
 )
-from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtCore import Qt, Signal, QObject, QEvent
 from PySide6.QtGui import QColor, QCursor
 import pyqtgraph as pg
 import numpy as np
@@ -23,6 +23,7 @@ from results.shared_plot_utils import (
     download_pyqtgraph_figure, pick_color_hex, _QT_LINE,
     _apply_box,
 )
+from results import trend_selection as _sel
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_correlation")
 
@@ -44,6 +45,97 @@ except Exception:
     _CUSTOM_PLOT_AVAILABLE = False
 
 
+TREND_LINE_CHOICES = {
+    '1': 'One line',
+    'auto': 'Find how many (1 to 3)',
+    '2': 'Two lines',
+    '3': 'Three lines',
+}
+"""How many straight trend lines the correlation plot fits."""
+
+TREND_LINE_COLORS = ['#1D4ED8', '#047857', '#B45309']
+"""Colours of the second and third lines when one sample's points split."""
+
+
+def _log_user_action(description: str, context: dict | None = None):
+    """Record a click in the user-action log, if logging is running."""
+    try:
+        from tools.logging_utils import logging_manager
+        ual = logging_manager.get_user_action_logger()
+    except Exception:
+        _itk_log.debug("User-action logger unavailable")
+        return
+    if ual is not None:
+        ual.log_action("CLICK", description, context or {})
+
+
+def _fit_trend_lines(x, y, cfg):
+    """Fit the configured number of lines to already-prepared plot data.
+
+    Returns ``None`` with too few points, so the caller draws the usual
+    single line instead.
+    """
+    from results.multi_trend import fit_trends
+    choice = str(cfg.get('trend_lines', '1'))
+    try:
+        return fit_trends(x, y, 'auto' if choice == 'auto' else int(choice))
+    except Exception:
+        _itk_log.exception("Several-line fit failed")
+        return None
+
+
+def _draw_trend_lines(pi, x, y, trends, cfg, color, series=None):
+    """Draw each fitted line over its own particles, with its r and ratio.
+
+    A one-line result is drawn like the usual trend line. With several,
+    each line gets its own colour (the first keeps the sample's colour), is
+    drawn over the x range of its own particles, and is named in the plot's
+    legend with its r and, on log-log axes with a slope near one, the ratio
+    it stands for. Points can be recoloured to show which line each belongs
+    to; they are drawn first so every line stays on top.
+    """
+    from results.multi_trend import describe
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    log_xy = bool(cfg.get('log_x')) and bool(cfg.get('log_y'))
+    several = len(trends.lines) > 1
+    colors = [color if j == 0 else TREND_LINE_COLORS[(j - 1) % len(TREND_LINE_COLORS)]
+              for j in range(len(trends.lines))]
+    if several and cfg.get('trend_color_points', False):
+        for j in range(len(trends.lines)):
+            pick = trends.labels == j
+            if pick.any():
+                create_single_color_scatter(pi, x[pick], y[pick], cfg, colors[j])
+    if several and cfg.get('show_correlation', True) and pi.legend is None:
+        pi.addLegend(offset=(10, 10), labelTextSize='9pt')
+    for j, line in enumerate(trends.lines):
+        pick = trends.labels == j
+        if int(pick.sum()) < 2:
+            continue
+        lo, hi = np.percentile(x[pick], [2, 98])
+        xs = np.linspace(lo, hi, 100)
+        name = None
+        if several and cfg.get('show_correlation', True):
+            ratio = (f", ratio {10 ** line.intercept:.3g}" if log_xy and abs(line.slope - 1) <= 0.1
+                     else "")
+            prefix = f"{series}, " if series else ""
+            name = f"{prefix}line {j + 1}: r = {line.r:.3f}{ratio} (n = {line.n:,})"
+        ys = line.intercept + line.slope * xs
+        if several:
+            halo = pg.PlotDataItem(x=xs, y=ys, pen=pg.mkPen(color='w', width=5.5))
+            halo.setZValue(10)
+            pi.addItem(halo)
+            shade = QColor(colors[j]).darker(150)
+        else:
+            shade = QColor(colors[j])
+        item = pg.PlotDataItem(x=xs, y=ys, name=name,
+                               pen=pg.mkPen(color=shade, style=Qt.DashLine, width=2.5))
+        item.setZValue(11)
+        pi.addItem(item)
+        _itk_log.debug("Trend line %d: %s", j + 1, describe(line, bool(cfg.get('log_x')),
+                                                            bool(cfg.get('log_y'))))
+
+
 class CorrelationSettingsDialog(QDialog):
     """Full settings dialog opened from the right-click → Configure… action."""
 
@@ -51,10 +143,13 @@ class CorrelationSettingsDialog(QDialog):
 
     def __init__(self, config: dict, available_elements: list,
                  is_multi: bool, sample_names: list,
-                 scope: str = "all", parent=None, plot_data=None):
+                 scope: str = "all", parent=None, plot_data=None,
+                 input_data=None):
         super().__init__(parent)
         self._scope = scope if scope in {"format", "quantities", "all"} else "all"
         self._plot_data = plot_data
+        self._input_data = input_data
+        self._classifier_group = None
         if self._scope == "format":
             self.setWindowTitle("Correlation plot format settings")
         elif self._scope == "quantities":
@@ -184,6 +279,14 @@ class CorrelationSettingsDialog(QDialog):
         layout.setSpacing(8)
         scroll.setWidget(container)
         outer.addWidget(scroll)
+
+        from results.shared_plot_utils import ClassifierViewGroup
+        from results import classifier_view as cv
+        self._classifier_group = ClassifierViewGroup(
+            self._config, self._input_data, cv.ARITY_MULTI_KEY)
+        g = self._classifier_group.build()
+        layout.addWidget(g)
+        self._quantity_groups.append(g)
 
         if self._is_multi:
             g = QGroupBox("Multiple Sample Display")
@@ -316,6 +419,25 @@ class CorrelationSettingsDialog(QDialog):
             gl.addWidget(corr_btn)
             layout.addWidget(g)
             self._quantity_groups.append(g)
+
+        g = QGroupBox("Trend lines")
+        fl = QFormLayout(g)
+        self.trend_lines_combo = QComboBox()
+        for key, label in TREND_LINE_CHOICES.items():
+            self.trend_lines_combo.addItem(label, key)
+        current = str(self._config.get('trend_lines', '1'))
+        self.trend_lines_combo.setCurrentIndex(max(0, list(TREND_LINE_CHOICES).index(current)
+                                                   if current in TREND_LINE_CHOICES else 0))
+        self.trend_lines_combo.setToolTip(
+            "Fit one straight line, or let the plot find two or three separate trends (for "
+            "example two Fe/Mn ratios from two particle types). A line is only added when the "
+            "data clearly support it.")
+        fl.addRow("Lines:", self.trend_lines_combo)
+        self.trend_color_points_cb = QCheckBox()
+        self.trend_color_points_cb.setChecked(self._config.get('trend_color_points', False))
+        fl.addRow("Colour points by their line:", self.trend_color_points_cb)
+        layout.addWidget(g)
+        self._format_groups.append(g)
 
         g = QGroupBox("SD Envelope (around trend line)")
         fl = QFormLayout(g)
@@ -602,6 +724,8 @@ class CorrelationSettingsDialog(QDialog):
         """
         cfg = dict(self._config)
         if self._scope in {"quantities", "all"}:
+            if self._classifier_group is not None:
+                cfg.update(self._classifier_group.collect())
             cfg['mode'] = self.mode_combo.currentText()
             cfg['x_element'] = self.x_elem.currentText()
             cfg['y_element'] = self.y_elem.currentText()
@@ -632,6 +756,8 @@ class CorrelationSettingsDialog(QDialog):
 
         if self._scope in {"format", "all"}:
             cfg['show_box'] = self.show_box_cb.isChecked()
+            cfg['trend_lines'] = self.trend_lines_combo.currentData()
+            cfg['trend_color_points'] = self.trend_color_points_cb.isChecked()
             cfg['show_sd_band'] = self.show_sd_band.isChecked()
             cfg['sd_band_color'] = self._sd_color
             cfg['sd_band_alpha'] = self._sd_alpha.value()
@@ -1048,7 +1174,28 @@ class CorrelationPlotDisplayDialog(QDialog):
         self.plot_widget.setContextMenuPolicy(Qt.CustomContextMenu)
         self.plot_widget.customContextMenuRequested.connect(self._show_context_menu)
         self.plot_widget._itk_on_double_click = self._open_plot_format_settings
+        self._select_hint = QWidget()
+        self._select_hint.setObjectName("selectBar")
+        self._select_hint.setStyleSheet(
+            "#selectBar { background: #FDF2F8; border: 1px solid #F9A8D4; border-radius: 4px; }"
+            " QLabel { color: #9D174D; font-weight: 600; }")
+        hint_row = QHBoxLayout(self._select_hint)
+        hint_row.setContentsMargins(8, 3, 4, 3)
+        hint_row.addWidget(QLabel(
+            "Draw a loop around the points to fit a line to them. "
+            "Draw another loop for another line."), 1)
+        done = QPushButton("Done")
+        done.clicked.connect(self.stop_point_selection)
+        hint_row.addWidget(done)
+        self._select_hint.setVisible(False)
+        self._plot_container_layout.addWidget(self._select_hint)
         self._plot_container_layout.addWidget(self.plot_widget)
+        self._selecting = False
+        self._lasso = None
+        self._points_by_plot = {}
+        self._plot_keys = {}
+        self.plot_widget.viewport().installEventFilter(self)
+        self.plot_widget.installEventFilter(self)
         self._primary_plot_item = None
         layout.addWidget(self._plot_container, stretch=1)
 
@@ -1092,6 +1239,27 @@ class CorrelationPlotDisplayDialog(QDialog):
             a = tm.addAction(label); a.setCheckable(True)
             a.setChecked(cfg.get(key, default))
             a.triggered.connect(lambda checked, k=key: self._toggle(k, checked))
+
+        tl_menu = menu.addMenu("Trend Lines")
+        current = str(cfg.get('trend_lines', '1'))
+        for key, label in TREND_LINE_CHOICES.items():
+            a = tl_menu.addAction(label); a.setCheckable(True)
+            a.setChecked(key == current)
+            a.triggered.connect(lambda _, k=key: self._set_elem('trend_lines', k))
+        tl_menu.addSeparator()
+        a = tl_menu.addAction("Colour points by their line"); a.setCheckable(True)
+        a.setChecked(cfg.get('trend_color_points', False))
+        a.triggered.connect(lambda checked: self._toggle('trend_color_points', checked))
+        tl_menu.addSeparator()
+        tl_menu.addAction("Select points for a trend line…").triggered.connect(
+            self.start_point_selection)
+        shown = _sel.active_selections(cfg)
+        a = tl_menu.addAction("Remove the last selected-point line")
+        a.setEnabled(bool(shown))
+        a.triggered.connect(self.remove_last_selection)
+        a = tl_menu.addAction(f"Remove all selected-point lines ({len(shown)})")
+        a.setEnabled(bool(shown))
+        a.triggered.connect(self.remove_all_selections)
 
         lm_menu = menu.addMenu("Isotope Label")
         cur_lm = cfg.get('label_mode', 'Symbol')
@@ -1161,7 +1329,8 @@ class CorrelationPlotDisplayDialog(QDialog):
         _snap = dict(self.node.config)
         dlg = CorrelationSettingsDialog(
             self.node.config, self._available_elements(),
-            self._is_multi(), self._sample_names(), scope="format", parent=self)
+            self._is_multi(), self._sample_names(), scope="format", parent=self,
+            input_data=self.node.input_data)
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
@@ -1181,7 +1350,7 @@ class CorrelationPlotDisplayDialog(QDialog):
         dlg = CorrelationSettingsDialog(
             self.node.config, self._available_elements(),
             self._is_multi(), self._sample_names(), scope="quantities", parent=self,
-            plot_data=_plot_data)
+            plot_data=_plot_data, input_data=self.node.input_data)
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
@@ -1200,6 +1369,175 @@ class CorrelationPlotDisplayDialog(QDialog):
     def _export_figure(self):
         """Export the full Correlation figure with the shared export workflow."""
         download_pyqtgraph_figure(self.plot_widget, self, "correlation_plot.png")
+
+    def start_point_selection(self):
+        """Let the user draw loops around points, each giving its own trend line.
+
+        Panning and zooming are paused while selecting. Each loop is stored in
+        the plot settings as soon as it is closed, and the mode stays on so
+        several groups can be selected one after the other.
+        """
+        self._selecting = True
+        self._select_hint.setVisible(True)
+        self.plot_widget.viewport().setCursor(Qt.CrossCursor)
+        self.plot_widget.setFocus()
+        _log_user_action("Correlation: started selecting points for a trend line")
+
+    def stop_point_selection(self):
+        """Leave selection mode, dropping a loop that is still being drawn."""
+        if self._lasso is not None:
+            try:
+                self._lasso['pi'].removeItem(self._lasso['curve'])
+            except Exception:
+                _itk_log.debug("Loop outline already gone")
+        self._lasso = None
+        self._selecting = False
+        self._select_hint.setVisible(False)
+        self.plot_widget.viewport().unsetCursor()
+
+    def remove_last_selection(self):
+        """Remove the newest selected-point line shown on these axes."""
+        cfg = self.node.config
+        shown = _sel.active_selections(cfg)
+        if not shown:
+            return
+        index = shown[-1][0]
+        cfg['trend_selections'] = [s for i, s in enumerate(cfg.get('trend_selections') or [])
+                                   if i != index]
+        _log_user_action("Correlation: removed the last selected-point line")
+        self._refresh()
+
+    def remove_all_selections(self):
+        """Remove every selected-point line shown on these axes."""
+        cfg = self.node.config
+        drop = {i for i, _s in _sel.active_selections(cfg)}
+        cfg['trend_selections'] = [s for i, s in enumerate(cfg.get('trend_selections') or [])
+                                   if i not in drop]
+        _log_user_action("Correlation: removed all selected-point lines",
+                         {"removed": len(drop)})
+        self._refresh()
+
+    def eventFilter(self, watched, event):
+        """Turn mouse drags on the plot into selection loops while selecting."""
+        if not self._selecting:
+            return super().eventFilter(watched, event)
+        kind = event.type()
+        if kind == QEvent.Type.KeyPress and event.key() == Qt.Key_Escape:
+            self.stop_point_selection()
+            return True
+        if watched is not self.plot_widget.viewport():
+            return super().eventFilter(watched, event)
+        if kind == QEvent.Type.MouseButtonPress and event.button() == Qt.LeftButton:
+            self._begin_loop(event.position().toPoint())
+            return True
+        if kind == QEvent.Type.MouseMove and self._lasso is not None:
+            self._extend_loop(event.position().toPoint())
+            return True
+        if kind == QEvent.Type.MouseButtonRelease and event.button() == Qt.LeftButton:
+            self._close_loop()
+            return True
+        if kind == QEvent.Type.MouseButtonDblClick:
+            return True
+        return super().eventFilter(watched, event)
+
+    def _view_point(self, pi, pos):
+        """Plot coordinates of a widget position inside *pi*."""
+        pt = pi.getViewBox().mapSceneToView(self.plot_widget.mapToScene(pos))
+        return float(pt.x()), float(pt.y())
+
+    def _begin_loop(self, pos):
+        """Start a loop on the panel under the pointer."""
+        pi = self._plot_item_at(pos)
+        if pi is None or pi not in self._points_by_plot:
+            return
+        curve = pg.PlotCurveItem(pen=pg.mkPen('#DB2777', width=1.6, style=Qt.DashLine))
+        curve.setZValue(30)
+        pi.addItem(curve, ignoreBounds=True)
+        self._lasso = {'pi': pi, 'pts': [self._view_point(pi, pos)], 'curve': curve}
+
+    def _extend_loop(self, pos):
+        """Add the pointer position to the loop and redraw its outline."""
+        lasso = self._lasso
+        lasso['pts'].append(self._view_point(lasso['pi'], pos))
+        pts = np.asarray(lasso['pts'] + lasso['pts'][:1])
+        lasso['curve'].setData(pts[:, 0], pts[:, 1])
+
+    def _close_loop(self):
+        """Store the finished loop and redraw, or drop it if it is too small."""
+        lasso, self._lasso = self._lasso, None
+        if lasso is None:
+            return
+        try:
+            lasso['pi'].removeItem(lasso['curve'])
+        except Exception:
+            _itk_log.debug("Loop outline already gone")
+        if len(lasso['pts']) < 3:
+            return
+        cfg = self.node.config
+        sel = _sel.new_selection(lasso['pts'], self._plot_keys.get(lasso['pi'], ''), cfg)
+        xs, ys = self._plot_points(lasso['pi'])
+        held = int(_sel.inside(sel['polygon'], xs, ys).sum())
+        cfg.setdefault('trend_selections', []).append(sel)
+        _log_user_action("Correlation: fitted a trend line to selected points",
+                         {"points": held, "panel": sel['plot'] or "main"})
+        self._refresh()
+        if self._selecting:
+            self.plot_widget.viewport().setCursor(Qt.CrossCursor)
+
+    def _plot_points(self, pi):
+        """All points drawn on *pi*, pooled across its samples."""
+        series = self._points_by_plot.get(pi) or []
+        if not series:
+            return np.array([]), np.array([])
+        return (np.concatenate([a for a, _b in series]),
+                np.concatenate([b for _a, b in series]))
+
+    def _draw_selections(self, cfg):
+        """Draw a line through the points inside each stored loop, on its own panel.
+
+        The selected points are recoloured in the loop's colour and the loop
+        is outlined faintly, so it is clear which points each line describes.
+        Lines are refitted on the current data each time, so filters and
+        sample changes are respected.
+        """
+        shown = _sel.active_selections(cfg)
+        if not shown:
+            return
+        numbers = {i: k + 1 for k, (i, _s) in enumerate(shown)}
+        log_x, log_y = bool(cfg.get('log_x')), bool(cfg.get('log_y'))
+        for pi in list(self._points_by_plot):
+            key = self._plot_keys.get(pi, '')
+            x, y = self._plot_points(pi)
+            for i, sel in _sel.active_selections(cfg, key):
+                color = sel.get('color') or _sel.SELECTION_COLORS[0]
+                poly = np.asarray(sel['polygon'] + sel['polygon'][:1])
+                outline = pg.PlotCurveItem(poly[:, 0], poly[:, 1],
+                                           pen=pg.mkPen(color, width=1, style=Qt.DotLine))
+                outline.setZValue(9)
+                pi.addItem(outline, ignoreBounds=True)
+                mask, line = _sel.fit_selection(sel, x, y)
+                if mask.any():
+                    marked = create_single_color_scatter(pi, x[mask], y[mask], cfg, color)
+                    if marked is not None:
+                        marked.setZValue(8)
+                if line is None:
+                    _itk_log.debug("Selection %d holds too few points for a line", numbers[i])
+                    continue
+                lo, hi = np.percentile(x[mask], [2, 98])
+                xs = np.linspace(lo, hi, 100)
+                ys = line.intercept + line.slope * xs
+                halo = pg.PlotDataItem(x=xs, y=ys, pen=pg.mkPen(color='w', width=6))
+                halo.setZValue(12)
+                pi.addItem(halo)
+                name = None
+                if cfg.get('show_correlation', True):
+                    name = _sel.legend_text(numbers[i], line, log_x, log_y)
+                    if pi.legend is None:
+                        pi.addLegend(offset=(10, 10), labelTextSize='9pt')
+                item = pg.PlotDataItem(x=xs, y=ys, name=name,
+                                       pen=pg.mkPen(QColor(color).darker(260), width=3))
+                item.setZValue(13)
+                pi.addItem(item)
 
     def _plot_item_at(self, pos):
         """Resolve the clicked PlotItem using scene-space hit testing.
@@ -1382,6 +1720,9 @@ class CorrelationPlotDisplayDialog(QDialog):
         try:
             self._cleanup_color_bars()
             self._subplot_context_by_plotitem = {}
+            self._points_by_plot = {}
+            self._plot_keys = {}
+            self._lasso = None
 
             self.plot_widget.clear()
             self.plot_widget.setBackground('w')
@@ -1424,6 +1765,8 @@ class CorrelationPlotDisplayDialog(QDialog):
                     apply_font_to_pyqtgraph(pi, cfg)
                     primary_plot = pi
 
+            if plot_data:
+                self._draw_selections(self.node.config)
             self._primary_plot_item = primary_plot
             self._suppress_native_plot_menus()
             self.plot_widget.reapply_inline_overrides()
@@ -1525,6 +1868,9 @@ class CorrelationPlotDisplayDialog(QDialog):
             correlation_count (int): Number of series in the overlaid panel.
         """
         from PySide6.QtGui import QColor as _QC
+        self._points_by_plot.setdefault(pi, []).append(
+            (np.asarray(x, dtype=float), np.asarray(y, dtype=float)))
+        self._plot_keys[pi] = sample_key or ''
         mode = cfg.get('mode', 'Simple Element Correlation')
         if (mode == 'Simple Element Correlation' and c is not None
                 and cfg.get('color_element', 'None') != 'None'):
@@ -1541,7 +1887,12 @@ class CorrelationPlotDisplayDialog(QDialog):
                     scatter._color_identity_role = 'sample'
                     scatter._color_identity_key = sample_key
 
-        if cfg.get('show_trendline', True) and len(x) > 1:
+        trends = None
+        if cfg.get('show_trendline', True) and str(cfg.get('trend_lines', '1')) != '1':
+            trends = _fit_trend_lines(x, y, cfg)
+        if trends is not None:
+            _draw_trend_lines(pi, x, y, trends, cfg, color, sample_key or correlation_label)
+        elif cfg.get('show_trendline', True) and len(x) > 1:
             add_trend_line(pi, x, y, color)
 
             if cfg.get('show_sd_band', False) and len(x) > 2:
@@ -1568,7 +1919,9 @@ class CorrelationPlotDisplayDialog(QDialog):
                     _itk_log.exception("Handled exception in _plot_scatter")
                     _itk_log.error(f'[SD envelope] {e}')
 
-        if cfg.get('show_correlation', True) and len(x) > 1 and show_r:
+        if trends is not None and len(trends.lines) > 1:
+            pass
+        elif cfg.get('show_correlation', True) and len(x) > 1 and show_r:
             if correlation_label:
                 try:
                     r = float(np.corrcoef(x, y)[0, 1])
@@ -1820,6 +2173,7 @@ class CorrelationPlotNode(QObject):
         'outlier_percentile': 99.0,
         'saturation_threshold': 10000,
         'show_correlation': True, 'show_trendline': True,
+        'trend_lines': '1', 'trend_color_points': False,
         'show_sd_band': False,
         'sd_band_color': '#3B82F6',
         'sd_band_alpha': 0.18,
@@ -1854,7 +2208,8 @@ class CorrelationPlotNode(QObject):
         self._has_output = False
         self.input_channels = ["input"]
         self.output_channels = []
-        self.config = dict(self.DEFAULT_CONFIG)
+        from results.shared_plot_utils import deep_copy_config
+        self.config = deep_copy_config(self.DEFAULT_CONFIG)
         self.input_data = None
 
     def set_position(self, pos):
@@ -1871,7 +2226,14 @@ class CorrelationPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
-        self.input_data = input_data
+        # Classifier support is NOT shipped for this node type (see
+        # classifier_view.CLASSIFIER_WIP_NODE_TYPES). Undo the
+        # classifier's destructive composition collapse and its
+        # double_count copies, so this chart plots exactly what it
+        # would have plotted with no classifier attached instead of
+        # treating each bucket label as though it were an isotope.
+        from results import classifier_view as _cv
+        self.input_data = _cv.adopt_declassified(self, input_data)
         if not self.config.get('x_element') or not self.config.get('y_element'):
             self._auto_configure_elements()
         self.configuration_changed.emit()

@@ -181,6 +181,7 @@ extracted data remain unchanged.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, histogram_node, parent_window=None)` |  |
+| `_effective_is_multi` | `(self)` | Whether to render through the multi-panel machinery. |
 | `_build_ui` | `(self)` | Build histogram canvas, stats footer, and standardized bottom buttons. |
 | `_ctx_menu` | `(self, pos)` | Show lightweight histogram quick actions. |
 | `_toggle_histogram_element_visibility` | `(self, raw_element_key: str)` | Toggle parent histogram element visibility by raw isotope key. |
@@ -260,9 +261,11 @@ single combined value, then plot the histogram of those sums.
 | `set_position` | `(self, pos)` |  |
 | `configure` | `(self, parent_window)` | Open this node's figure, reusing one persistent (hide-on-close) window. |
 | `process_data` | `(self, input_data)` |  |
+| `classifier_role` | `(self)` | The effective classifier presentation role for this render. |
+| `classifier_scope` | `(self)` | The DEFINITION-or-TOTAL-PARTICLE aggregation scope in force for |
 | `extract_plot_data` | `(self)` | Extract plottable data, applying element groups when active. |
-| `_extract_single` | `(self, dk)` |  |
-| `_extract_multi` | `(self, dk)` |  |
+| `_extract_single` | `(self, dk, role, scope)` |  |
+| `_extract_multi` | `(self, dk, role, scope)` |  |
 
 ### `BarChartSettingsDialog` *(extends `QDialog`)*
 
@@ -301,8 +304,10 @@ Full-figure bar chart dialog with controlled custom context menu.
 | `_set` | `(self, key, value)` | Set a config value from right-click quick actions. |
 | `_plot_item_at` | `(self, pos)` | Return the PlotItem under a right-click position, or None. |
 | `_toggle_bar_sample_visibility` | `(self, raw_sample_key)` | Toggle one raw sample's visibility in supported multi-sample modes. |
+| `_toggle_bar_element_visibility` | `(self, raw_element_key)` | Toggle one raw element/bucket's visibility in By Sample (Element Colors) mode. |
 | `_no_visible_samples_message` | `()` | Return the standard empty-state message for fully hidden samples. |
-| `_add_no_visible_samples_message` | `(self, plot_item)` | Render the standard no-visible-samples message on one plot item. |
+| `_no_visible_elements_message` | `()` | Return the standard empty-state message for fully hidden elements. |
+| `_add_no_visible_samples_message` | `(self, plot_item, message=None)` | Render a no-visible-items empty-state message on one plot item. |
 | `_open_settings` | `(self)` | Open the legacy all-in-one settings dialog for compatibility. |
 | `_open_plot_format_settings` | `(self)` | Open the Element-Bar-Chart-specific flat format settings dialog. |
 | `_open_configure_plot_quantities` | `(self)` | Open quantities-scoped bar chart settings dialog. |
@@ -346,6 +351,7 @@ Element particle-count bar chart node with right-click context menu.
 | `set_position` | `(self, pos)` |  |
 | `configure` | `(self, parent_window)` | Open this node's figure, reusing one persistent (hide-on-close) window. |
 | `process_data` | `(self, input_data)` |  |
+| `classifier_role` | `(self)` | The effective classifier presentation role for this render. |
 | `extract_plot_data` | `(self)` | Extract element particle counts from input. |
 
 ## Functions
@@ -395,5 +401,5 @@ Element particle-count bar chart node with right-click context menu.
 | `_add_median_line` | `(plot_item, values, cfg)` | Add median vertical line with annotation. |
 | `_add_stats_text` | `(plot_item, plot_data, cfg)` | Add statistics text box to histogram plot. |
 | `_draw_single_histogram` | `(plot_item, element_data, cfg, single_color=None, density_status_out=N` | Draw histogram for one set of element data onto a PyQtGraph PlotItem. |
-| `_sort_elements_for_display` | `(elements, counts, sort_option)` | Sort elements by user preference. |
+| `_sort_elements_for_display` | `(elements, counts, sort_option, input_data=None)` | Sort elements by user preference. |
 | `_draw_single_bar_chart` | `(plot_item, element_counts, cfg, single_color=None, show_y_label=True,` | Draw one element bar chart and tag element-colored bars for sync hooks. |

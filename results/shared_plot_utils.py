@@ -215,7 +215,7 @@ def compute_global_bin_edges_width_geo(all_values_list, bin_width, log_x=True, b
     return compute_bin_edges_width_geo(combined, bin_width, log_x, bin_mode=bin_mode)
 
 
-def _deep_copy_config(cfg):
+def deep_copy_config(cfg):
     """Return a fully independent copy of a config dict.
 
     A shallow ``dict(cfg)`` would leave nested values (e.g. ``element_colors``,
@@ -223,14 +223,30 @@ def _deep_copy_config(cfg):
     figures, so editing one figure's settings would bleed into the others. A
     deep copy keeps every figure's settings independent. Falls back to a shallow
     copy only if deep copy fails.
+
+    This matters at **node construction** as much as per-figure: a viz node
+    doing ``self.config = dict(DEFAULT_CONFIG)`` aliases every nested dict in
+    the class-level ``DEFAULT_CONFIG``, so anything that mutates one in place
+    -- notably :func:`seed_suggested_element_colors`, which does
+    ``config.setdefault('element_colors', {})`` and writes into whatever comes
+    back -- silently writes into the shared class default. That leaked
+    classifier bucket colors across every instance of a node class for the
+    process lifetime, and persisted them into all of them. Node ``__init__``
+    must use this, never ``dict(...)``.
     """
     if not cfg:
         return {}
     try:
         return copy.deepcopy(dict(cfg))
     except Exception:
-        _itk_log.exception("Handled exception in _deep_copy_config")
+        _itk_log.exception("Handled exception in deep_copy_config")
         return dict(cfg)
+
+
+#: Back-compat alias -- this helper was private before it was needed across
+#: modules (viz node ``__init__``s). Kept so any existing internal reference
+#: keeps resolving.
+_deep_copy_config = deep_copy_config
 
 
 class _HideOnCloseFilter(QObject):
@@ -304,6 +320,66 @@ def _connect_thumb_refresh(node, dlg):
         _itk_log.exception("Handled exception in _connect_thumb_refresh")
 
 
+def maybe_warn_classifier_wip(node, parent=None):
+    """Tell the user once that this node ignores an attached classifier.
+
+    Nine viz node types embed the shared classifier role picker but never
+    read it (see ``classifier_view.CLASSIFIER_WIP_NODE_TYPES``). Rather than
+    let them render confident nonsense from bucket-collapsed compositions,
+    they now strip the classifier structure out entirely and plot exactly
+    what they would have plotted with no classifier attached -- which is
+    correct, but invisible, and would otherwise look like the classifier
+    silently failing.
+
+    Only fires when a classifier is actually upstream, so a plain workflow
+    never sees it. Gated by a per-node-TYPE QSettings flag, matching the
+    app's existing "don't show again" pattern
+    (``tools/dilution_utils.py``, ``maybe_show_classifier_onboarding``):
+    the question is "has this user been told about THIS chart type", not
+    "does this node instance need telling", so it must not be per-instance
+    or per-project.
+
+    Args:
+        node: The viz node whose figure is being opened.
+        parent: Parent widget for the modal (may be None).
+    """
+    from results import classifier_view as cv
+    node_type = getattr(node, 'node_type', None)
+    if not cv.classifier_support_is_wip(node_type):
+        return
+    # The node's own input_data has already been declassified by its
+    # process_data, so ask the raw upstream flag it stashed at that moment.
+    if not getattr(node, '_classifier_was_stripped', False):
+        return
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QCheckBox, QMessageBox
+    key = f"hide_classifier_wip_notice_{node_type}"
+    settings = QSettings("IsotopeTrack", "IsotopeTrack")
+    if settings.value(key, False, type=bool):
+        return
+    title = (getattr(node, 'title', None) or node_type or 'This chart')
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Information)
+    box.setWindowTitle("Classifier not supported by this chart yet")
+    box.setText(
+        f"<b>{title}</b> does not support the Particle Classifier yet.<br><br>"
+        "A classifier is connected upstream, but this chart is ignoring it "
+        "completely: it is plotting the original isotopes, exactly as if no "
+        "classifier were attached. Group names will not appear, and "
+        "double-counted particles are counted once.<br><br>"
+        "This is deliberate. Reading classifier output without support for "
+        "it would show one synthetic \"isotope\" per group and produce "
+        "misleading numbers.<br><br>"
+        "Charts that <i>do</i> support the classifier today: histogram, "
+        "element bar chart, box plot, heatmap, and correlation matrix.")
+    dont_show = QCheckBox("Don't show this again for this chart type")
+    box.setCheckBox(dont_show)
+    box.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+    box.exec()
+    if dont_show.isChecked():
+        settings.setValue(key, True)
+
+
 def show_persistent_figure(node, factory, _parent_window=None):
     """Open a node's figure, reusing one window and hiding (not killing) it.
 
@@ -333,6 +409,10 @@ def show_persistent_figure(node, factory, _parent_window=None):
     dlg.raise_()
     dlg.activateWindow()
     QTimer.singleShot(350, lambda: capture_figure_thumbnail(node, dlg))
+    # Deferred: a modal raised inline here would block the first paint, and
+    # that exact mistake already cost a debugging session on the correlation
+    # scatter's zero-handling advisory.
+    QTimer.singleShot(0, lambda: maybe_warn_classifier_wip(node, dlg))
     return dlg
 
 
@@ -377,6 +457,26 @@ def _finish_prime(node, dlg):
                 dlg.setAttribute(Qt.WA_DontShowOnScreen, False)
         except Exception:
             _itk_log.exception("Handled exception in _finish_prime")
+
+
+def view_config_method(func):
+    """Mark a node method as config-derived, so a per-figure view computes it
+    against THAT FIGURE's config rather than the node's.
+
+    Use on any node method whose return value depends on ``self.config`` and
+    that a figure dialog may call -- see ``_FigureView._VIEW_CONFIG_PREFIXES``
+    for why silently getting this wrong is so hard to notice (the method keeps
+    returning its default answer forever while tests built on the raw node
+    keep passing).
+
+    Args:
+        func (callable): An unbound node method.
+
+    Returns:
+        callable: The same function, marked for ``_FigureView`` to wrap.
+    """
+    func._reads_view_config = True
+    return func
 
 
 class _FigureView:
@@ -453,19 +553,48 @@ class _FigureView:
         return _add_node_figure(self._node, self._dialog_class,
                                 self._parent_window, base_config=self.config)
 
-    def __getattr__(self, name):
-        """Delegate to the node, applying this view's config to extractions.
+    #: Name prefixes marking node methods whose ANSWER IS DERIVED FROM
+    #: ``config`` and therefore must be computed against *this figure's*
+    #: config, not the node's.
+    #:
+    #: **Read this before adding a config-derived method to any viz node.**
+    #: A figure dialog is handed a ``_FigureView``, never the node itself
+    #: (see ``open_node_figures``), and the settings dialog writes the user's
+    #: choices into ``view.config``. A node method reached through plain
+    #: delegation still sees ``node.config`` -- which nothing writes to under
+    #: multi-figure nodes -- so it silently returns the DEFAULT answer
+    #: forever, no matter what the user picks.
+    #:
+    #: That is not hypothetical: it shipped. The heatmap classifier roles
+    #: (``classifier_role``/``classifier_scope``/``classifier_denominator``/
+    #: ``panel_group``) were invisible in the running app for a full day of
+    #: manual QA -- PANELS rendered "No data available", COLORS drew no
+    #: underlines and no legend -- while GROUPS appeared to work purely
+    #: because ``extract_plot_data`` *is* wrapped and did see the right role.
+    #: Every automated test passed throughout, because they all built the
+    #: dialog around the raw node instead of a ``_FigureView`` (2026-08-25).
+    #:
+    #: Prefer :func:`view_config_method` on new methods -- it is explicit at
+    #: the definition site and immune to naming drift. These prefixes stay
+    #: for the many pre-existing ``extract_*`` methods across the viz nodes.
+    _VIEW_CONFIG_PREFIXES = ('extract_', 'classifier_', 'panel_')
 
-        Nodes name their extraction methods differently
-        (``extract_matrix_data``, ``extract_network_data`` and so on). Any
-        ``extract_*`` callable is wrapped so per-figure settings reach the
-        extraction step, not just the drawing step.
+    def __getattr__(self, name):
+        """Delegate to the node, applying this view's config where it matters.
+
+        Wrapped when the attribute is a callable and either its name starts
+        with one of :data:`_VIEW_CONFIG_PREFIXES` (nodes name extractions
+        differently -- ``extract_matrix_data``, ``extract_network_data``, and
+        so on) or it was explicitly marked with :func:`view_config_method`.
+        Everything else delegates untouched.
         """
         if name == '_node':
             raise AttributeError(name)
         attr = getattr(self._node, name)
-        if (name.startswith('extract_') and callable(attr)
-                and hasattr(self._node, 'config')):
+        if not (callable(attr) and hasattr(self._node, 'config')):
+            return attr
+        if (name.startswith(_FigureView._VIEW_CONFIG_PREFIXES)
+                or getattr(attr, '_reads_view_config', False)):
             return self._with_view_config(attr)
         return attr
 
@@ -518,6 +647,8 @@ def _open_view(view):
     dlg.raise_()
     dlg.activateWindow()
     QTimer.singleShot(350, lambda: capture_view_thumbnail(view))
+    # Same deferral rationale as show_persistent_figure.
+    QTimer.singleShot(0, lambda: maybe_warn_classifier_wip(view._node, dlg))
     return dlg
 
 
@@ -1976,12 +2107,21 @@ def seed_suggested_element_colors(config: dict, input_data: dict | None) -> None
     suggested = (input_data or {}).get('label_colors') or {}
     if not suggested:
         return
-    colors = config.setdefault('element_colors', {})
-    seeded = config.setdefault('_seeded_element_colors', set())
+    # Copy-then-rebind rather than mutating in place. ``setdefault`` would
+    # hand back whatever dict is already on the config -- and if that config
+    # was built with a shallow ``dict(DEFAULT_CONFIG)``, that IS the
+    # class-level default dict, so writing into it would leak these colors
+    # into every other node of that class (and persist them). Node __init__s
+    # now use deep_copy_config, but this stays defensive so the leak cannot
+    # silently return if one regresses.
+    colors = dict(config.get('element_colors') or {})
+    seeded = set(config.get('_seeded_element_colors') or ())
     for label, hex_color in suggested.items():
         if label not in colors or label in seeded:
             colors[label] = hex_color
             seeded.add(label)
+    config['element_colors'] = colors
+    config['_seeded_element_colors'] = seeded
 
 
 def get_display_name(original_name: str, config: dict) -> str:
@@ -2050,6 +2190,38 @@ def per_ml_factor(input_data, sample_name) -> float:
     return entry.get('dilution_factor', 1.0) / volume
 
 
+def dilution_unavailable_for(input_data, sample_name) -> bool:
+    """
+    Whether a sample's particles/mL was explicitly disabled due to a
+    dilution-factor mismatch during a merge (see
+    tools.particle_filter.resolve_dilution_conflict) -- distinct from simply
+    having no calibration entered at all. Callers that render particles/mL
+    as literal text should check this before formatting a number, so a
+    corrupted sample reads as an explicit "N/A" rather than a misleadingly
+    plausible-looking value. Internal scaling arithmetic (bar heights, pie
+    values, etc.) is NOT gated on this -- per_ml_factor keeps returning 0.0
+    for this case, same as the pre-existing "no calibration" convention, by
+    deliberate design (see july22.md issue #7).
+
+    Args:
+        input_data (dict): Node input data dictionary.
+        sample_name (str): Output sample name to look up.
+
+    Returns:
+        bool: True when this sample's particles/mL was explicitly disabled.
+    """
+    meta = (input_data or {}).get('concentration_meta', {})
+    if not isinstance(meta, dict) or not meta:
+        return False
+    entry = meta.get(sample_name)
+    if not entry and len(meta) == 1:
+        entry = next(iter(meta.values()))
+    if not entry:
+        return False
+    return (bool(entry.get('dilution_mismatch'))
+            and entry.get('dilution_choice') == 'unavailable')
+
+
 def single_sample_name(input_data):
     """
     Return the sample name for single-sample input data.
@@ -2095,7 +2267,7 @@ def per_ml_active(cfg, input_data) -> bool:
 
 
 def format_per_ml(value, renderer: Renderer = Renderer.HTML,
-                  config: dict | None = None) -> str:
+                  config: dict | None = None, unavailable: bool = False) -> str:
     """
     Format a particles-per-mL value as a mantissa times ten-to-a-power.
 
@@ -2114,10 +2286,18 @@ def format_per_ml(value, renderer: Renderer = Renderer.HTML,
         config (dict | None): Font config dict. When provided, the label is
             rendered in the configured family/weight/style; for MATHTEXT this
             also syncs the mathtext font immediately.
+        unavailable (bool): When True, ``value`` is ignored and an explicit
+            "N/A" label is returned instead -- pass the result of
+            ``dilution_unavailable_for`` for the sample this label
+            represents.
 
     Returns:
         str: Formatted label ready to pass to the target renderer.
     """
+    if unavailable:
+        if renderer == Renderer.MATHTEXT:
+            return r'$\mathrm{N/A}$'
+        return "N/A (dilution mismatch)"
     try:
         v = float(value)
     except (TypeError, ValueError):
@@ -2272,26 +2452,57 @@ def per_ml_unit_label(per_ml: bool, base: str = "Particle Count") -> str:
 # Particle-by-element matrix extraction
 # ─────────────────────────────────────────────
 
-def build_element_matrix(particles: list, data_key: str) -> pd.DataFrame | None:
+def build_element_matrix(particles: list, data_key: str,
+                         raw: bool = False,
+                         dedupe: bool = False) -> pd.DataFrame | None:
     """Build a particles × elements DataFrame from a list of particle dicts.
+
+    This is the shared choke point for every node that needs a
+    particles×composition table (scatter/correlation, isotopic ratio,
+    composition wheel), which is why classifier awareness lives here rather
+    than being re-implemented per node.
 
     Args:
         particles: list of particle dicts
         data_key: key inside each particle dict ('elements', 'element_mass_fg', etc.)
+        raw: read each particle's REAL isotope composition instead of the
+            Particle Classifier's collapsed ``{bucket_label: value}`` entry.
+            Without this a classifier stream yields a single-column matrix
+            (one bucket per particle), which is why every multi-key chart
+            degenerates on classifier input. No effect on non-classifier
+            data -- see ``results.classifier_view.composition``.
+        dedupe: drop double-counted copies first. The classifier's
+            ``double_count`` overlap mode emits one source particle once per
+            matching definition, and each copy carries the same real
+            composition -- so any statistic computed off this matrix
+            (Pearson r, clustering) would silently double-weight it. Pair
+            this with ``raw=True`` for anything statistical; leave it off
+            when per-bucket multiplicity is the point.
+
+    Returns:
+        A DataFrame, or None when there is nothing to build.
     """
     if not particles:
         return None
 
+    from results.classifier_view import composition, dedupe_particles
+
+    if dedupe:
+        particles = dedupe_particles(particles)
+
+    def _comp(p):
+        return composition(p, data_key) if raw else (p.get(data_key) or {})
+
     all_elements = set()
     for p in particles:
-        all_elements.update(p.get(data_key, {}).keys())
+        all_elements.update(_comp(p).keys())
     if not all_elements:
         return None
     all_elements = sorted(all_elements)
 
     rows = []
     for p in particles:
-        d = p.get(data_key, {})
+        d = _comp(p)
         row = []
         for elem in all_elements:
             v = d.get(elem, 0)
@@ -3262,6 +3473,150 @@ class FontSettingsGroup:
             'font_italic': self.italic_cb.isChecked(),
             'font_color': self._color.name(),
         }
+
+
+class ClassifierViewGroup:
+    """Reusable "how should classifier groups be shown" QGroupBox builder.
+
+    Same contract as :class:`FontSettingsGroup` -- ``__init__(config)``,
+    ``build()``, ``collect()`` -- so it drops into any settings dialog the
+    same way, and its collected key merges straight into ``node.config``
+    (which is what actually gets persisted; a new node *attribute* would be
+    silently dropped by the save layer's attribute allow-list).
+
+    The group hides itself entirely when the upstream isn't a classifier
+    stream, so nodes can embed it unconditionally without showing a control
+    that has nothing to act on.
+
+    Args:
+        config (dict): The viz node's config.
+        input_data (dict | None): The node's current upstream data.
+        arity (str): The node's arity class -- one of
+            ``classifier_view.ARITY_PER_KEY`` / ``ARITY_KEY_SET`` /
+            ``ARITY_MULTI_KEY``. Determines which roles are offered.
+        disabled_roles (dict | None): ``{role: reason}`` for roles that are
+            valid for this arity in general but not usable right now for a
+            node-specific reason (e.g. a role's rendering isn't wired up for
+            this node yet, or needs a stream shape this node's current
+            upstream doesn't have). Disabled entries stay visible -- with the
+            reason appended to the label and as a tooltip -- rather than
+            disappearing, so the user can see *why* an option is missing
+            instead of wondering where it went.
+    """
+
+    def __init__(self, config: dict, input_data: dict | None, arity: str,
+                 disabled_roles: dict | None = None):
+        self._config = config
+        self._input_data = input_data
+        self._arity = arity
+        self._disabled_roles = disabled_roles or {}
+        self.role_combo = None
+        self.scope_combo = None
+        self._applicable = False
+
+    def build(self, on_change=None):
+        from results import classifier_view as cv
+        group = QGroupBox("Classifier Groups")
+        layout = QVBoxLayout(group)
+
+        self._applicable = cv.is_classifier_stream(self._input_data)
+        if not self._applicable:
+            na = QLabel("N/A — no Particle Classifier connected upstream.")
+            na.setWordWrap(True)
+            na.setStyleSheet("color:#94A3B8; font-style:italic;")
+            layout.addWidget(na)
+            return group
+
+        self.role_combo = QComboBox()
+        for role in cv.available_roles(self._arity):
+            reason = self._disabled_roles.get(role)
+            label = cv.ROLE_LABELS.get(role, role)
+            if reason:
+                label = f"{label} (disabled for this node: {reason})"
+            self.role_combo.addItem(label, role)
+            if reason:
+                item_idx = self.role_combo.count() - 1
+                model_item = self.role_combo.model().item(item_idx)
+                if model_item is not None:
+                    model_item.setEnabled(False)
+                self.role_combo.setItemData(
+                    item_idx, f"Disabled for this node: {reason}", Qt.ToolTipRole)
+
+        current = cv.effective_role(self._config, self._input_data, self._arity)
+        if current in self._disabled_roles:
+            # A stored role that's disabled for this instance (e.g. saved
+            # while single-sample, now multi-sample) -- fall back rather
+            # than leaving a disabled item selected.
+            current = cv.default_role(self._arity)
+        idx = self.role_combo.findData(current)
+        if idx >= 0:
+            self.role_combo.setCurrentIndex(idx)
+        layout.addWidget(self.role_combo)
+
+        # Aggregation scope (BY DEFINITION vs TOTAL PARTICLE) -- a second,
+        # orthogonal axis that only means anything under GROUPS/SERIES (see
+        # classifier_view.SCOPE_* docs): every other role either shows real
+        # isotopes directly or has no single bucket value to scope at all.
+        # Kept visible-but-disabled rather than hidden when not applicable,
+        # matching disabled_roles' own convention above, so the control
+        # doesn't appear to vanish for no reason as the role changes.
+        self.scope_combo = QComboBox()
+        for scope in (cv.SCOPE_DEFINITION, cv.SCOPE_TOTAL_PARTICLE):
+            self.scope_combo.addItem(cv.SCOPE_LABELS.get(scope, scope), scope)
+        current_scope = cv.effective_scope(self._config, self._input_data)
+        scope_idx = self.scope_combo.findData(current_scope)
+        if scope_idx >= 0:
+            self.scope_combo.setCurrentIndex(scope_idx)
+
+        def _sync_scope_enabled():
+            is_groups = self.role_combo.currentData() == cv.ROLE_SERIES
+            self.scope_combo.setEnabled(is_groups)
+            self.scope_combo.setToolTip(
+                "" if is_groups else
+                "Only applies under GROUPS -- every other role already "
+                "shows real isotopes directly, with no single bucket "
+                "value for this choice to change.")
+        self.role_combo.currentIndexChanged.connect(_sync_scope_enabled)
+        _sync_scope_enabled()
+
+        if on_change:
+            self.role_combo.currentIndexChanged.connect(on_change)
+            self.scope_combo.currentIndexChanged.connect(on_change)
+        layout.addWidget(QLabel("Group value comes from:"))
+        layout.addWidget(self.scope_combo)
+
+        registry = cv.bucket_registry(self._input_data)
+        if registry:
+            summary = QLabel("\n".join(
+                f"• {cv.bucket_caption(self._input_data, lbl)}"
+                for lbl in registry))
+            summary.setWordWrap(True)
+            summary.setStyleSheet("color:#94A3B8; font-size:11px;")
+            layout.addWidget(summary)
+
+        if not cv.has_multiple_buckets(self._input_data):
+            note = QLabel(
+                "Only one group is defined — panels/colors by group will "
+                "not differentiate anything.")
+            note.setWordWrap(True)
+            note.setStyleSheet("color:#B45309; font-size:11px;")
+            layout.addWidget(note)
+
+        return group
+
+    def collect(self) -> dict:
+        """Return the config delta, or ``{}`` when the group didn't apply.
+
+        Returning empty rather than a default keeps a node's stored role
+        intact while it is temporarily wired to a non-classifier upstream.
+        """
+        from results import classifier_view as cv
+        if not self._applicable or self.role_combo is None:
+            return {}
+        out = {cv.ROLE_CONFIG_KEY: self.role_combo.currentData()}
+        if self.scope_combo is not None:
+            out[cv.SCOPE_CONFIG_KEY] = self.scope_combo.currentData()
+        return out
 
 
 class LegendGroup:

@@ -30,9 +30,24 @@ figure node consumes the result transparently.
 | `_ELEM_DATA_CACHE` | `None` |
 | `_NOT_MODES` | `{'NOT(AND)': 'AND', 'NOT(OR)': 'OR', 'NOT(EXACT)': 'EXACT'}` |
 | `_PD_SCALAR_GETTERS` | `{'mass': _particle_scalar_mass_fg, 'counts': _particle_sc…` |
+| `DILUTION_REL_TOL` | `1e-05` |
 | `_FILT_SUFFIX_RE` | `re.compile('^(?P<base>.*?)\\s*\\(filt x(?P<n>\\d+)\\)\\s*$')` |
 
 ## Classes
+
+### `DilutionConflictDialog` *(extends `QDialog`)*
+
+Ask how to resolve a dilution-factor mismatch among merging samples.
+
+Every particle-level representation stays valid regardless of this
+choice; this only decides what, if anything, the ONE derived
+particles/mL number should be for the merged/summed sample.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, parent, group_label, members)` | Args: |
+| `_group_by_factor` | `(members)` | Group member names by (tolerance-equal) dilution factor value. |
+| `resolution` | `(self)` | Build the resolution dict for the checked option. |
 
 ### `ParticleFilterDialog` *(extends `QDialog`)*
 
@@ -65,11 +80,16 @@ open and is debounced (~250 ms) after the last user change.
 | `_read_particle_data_field` | `(self, key)` | Read one Particle Data sub-filter's widgets into a config dict. |
 | `_pane_config` | `(self)` | Read the right pane into a filter configuration dict. |
 | `_apply_to_all` | `(self)` | Copy the current sample's filter — and, for single-sample rows, |
+| `_group_overwrite_conflicts` | `(self, checked, gname)` | List checked single-sample names whose EXISTING group name would |
+| `_confirm_group_overwrite` | `(self, conflicts, gname)` | Ask before overwriting samples' existing, different group names. |
 | `_toggle_select_all` | `(self)` | Check every sample row, or uncheck every row if all are already |
 | `_update_select_all_label` | `(self)` | Relabel the Select-all button to reflect the current check state. |
 | `_on_merge_toggle` | `(self, checked)` | React to the "Merge single samples into one" checkbox. |
 | `get_merge_singles` | `(self)` | Report whether single-sample inputs should merge into one. |
 | `get_sample_groups` | `(self)` | Read the per-sample custom group names set for single-sample |
+| `get_dilution_resolutions` | `(self)` | Return the current dilution-mismatch resolutions. |
+| `_compute_pending_merge_groups` | `(self)` | Mirror ParticleFilterNode._get_output_data_impl's group-formation |
+| `_resolve_pending_dilution_conflicts` | `(self)` | Run the dilution-mismatch check for every group about to form. |
 | `_on_chips_changed` | `(self)` | React to a chip toggle: refresh threshold rows and the preview. |
 | `_on_unit_changed` | `(self)` | Relabel the threshold spinboxes for the newly selected unit. |
 | `_schedule_preview` | `(self, *_)` | Restart the debounce timer for the live preview. |
@@ -110,6 +130,7 @@ upstream data is never mutated.
 | `_warn_partial_mismatch` | `(self, parent_window, matched, missing, added)` | Tell the user the newly connected source only partly matches the |
 | `_pull_upstream_all` | `(self)` | Fetch the upstream dict from every input link. |
 | `get_output_data` | `(self)` | Gather every upstream stream, filter each chosen sample with its |
+| `_dilution_resolution_for` | `(self, group_name, sources)` | Look up the stored dilution-mismatch resolution for a group, |
 | `_get_output_data_impl` | `(self)` |  |
 | `_build_single_output` | `(self, source, kept)` | Emit one chosen sample using the single-sample data schema. |
 | `_build_multi_output` | `(self, sources, results)` | Regroup several chosen samples into the multi-sample data schema. |
@@ -150,7 +171,9 @@ upstream data is never mutated.
 | `source_labels` | `(source)` | Collect the isotope labels available in one source entry. |
 | `apply_sample_filter` | `(source, config, retag=True)` | Filter one source's particles with that sample's own configuration. |
 | `retag_particles` | `(particles, name)` | Regroup already-copied particles under a new sample name. |
-| `merge_single_sources` | `(sources, name)` | Combine several single-sample source entries into one synthetic one. |
+| `dilution_factors_conflict` | `(members)` | Whether members' dilution factors differ beyond floating-point tolerance. |
+| `resolve_dilution_conflict` | `(parent_window, group_label, members)` | Detect and, if needed, ask the user to resolve a dilution-factor |
+| `merge_single_sources` | `(sources, name, dilution_resolution=None)` | Combine several single-sample source entries into one synthetic one. |
 | `_bump_filt_suffix` | `(name)` | Append or increment a ``"(filt xN)"`` provenance suffix on a sample name. |
 | `_retag_copy` | `(p, name)` | Shallow-copy a particle and regroup the copy under ``name``. |
 | `_apply_filt_provenance` | `(out)` | Stamp a filter output dict's sample names with ``"(filt xN)"``. |

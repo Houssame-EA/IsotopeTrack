@@ -1348,8 +1348,26 @@ class ParticleClassifierDialog(QDialog):
     def _apply_to_selected_samples(self):
         if not self._current:
             return
-        targets = [n for n in self._checked_names() if n != self._current]
+        checked = self._checked_names()
+        targets = [n for n in checked if n != self._current]
         if not targets:
+            # No OTHER checked sample to copy definitions to -- the normal
+            # case when a single sample is connected, since ``targets``
+            # deliberately excludes the current one. Returning here used to
+            # mean the button did nothing at all, so the match counts beside
+            # each definition were never computed and the classifier's key
+            # feedback ("how many particles actually match this?") simply
+            # never appeared unless the user happened to press "Apply to
+            # Current Sample" instead. Copying is genuinely a no-op here, but
+            # applying is not: recompute exactly as the current-sample path
+            # does, so either button gives the user the same answer.
+            if self._current in checked:
+                _itk_log.info(
+                    "Apply to selected: no other checked sample; recomputing "
+                    "match counts for the current sample %r", self._current)
+                self._recompute_match_counts_for_sample(self._current)
+                self._refresh_row_for(self._current)
+                self._reselect_definition_after_rebuild(self._current_def_id)
             return
         source_defs = self._defs_for(self._current)
         for target in targets:

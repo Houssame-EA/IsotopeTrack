@@ -2,6 +2,13 @@
 
 ---
 
+## Constants
+
+| Name | Value |
+|------|-------|
+| `TREND_LINE_CHOICES` | `{'1': 'One line', 'auto': 'Find how many (1 to 3)', '2': …` |
+| `TREND_LINE_COLORS` | `['#1D4ED8', '#047857', '#B45309']` |
+
 ## Classes
 
 ### `CorrelationSettingsDialog` *(extends `QDialog`)*
@@ -90,6 +97,17 @@ rendering modes, and the correlation-specific auto-detect action.
 | `_open_configure_plot_quantities` | `(self)` | Open scoped quantity controls and refresh on apply. |
 | `_reset_layout` | `(self)` | Reset current view layout by re-enabling axis autorange and redrawing. |
 | `_export_figure` | `(self)` | Export the full Correlation figure with the shared export workflow. |
+| `start_point_selection` | `(self)` | Let the user draw loops around points, each giving its own trend line. |
+| `stop_point_selection` | `(self)` | Leave selection mode, dropping a loop that is still being drawn. |
+| `remove_last_selection` | `(self)` | Remove the newest selected-point line shown on these axes. |
+| `remove_all_selections` | `(self)` | Remove every selected-point line shown on these axes. |
+| `eventFilter` | `(self, watched, event)` | Turn mouse drags on the plot into selection loops while selecting. |
+| `_view_point` | `(self, pi, pos)` | Plot coordinates of a widget position inside *pi*. |
+| `_begin_loop` | `(self, pos)` | Start a loop on the panel under the pointer. |
+| `_extend_loop` | `(self, pos)` | Add the pointer position to the loop and redraw its outline. |
+| `_close_loop` | `(self)` | Store the finished loop and redraw, or drop it if it is too small. |
+| `_plot_points` | `(self, pi)` | All points drawn on *pi*, pooled across its samples. |
+| `_draw_selections` | `(self, cfg)` | Draw a line through the points inside each stored loop, on its own panel. |
 | `_plot_item_at` | `(self, pos)` | Resolve the clicked PlotItem using scene-space hit testing. |
 | `_sanitize_filename_token` | `(self, text: str) → str` | Sanitize subplot names for use in export filename stems. |
 | `_export_subplot` | `(self, plot_item, subplot_ctx: dict)` | Export only the clicked subplot while reusing full export options. |
@@ -135,3 +153,11 @@ Correlation plot node with multiple sample support and auto-detection.
 | `_auto_configure_elements` | `(self)` |  |
 | `_get_elements` | `(self) → list` |  |
 | `extract_plot_data` | `(self)` |  |
+
+## Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `_log_user_action` | `(description: str, context: dict \| None=None)` | Record a click in the user-action log, if logging is running. |
+| `_fit_trend_lines` | `(x, y, cfg)` | Fit the configured number of lines to already-prepared plot data. |
+| `_draw_trend_lines` | `(pi, x, y, trends, cfg, color, series=None)` | Draw each fitted line over its own particles, with its r and ratio. |

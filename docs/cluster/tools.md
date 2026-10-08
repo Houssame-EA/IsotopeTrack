@@ -46,6 +46,7 @@ usable and testable on its own.  The GUI is defined only when PySide6 imports.
 | `DEFAULT_COMPOSITION_TOL` | `10.0` |
 | `ALGO_PARAM_SPECS` | `{'K-Means': {'density': False, 'needs_k': True, 'params':…` |
 | `ALGORITHMS` | `list(ALGO_PARAM_SPECS.keys())` |
+| `SWEEP_SEED` | `42` |
 | `DATA_TYPES` | `list(DATA_KEY_MAP.keys())` |
 | `SCALINGS` | `['None', 'Robust Z-score', 'CLR', 'ILR']` |
 | `DIM_REDUCTIONS` | `['None', 'PCA', 't-SNE'] + (['UMAP'] if _UMAP_OK else [])` |

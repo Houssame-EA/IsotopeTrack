@@ -92,6 +92,8 @@ Main dialog with PyQtGraph plot and right-click context menu.
 | `set_position` | `(self, pos)` |  |
 | `configure` | `(self, parent_window)` | Open this node's figure, reusing one persistent (hide-on-close) window. |
 | `process_data` | `(self, input_data)` |  |
+| `classifier_role` | `(self)` | The GROUPS-or-OFF role in force for this render (see |
+| `classifier_scope` | `(self)` | The DEFINITION-or-TOTAL-PARTICLE aggregation scope in force for |
 | `extract_plot_data` | `(self)` |  |
 | `_extract_single` | `(self, data_key)` |  |
 | `_extract_multi` | `(self, data_key)` |  |

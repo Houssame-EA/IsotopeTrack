@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for the Insights engine in ``results.results_reader``.
+"""Tests for the Insights engine in ``results.insights.engine`` and ``results.insights.panel``.
 
 Covers:
 
 * ``_build_matrix`` — sparse element matrix and detection masks
-* ``resolve_scope`` — selected node, then canvas union, then all loaded samples
+* ``resolve_scope`` — every loaded sample, with its replicate groups
 * ``build_context`` and ``gather_scope_data`` — context assembly and caching
 * the category registry and each analyser, including the statistics behind them
 * ``_isotope_entries`` — resolving element labels for the Add flow
@@ -26,7 +26,8 @@ import random
 import numpy as np
 import pytest
 
-from results import results_reader as rr
+from results.insights import engine as rr
+from results.insights import panel as ip
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -266,68 +267,18 @@ def test_matrix_accepts_int_values():
 # resolve_scope
 # ──────────────────────────────────────────────────────────────────────────────
 
-def test_selected_node_takes_priority(win, nodes):
-    """A selected sample node scopes the analysis to just its sample."""
+def test_scope_always_covers_every_loaded_sample(win, nodes):
+    """Selecting a sample node no longer narrows what Insights searches."""
     scene = FakeScene(list(nodes.values()), selected=[nodes["single"]])
     scope = rr.resolve_scope(scene, win)
-    assert scope.sample_names == ("S1",)
-    assert scope.origin == "selection"
-    assert scope.total_particles == 400
-    assert not scope.is_multi
-
-
-def test_selected_multi_node_scopes_to_its_samples(win, nodes):
-    """A selected multi-sample node contributes every sample it includes."""
-    scene = FakeScene(list(nodes.values()), selected=[nodes["multi"]])
-    scope = rr.resolve_scope(scene, win)
-    assert set(scope.sample_names) == {"S2", "S3"}
+    assert scope.sample_names == ("S1", "S2", "S3")
+    assert scope.origin == "all"
+    assert scope.total_particles == 900
     assert scope.is_multi
 
 
-def test_no_selection_falls_back_to_canvas_union(win, nodes):
-    """With nothing selected, every sample node on the canvas counts."""
-    scope = rr.resolve_scope(FakeScene(list(nodes.values())), win)
-    assert set(scope.sample_names) == {"S1", "S2", "S3"}
-    assert scope.origin == "canvas"
-
-
-def test_no_sample_nodes_falls_back_to_all_loaded(win, nodes):
-    """A canvas without sample nodes widens the scope to everything loaded."""
-    scope = rr.resolve_scope(FakeScene([nodes["plot"]]), win)
-    assert set(scope.sample_names) == {"S1", "S2", "S3"}
-    assert scope.origin == "all"
-
-
-def test_selecting_a_plot_node_does_not_scope_to_it(win, nodes):
-    """Only sample nodes drive the scope; selecting a plot node is ignored."""
-    scene = FakeScene([nodes["plot"]], selected=[nodes["plot"]])
-    assert rr.resolve_scope(scene, win).origin == "all"
-
-
-def test_empty_pool_gives_empty_scope():
-    """With nothing loaded the scope is empty rather than undefined."""
-    scope = rr.resolve_scope(FakeScene([]), FakeWindow({}))
-    assert scope.sample_names == ()
-    assert scope.total_particles == 0
-
-
-def test_sample_without_data_is_dropped(win):
-    """A node pointing at an unloaded sample contributes nothing."""
-    ghost = FakeNode("sample_selector", selected_sample="NOT_LOADED")
-    scene = FakeScene([ghost], selected=[ghost])
-    assert rr.resolve_scope(scene, win).sample_names == ()
-
-
-def test_replicate_samples_are_expanded(win):
-    """Summed replicates bring in every member sample, not just the first."""
-    node = FakeNode("sample_selector", selected_sample="S1",
-                    sum_replicates=True, replicate_samples=["S1", "S2"])
-    scene = FakeScene([node], selected=[node])
-    assert set(rr.resolve_scope(scene, win).sample_names) == {"S1", "S2"}
-
-
-def test_sample_config_include_flags_are_respected(win):
-    """Samples excluded in a multi node's config stay out of the scope."""
+def test_scope_ignores_which_samples_nodes_include(win):
+    """A multi-sample node excluding a sample does not hide it from the search."""
     node = FakeNode(
         "multiple_sample_selector",
         selected_samples=["S1", "S2", "S3"],
@@ -336,7 +287,69 @@ def test_sample_config_include_flags_are_respected(win):
                        "S3": {"included": True}},
     )
     scene = FakeScene([node], selected=[node])
-    assert set(rr.resolve_scope(scene, win).sample_names) == {"S1", "S3"}
+    assert set(rr.resolve_scope(scene, win).sample_names) == {"S1", "S2", "S3"}
+
+
+def test_empty_pool_gives_empty_scope():
+    """With nothing loaded the scope is empty rather than undefined."""
+    scope = rr.resolve_scope(FakeScene([]), FakeWindow({}))
+    assert scope.sample_names == ()
+    assert scope.total_particles == 0
+    assert scope.groups == ()
+
+
+def test_sample_without_particles_is_dropped():
+    """A loaded sample with no particles contributes nothing."""
+    win = FakeWindow({"S1": make_particles(10, {"56Fe": 1.0}), "EMPTY": []})
+    assert rr.resolve_scope(FakeScene([]), win).sample_names == ("S1",)
+
+
+def test_scope_guesses_replicate_groups_from_names():
+    """Samples named as replicates are grouped when the user grouped nothing."""
+    win = FakeWindow({
+        "liver_1": make_particles(30, {"56Fe": 1.0}, 1),
+        "liver_2": make_particles(30, {"56Fe": 1.0}, 2),
+        "kidney": make_particles(30, {"56Fe": 1.0}, 3),
+    })
+    scope = rr.resolve_scope(FakeScene([]), win)
+    groups = {g.name: g for g in scope.groups}
+    assert groups["liver"].members == ("liver_1", "liver_2")
+    assert groups["liver"].source == "auto"
+    assert groups["kidney"].members == ("kidney",)
+    assert not groups["kidney"].is_replicated
+
+
+def test_scope_prefers_the_users_replicate_groups(win):
+    """Groups set on a multi-sample selector win over name guessing."""
+    node = FakeNode(
+        "multiple_sample_selector",
+        sample_config={"S1": {"included": True, "sum_group": "site A"},
+                       "S2": {"included": True, "sum_group": "site A"},
+                       "S3": {"included": True, "sum_group": ""}},
+    )
+    scope = rr.resolve_scope(FakeScene([node]), win)
+    groups = {g.name: g for g in scope.groups}
+    assert groups["site A"].members == ("S1", "S2")
+    assert groups["site A"].source == "user"
+    assert groups["S3"].members == ("S3",)
+
+
+def test_summed_single_selector_counts_as_a_user_group(win):
+    """Summed replicates on a single selector define a replicate group."""
+    node = FakeNode("sample_selector", selected_sample="S1",
+                    sum_replicates=True, replicate_samples=["S1", "S2"])
+    scope = rr.resolve_scope(FakeScene([node]), win)
+    grouped = [g for g in scope.groups if g.is_replicated]
+    assert len(grouped) == 1
+    assert set(grouped[0].members) == {"S1", "S2"}
+
+
+def test_regrouping_changes_the_scope_key(win):
+    """Changing replicate groups invalidates any cached context."""
+    before = rr.resolve_scope(FakeScene([]), win).key
+    node = FakeNode("multiple_sample_selector",
+                    sample_config={"S1": {"sum_group": "g"}, "S2": {"sum_group": "g"}})
+    assert rr.resolve_scope(FakeScene([node]), win).key != before
 
 
 def test_scope_key_tracks_particle_count(win, pool, nodes):
@@ -396,12 +409,13 @@ def test_context_is_cached_per_scope(win, nodes):
 
 
 def test_different_scopes_do_not_share_a_cache_entry(win, nodes):
-    """Narrowing the scope produces a distinct context."""
+    """A scope with different replicate groups gets its own context."""
     scene = FakeScene([nodes["single"], nodes["multi"]])
     wide = rr.build_context(scene, win)
-    narrow_scope = rr.resolve_scope(
-        FakeScene([nodes["single"]], selected=[nodes["single"]]), win)
-    assert rr.build_context(scene, win, narrow_scope) is not wide
+    grouped = FakeNode("multiple_sample_selector",
+                       sample_config={"S1": {"sum_group": "g"}, "S2": {"sum_group": "g"}})
+    other_scope = rr.resolve_scope(FakeScene([grouped]), win)
+    assert rr.build_context(scene, win, other_scope) is not wide
 
 
 def test_cache_can_be_invalidated(win, nodes):
@@ -573,7 +587,7 @@ def test_correlation_reports_overlap_and_correction():
     card = next(s for s in rr._analyse_correlation(ctx)
                 if s.node_type == "correlation_plot")
     assert "particles carry both" in card.reasoning
-    assert "q = " in card.reasoning
+    assert "q = " in card.reasoning or "q < " in card.reasoning
 
 
 def test_correlation_suppresses_pure_noise():
@@ -851,7 +865,7 @@ def iso_win():
 
 def test_isotope_entries_resolve_to_full_records(iso_win):
     """Labels become records carrying the symbol and mass the dialog needs."""
-    entries = rr._isotope_entries(iso_win, FakeScene([]), ["56Fe", "55Mn"])
+    entries = ip._isotope_entries(iso_win, FakeScene([]), ["56Fe", "55Mn"])
     assert [e["label"] for e in entries] == ["56Fe", "55Mn"]
     assert all({"symbol", "mass", "key", "label"} <= set(e) for e in entries)
     assert entries[0]["symbol"] == "Fe"
@@ -859,26 +873,26 @@ def test_isotope_entries_resolve_to_full_records(iso_win):
 
 def test_isotope_entries_preserve_request_order(iso_win):
     """Records come back in the order the insight named them."""
-    entries = rr._isotope_entries(iso_win, FakeScene([]), ["55Mn", "56Fe"])
+    entries = ip._isotope_entries(iso_win, FakeScene([]), ["55Mn", "56Fe"])
     assert [e["label"] for e in entries] == ["55Mn", "56Fe"]
 
 
 def test_isotope_entries_skip_unknown_labels(iso_win):
     """An element the app never measured is dropped rather than faked."""
-    entries = rr._isotope_entries(iso_win, FakeScene([]), ["56Fe", "999Xx"])
+    entries = ip._isotope_entries(iso_win, FakeScene([]), ["56Fe", "999Xx"])
     assert [e["label"] for e in entries] == ["56Fe"]
 
 
 def test_isotope_entries_empty_without_an_isotope_list(win):
     """With nothing to resolve against, no records are invented."""
-    assert rr._isotope_entries(win, FakeScene([]), ["56Fe"]) == []
+    assert ip._isotope_entries(win, FakeScene([]), ["56Fe"]) == []
 
 
 def test_isotope_entries_prefer_a_batch_node(iso_win):
     """A batch node's isotope list takes precedence over the window's."""
     batch = FakeNode("batch_sample_selector",
                      batch_available_isotopes={"Zr": [89.9047]})
-    entries = rr._isotope_entries(iso_win, FakeScene([batch]), ["56Fe", "90Zr"])
+    entries = ip._isotope_entries(iso_win, FakeScene([batch]), ["56Fe", "90Zr"])
     assert [e["label"] for e in entries] == ["90Zr"]
 
 
@@ -1308,7 +1322,7 @@ def _overlaps(a, b, width=130, height=105):
 def test_empty_canvas_uses_the_preferred_position():
     """With nothing placed, the caller's choice is honoured."""
     from PySide6.QtCore import QPointF
-    point = rr._free_position(PlacementScene(), QPointF(7, 9))
+    point = ip._free_position(PlacementScene(), QPointF(7, 9))
     assert (point.x(), point.y()) == (7, 9)
 
 
@@ -1318,7 +1332,7 @@ def test_placement_never_overlaps():
     scene = PlacementScene()
     placed = []
     for i in range(12):
-        point = rr._free_position(scene, QPointF(300, 200))
+        point = ip._free_position(scene, QPointF(300, 200))
         scene.node_items[i] = PlacedItem(point)
         placed.append((point.x(), point.y()))
 
@@ -1332,8 +1346,8 @@ def test_placement_wraps_to_a_new_row():
     from PySide6.QtCore import QPointF
     scene = PlacementScene()
     rows = set()
-    for i in range(rr._SLOT_SPAN + 2):
-        point = rr._free_position(scene, QPointF(0, 0))
+    for i in range(ip._SLOT_SPAN + 2):
+        point = ip._free_position(scene, QPointF(0, 0))
         scene.node_items[i] = PlacedItem(point)
         rows.add(point.y())
     assert len(rows) > 1
