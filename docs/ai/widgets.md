@@ -93,6 +93,8 @@ Sortable, filterable table with stats panel, chart type selector, and CSV export
 |--------|-----------|-------------|
 | `__init__` | `(self, headers, rows, title='Query result', note='')` | Create the table. |
 | `_populate` | `(self, rows)` | Fill the table with rows. |
+| `_fit_height` | `(self)` | Make the table exactly as tall as its rows, up to a limit. |
+| `showEvent` | `(self, event)` | Refit the height once the table is laid out with its real fonts. |
 | `_apply_filter` | `(self, text)` | Show only rows containing the filter text. |
 | `_on_col_click` | `(self, col_idx)` | Select the clicked column in the stats combo and show stats. |
 | `_toggle_stats` | `(self, checked)` | Show or hide the column statistics. |

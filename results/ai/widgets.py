@@ -741,8 +741,26 @@ class InteractiveTableBubble(QFrame):
                 item.setFont(font)
                 self._table.setItem(r, c, item)
         self._table.setSortingEnabled(True)
+        self._fit_height()
         self._badge.setText(f"{len(rows)} rows")
         self._filter_lbl.setText(f"{len(rows)} shown")
+
+    def _fit_height(self):
+        """Make the table exactly as tall as its rows, up to a limit."""
+        t = self._table
+        t.resizeRowsToContents()
+        rows = t.verticalHeader().length()
+        header = t.horizontalHeader().sizeHint().height()
+        scroll = t.horizontalScrollBar().sizeHint().height()
+        self._table_h = int(min(rows + header + scroll + 2 * t.frameWidth() + 4, 420))
+        t.setFixedHeight(self._table_h)
+        if self._stack.currentIndex() == 0:
+            self._stack.setFixedHeight(self._table_h)
+
+    def showEvent(self, event):
+        """Refit the height once the table is laid out with its real fonts."""
+        super().showEvent(event)
+        self._fit_height()
 
     def _apply_filter(self, text):
         """Show only rows containing the filter text.

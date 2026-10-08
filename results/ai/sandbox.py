@@ -20,6 +20,7 @@ import math
 import re
 import sys
 import threading
+import time
 import traceback
 from collections import Counter, defaultdict
 from contextlib import redirect_stdout
@@ -437,13 +438,15 @@ def _finish_figures(collector, result):
         result.warnings.extend(warns)
 
 
-def execute(code, ds, timeout=CODE_EXEC_TIMEOUT):
+def execute(code, ds, timeout=CODE_EXEC_TIMEOUT, stop_event=None):
     """Run generated code against a dataset.
 
     Args:
         code (str): Python written by the model.
         ds (Dataset): The dataset it works on.
         timeout (float): Seconds before the run is abandoned.
+        stop_event (threading.Event): Set it from another thread to stop the
+            code at its next line, as the Stop button does.
 
     Returns:
         ExecResult: Everything the code produced.
@@ -465,7 +468,7 @@ def execute(code, ds, timeout=CODE_EXEC_TIMEOUT):
         return result
     out = io.StringIO()
     err = [None]
-    stop = threading.Event()
+    stop = stop_event if stop_event is not None else threading.Event()
 
     def on_line(frame, event, arg):
         """Abort the generated code at its next line once a stop is requested."""
@@ -493,12 +496,18 @@ def execute(code, ds, timeout=CODE_EXEC_TIMEOUT):
 
     worker = threading.Thread(target=run, daemon=True)
     worker.start()
-    worker.join(timeout=timeout)
-    if worker.is_alive():
+    deadline = time.monotonic() + timeout
+    while worker.is_alive() and not stop.is_set() and time.monotonic() < deadline:
+        worker.join(timeout=0.05)
+    if worker.is_alive() or stop.is_set():
+        stopped_by_user = stop.is_set()
         stop.set()
         worker.join(timeout=2.0)
-        result.error = (f"Code execution timed out after {timeout:g}s — simplify the query, "
-                        "use vectorised pandas instead of Python loops, or work on fewer particles.")
+        if stopped_by_user:
+            result.error = "Stopped by the user."
+        else:
+            result.error = (f"Code execution timed out after {timeout:g}s — simplify the query, "
+                            "use vectorised pandas instead of Python loops, or work on fewer particles.")
         return result
     text = out.getvalue().strip()
     if len(text) > MAX_STDOUT_CHARS:

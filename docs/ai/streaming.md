@@ -6,9 +6,42 @@ Background threads that talk to the model servers.
 or any OpenAI-compatible API. :class:`ProbeWorker` looks for a running local
 server so the assistant can connect without a trip to the settings.
 
+Requests go through :class:`CancellableStream`, a thin layer over
+:mod:`http.client` whose socket can be shut from the GUI thread at any
+moment, including while the server is still reading the prompt. Closing the
+connection is how Ollama and MLX servers are told to stop generating, so
+Stop really stops the model instead of only hiding its output.
+
 ---
 
+## Constants
+
+| Name | Value |
+|------|-------|
+| `READ_TIMEOUT` | `600` |
+
 ## Classes
+
+### `StreamCancelled` *(extends `Exception`)*
+
+Raised inside the worker when the user stopped the request.
+
+### `CancellableStream`
+
+One streaming POST request that another thread can abort at once.
+
+Attributes:
+    url (str): Endpoint.
+    status (int): HTTP status once the response arrived.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, url, payload, headers=None, timeout=READ_TIMEOUT)` | Prepare the request. |
+| `open` | `(self)` | Send the request and wait for the response headers. |
+| `lines` | `(self)` | Yield the response body line by line, decoded. |
+| `read_error` | `(self, limit=2000)` | Read a short error body. |
+| `abort` | `(self)` | Cut the connection now; the server sees the client go and stops generating. |
+| `close` | `(self)` | Release the connection after a normal finish. |
 
 ### `StreamWorker` *(extends `QThread`)*
 
@@ -17,17 +50,29 @@ Stream one chat completion from Ollama, MLX or an OpenAI-compatible API.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, backend, msgs, sys_prompt, config, attachments=None)` | Prepare the request. |
-| `stop` | `(self)` | Cancel the request and close the stream. |
-| `run` | `(self)` | Send the request to the configured backend. |
+| `stop` | `(self)` | Stop the request immediately, wherever it is. |
+| `cancelled` | `(self)` | Whether :meth:`stop` was called. |
 | `_inject_attachments` | `(self, messages)` | Inject pending file/image attachments into the last user message. |
 | `_inject_attachments_openai` | `(self, messages)` | OpenAI-style multipart content for MLX vision. |
-| `_run_ollama` | `(self)` | Stream from Ollama's chat endpoint. |
-| `_iter_stream_lines` | `(self)` | Yield response lines, absorbing the teardown that Stop causes. |
-| `_stream_ndjson` | `(self)` | Read Ollama's newline-delimited JSON stream. |
-| `_run_mlx` | `(self)` | Stream from an MLX server's OpenAI-compatible endpoint. |
-| `_stream_sse` | `(self)` | Read an OpenAI-style server-sent event stream. |
-| `_run_custom_api` | `(self)` | Stream from a user-configured OpenAI-compatible API. |
+| `_ollama_request` | `(self)` | URL, payload and headers for Ollama's chat endpoint. |
+| `_openai_payload` | `(self, model)` | OpenAI-style payload shared by MLX and custom APIs. |
+| `_mlx_request` | `(self)` | URL, payload and headers for an MLX server, resolving the served model id. |
+| `_custom_request` | `(self)` | URL, payload and headers for a user-configured OpenAI-compatible API. |
+| `_connect_hint` | `(self)` | What to tell the user when the server cannot be reached. |
+| `run` | `(self)` | Send the request, stream the reply, and stop as soon as asked. |
+| `_read_ndjson` | `(self, full, t0)` | Read Ollama's newline-delimited JSON stream. |
+| `_read_sse` | `(self, full, t0)` | Read an OpenAI-style server-sent event stream. |
 | `_finish` | `(self, full, tc, t0)` | Emit the complete reply, or an error when it is empty. |
+
+### `CodeWorker` *(extends `QThread`)*
+
+Run generated code off the GUI thread, so the window stays usable and Stop works.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, code, dataset, timeout=None)` | Prepare the run. |
+| `stop` | `(self)` | Stop the code at its next line. |
+| `run` | `(self)` | Execute the code and hand back the result. |
 
 ### `ProbeWorker` *(extends `QThread`)*
 

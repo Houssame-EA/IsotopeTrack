@@ -17,9 +17,10 @@ import threading
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QCursor, QKeySequence
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QProgressBar, QPushButton,
-    QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
+    QScrollArea, QSplitter, QStackedWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
 from results.ai.attachments import (
@@ -33,14 +34,14 @@ from results.ai.prompts import (
     turn_feedback,
 )
 from results.ai.report import build_html
-from results.ai.sandbox import execute, result_digest, unverified_numbers
+from results.ai.sandbox import result_digest, unverified_numbers
 from results.ai.servers import (
-    MLX_BASE, fetch_ollama_models, fetch_openai_models, install_server_shutdown_hooks,
-    park_thread, pids_listening_on, port_of, retire_thread, shutdown_launched_servers,
-    terminate_pids, unload_ollama_model,
+    MLX_BASE, OLLAMA_BASE, fetch_ollama_models, fetch_openai_models, install_server_shutdown_hooks,
+    note_model_in_use, park_thread, pids_listening_on, port_of, retire_thread,
+    shutdown_launched_servers, terminate_pids, unload_ollama_model,
 )
 from results.ai.settings import BackendDialog, CustomizeDialog
-from results.ai.streaming import ProbeWorker, StreamWorker
+from results.ai.streaming import CodeWorker, ProbeWorker, StreamWorker
 from results.ai.theme import CODE_RE, Theme, fs, strip_thinking
 from results.ai.widgets import (
     AttachmentChip, AttachmentPreview, AutoGrowTextEdit, CodeBubble, ComposerResizeHandle,
@@ -52,6 +53,16 @@ from tools.theme import theme as global_theme
 _itk_log = logging.getLogger("IsotopeTrack.results.ai.dialog")
 
 MAX_FIX_ATTEMPTS = 3
+
+
+def _icon(name, color):
+    """A qtawesome icon, or an empty icon when qtawesome is unavailable."""
+    try:
+        import qtawesome as qta
+        return qta.icon(name, color=color)
+    except Exception:
+        return QIcon()
+
 MAX_FIGURE_FIXES = 1
 
 
@@ -71,6 +82,10 @@ class AIChatDialog(QDialog):
         self.current_data = None
         self._ds = None
         self._worker = None
+        self._code_worker = None
+        self._code_queue = []
+        self._code_results = []
+        self._code_done = None
         self._sb = None
         self._pending_files = []
         self._user_stopped = False
@@ -169,8 +184,7 @@ class AIChatDialog(QDialog):
         self._sendb.setVisible(False)
         self._stop.setVisible(True)
         self._attach_btn.setEnabled(False)
-        if getattr(self, '_explore_btn', None):
-            self._explore_btn.setEnabled(False)
+        self._explore_btn.setEnabled(False)
         self._think.setVisible(True)
         self._tlbl.setText(label)
 
@@ -181,8 +195,7 @@ class AIChatDialog(QDialog):
         self._think.setVisible(False)
         self._stop.setVisible(False)
         self._sendb.setVisible(True)
-        if getattr(self, '_explore_btn', None):
-            self._explore_btn.setEnabled(True)
+        self._explore_btn.setEnabled(self._ds is not None and len(self._ds) > 0)
         QTimer.singleShot(5000, lambda: self._speed.setVisible(False))
         self._enable()
 
@@ -197,6 +210,9 @@ class AIChatDialog(QDialog):
             stream_to_bubble (bool): Show tokens live in a stream bubble.
         """
         park_thread(self._worker)
+        backend = self._cfg.get('backend', '')
+        host = self._cfg.get('mlx_host', MLX_BASE) if backend == 'mlx' else OLLAMA_BASE
+        note_model_in_use(backend, self._cfg.get('model', ''), host)
         attachments = self._turn.get('attachments', []) if self._turn and stream_to_bubble else []
         self._worker = StreamWorker(self._cfg.get('backend', ''), messages, system,
                                     self._worker_cfg(), attachments)
@@ -245,18 +261,53 @@ class AIChatDialog(QDialog):
         msgs = fit_messages(list(self._history), system, self._num_ctx)
         self._start_worker(msgs, system, self._on_done)
 
-    def _run_code(self, code):
-        """Run code on the dataset, reusing the result of identical code."""
-        key = (code, id(self._ds))
-        hit = self._code_cache.get(key)
+    def _run_codes(self, codes, on_done):
+        """Run code blocks one after the other in the background.
+
+        Args:
+            codes (list): Code blocks to run.
+            on_done (callable): Receives ``[(code, ExecResult), ...]`` when all have run.
+        """
+        self._code_queue = list(codes)
+        self._code_results = []
+        self._code_done = on_done
+        self._next_code()
+
+    def _next_code(self):
+        """Start the next queued code block, or hand all results on."""
+        if self._user_stopped:
+            return
+        if not self._code_queue:
+            done, results = self._code_done, self._code_results
+            self._code_done = None
+            self._code_results = []
+            if done is not None:
+                done(results)
+            return
+        code = self._code_queue.pop(0)
+        hit = self._code_cache.get((code, id(self._ds)))
         if hit is not None:
-            return hit
-        res = execute(code, self._ds)
+            self._code_results.append((code, hit))
+            QTimer.singleShot(0, self._next_code)
+            return
+        self._tlbl.setText("Running the code on your particles…")
+        park_thread(self._code_worker)
+        self._code_worker = CodeWorker(code, self._ds)
+        self._code_worker.result_ready.connect(self._on_code_result)
+        self._code_worker.start()
+
+    def _on_code_result(self, code, res):
+        """Keep one code block's result and move on to the next."""
+        if self._user_stopped or self._code_done is None:
+            return
+        park_thread(self._code_worker)
+        self._code_worker = None
         if not res.error:
             if len(self._code_cache) > 64:
                 self._code_cache.clear()
-            self._code_cache[key] = res
-        return res
+            self._code_cache[(code, id(self._ds))] = res
+        self._code_results.append((code, res))
+        self._next_code()
 
     def _show_result(self, code, res):
         """Put a result's tables, figures and text in the chat.
@@ -320,10 +371,15 @@ class AIChatDialog(QDialog):
             if w in self._widgets:
                 self._widgets.remove(w)
         self._turn['attempt_widgets'] = [current_bubble] if current_bubble is not None else []
-        results = []
-        for code in codes:
-            res = self._run_code(code)
-            results.append((code, res))
+        self._turn['prose'] = prose
+        self._run_codes(codes, self._after_codes)
+
+    def _after_codes(self, results):
+        """Show the results, ask for fixes when needed, then ask for the takeaway."""
+        if self._turn is None:
+            return
+        prose = self._turn.get('prose', '')
+        for code, res in results:
             self._turn['attempt_widgets'].extend(self._show_result(code, res))
         self._scrollb()
         errors = [r.error for _, r in results if r.error]
@@ -430,14 +486,27 @@ class AIChatDialog(QDialog):
 
     def _do_stop(self):
         """Stop the request in progress."""
-        if not self._worker:
+        if not self._worker and not self._code_worker:
             return
         self._user_stopped = True
         self._interpreting = False
-        try:
-            self._worker.stop()
-        except Exception:
-            _itk_log.exception("Handled exception in _do_stop")
+        for w in (self._worker, self._code_worker):
+            if w is None:
+                continue
+            try:
+                w.stop()
+            except Exception:
+                _itk_log.exception("Handled exception in _do_stop")
+        if self._code_worker is not None:
+            try:
+                self._code_worker.result_ready.disconnect()
+            except Exception:
+                pass
+            park_thread(self._code_worker)
+            self._code_worker = None
+        self._code_queue = []
+        self._code_done = None
+        self._code_results = []
         if self._sb:
             try:
                 self._sb._raw = (self._sb._raw or "").rstrip() + "\n\n*[Stopped]*"
@@ -452,6 +521,7 @@ class AIChatDialog(QDialog):
                 pass
         park_thread(self._worker)
         self._worker = None
+        self._add_widget(NoticeBubble("Stopped.", kind='info'))
         if self._exp_mode:
             if self._exp_session:
                 self._exp_session.mark_cancelled("stopped by user")
@@ -540,7 +610,15 @@ class AIChatDialog(QDialog):
         code = m.group(1).strip()
         rationale = clean[:m.start()].strip()
         rationale = rationale.split('PLAN:')[0].strip() if st.turn == 1 and 'PLAN:' in rationale else rationale
-        res = self._run_code(code)
+        self._exp_session.set_progress(st.turn, st.max_turns, f"Turn {st.turn}: running the code…")
+        self._run_codes([code], lambda results, r=rationale, d=done: self._on_exp_code_done(results, r, d))
+
+    def _on_exp_code_done(self, results, rationale, done):
+        """Record a turn's result and continue or finish the exploration."""
+        if self._user_stopped or not self._exp_mode:
+            return
+        st = self._exp
+        code, res = results[0]
         st.ledger.add(res.findings, st.turn)
         st.numbers.extend(res.numbers)
         self._exp_session.add_step(st.turn, rationale[-400:], code, res)
@@ -647,27 +725,21 @@ class AIChatDialog(QDialog):
                 self._add_ai(f"**Multi-sample:** {len(data.get('sample_names', []))} samples, {n:,} particles total.")
 
     def _update_sug(self, data):
-        """Rebuild the suggestion chips for the current data."""
-        for i in reversed(range(self._sug_lo.count())):
-            w = self._sug_lo.itemAt(i).widget()
+        """Rebuild the suggestion chips for the current data and enable Explore."""
+        while self._sug_lo.count():
+            item = self._sug_lo.takeAt(0)
+            w = item.widget()
             if w:
                 w.setParent(None)
-        self._explore_btn = None
         b = self._cfg.get('backend', '')
-        if not b or (b == 'ollama' and not self._cfg.get('model')):
+        ready = bool(b) and not (b == 'ollama' and not self._cfg.get('model'))
+        has_data = bool(data) and self._ds is not None and len(self._ds) > 0
+        self._explore_btn.setEnabled(ready and has_data)
+        if not ready:
+            self._sug.setVisible(False)
             return
-        if data:
-            explore_btn = QPushButton("Explore Data")
-            explore_btn.setCursor(QCursor(Qt.PointingHandCursor))
-            explore_btn.setToolTip(
-                "Let the model plan and test hypotheses over several turns, recording what it finds.\n"
-                "Type a question first to focus it. Configure the number of turns in Settings.")
-            self._style_explore_btn(explore_btn)
-            explore_btn.clicked.connect(self._explore)
-            self._sug_lo.addWidget(explore_btn)
-            self._explore_btn = explore_btn
         try:
-            items = suggest_questions(self._ds) if data else [("What can you do?", "What can you do?")]
+            items = suggest_questions(self._ds) if has_data else [("What can you do?", "What can you do?")]
         except Exception:
             _itk_log.exception("Could not build suggestions")
             items = [("Element table", "Element frequency and size table")]
@@ -679,6 +751,7 @@ class AIChatDialog(QDialog):
             btn.clicked.connect(lambda _, t=question: (self._input.setText(t), self._send()))
             self._sug_lo.addWidget(btn)
         self._sug_lo.addStretch()
+        self._sug.setVisible(True)
 
     def _export_report(self):
         """Save the conversation on screen as an HTML report."""
@@ -705,129 +778,212 @@ class AIChatDialog(QDialog):
             _itk_log.exception("Report export failed")
             self._add_ai(f"⚠ Could not save the report: {e}")
 
+    def _tool(self, text, icon, tip, slot):
+        """A toolbar button in the Figure Builder style."""
+        b = QToolButton()
+        b.setText(text)
+        b.setToolTip(tip)
+        b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon if text else Qt.ToolButtonIconOnly)
+        b.setAutoRaise(True)
+        b.setCursor(QCursor(Qt.PointingHandCursor))
+        b.clicked.connect(slot)
+        self._icon_buttons.append((b, icon, False))
+        return b
+
+    def _sep(self):
+        """A thin vertical separator for the toolbar."""
+        line = QFrame()
+        line.setObjectName('fbSep')
+        line.setFrameShape(QFrame.VLine)
+        return line
+
     def _build_ui(self):
-        """Build the sidebar, header, suggestion row, chat area and composer."""
-        root = QHBoxLayout(self); root.setContentsMargins(0,0,0,0); root.setSpacing(0)
+        """Build the toolbar, conversation list, chat panel and composer."""
+        self._icon_buttons = []
+        root = QVBoxLayout(self)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(6)
 
+        toolbar = QFrame()
+        toolbar.setObjectName('fbToolbar')
+        bar = QHBoxLayout(toolbar)
+        bar.setContentsMargins(6, 4, 6, 4)
+        bar.setSpacing(2)
+        self._sidebar_btn = self._tool('', 'fa6s.table-columns', 'Show or hide the conversations',
+                                       self._toggle_sidebar)
+        self._sidebar_btn.setCheckable(True)
+        self._sidebar_btn.setChecked(True)
+        bar.addWidget(self._sidebar_btn)
+        bar.addWidget(self._sep())
+        self._new_chat_btn = self._tool('New chat', 'fa6s.pen-to-square', 'Start a new conversation (Ctrl+N)',
+                                        lambda: self._new_conversation(switch_to=True))
+        bar.addWidget(self._new_chat_btn)
+        self._clear_btn = self._tool('Clear', 'fa6s.eraser', 'Clear this conversation (Ctrl+K)', self._clear_chat)
+        bar.addWidget(self._clear_btn)
+        bar.addWidget(self._sep())
+        self._explore_btn = self._tool(
+            'Explore data', 'fa6s.wand-magic-sparkles',
+            'Let the model plan and test hypotheses over several turns, recording what it finds.\n'
+            'Type a question first to focus it. The number of turns is set in Settings.', self._explore)
+        bar.addWidget(self._explore_btn)
+        bar.addWidget(self._sep())
+        self._sbtn = self._tool('Model', 'fa6s.microchip', 'Choose the model, context window and checks',
+                                self._open_settings)
+        bar.addWidget(self._sbtn)
+        self._eject_btn = self._tool('', 'fa6s.eject', 'Unload the model from memory now.\n'
+                                     'It is also unloaded when IsotopeTrack closes.', self._eject_model)
+        bar.addWidget(self._eject_btn)
+        self._cust_btn = self._tool('', 'fa6s.font', 'Font size, preview quality, timestamps', self._open_customize)
+        bar.addWidget(self._cust_btn)
+        bar.addStretch()
+        self._speed = QLabel("")
+        self._speed.setObjectName('fbStatus')
+        self._speed.setVisible(False)
+        bar.addWidget(self._speed)
+        self._usage = QLabel("")
+        self._usage.setObjectName('fbStatus')
+        self._usage.setVisible(False)
+        bar.addWidget(self._usage)
+        bar.addSpacing(8)
+        self._dot = QLabel("●")
+        bar.addWidget(self._dot)
+        self._status = QLabel("Not connected")
+        self._status.setObjectName('fbStatus')
+        bar.addWidget(self._status)
+        bar.addSpacing(8)
+        self._export_btn = QPushButton(' Export report…')
+        self._export_btn.setObjectName('fbPrimary')
+        self._export_btn.setToolTip("Save this conversation, with its tables, figures and code, as an HTML report")
+        self._export_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._export_btn.clicked.connect(self._export_report)
+        bar.addWidget(self._export_btn)
+        root.addWidget(toolbar)
+        self._hdr = toolbar
+
+        split = QSplitter(Qt.Horizontal)
+        split.setChildrenCollapsible(False)
         self._sidebar = QFrame()
-        self._sidebar.setFixedWidth(230)
+        self._sidebar.setObjectName('aiPanel')
+        self._sidebar.setMinimumWidth(190)
         sb = QVBoxLayout(self._sidebar)
-        sb.setContentsMargins(10, 12, 10, 12); sb.setSpacing(8)
-
-        self._new_chat_btn = QPushButton("＋  New chat")
-        self._new_chat_btn.setFixedHeight(36)
-        self._new_chat_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self._new_chat_btn.setToolTip("Start a new conversation (Ctrl+N)")
-        self._new_chat_btn.clicked.connect(lambda: self._new_conversation(switch_to=True))
-        sb.addWidget(self._new_chat_btn)
-
+        sb.setContentsMargins(8, 10, 8, 8)
+        sb.setSpacing(6)
         self._conv_hdr = QLabel("Conversations")
+        self._conv_hdr.setObjectName('aiSection')
         sb.addWidget(self._conv_hdr)
-
         self._conv_list_sc = QScrollArea()
+        self._conv_list_sc.setObjectName('aiPlain')
         self._conv_list_sc.setWidgetResizable(True)
         self._conv_list_sc.setFrameShape(QFrame.NoFrame)
         self._conv_list_sc.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._conv_list_w = QWidget()
+        self._conv_list_w.setObjectName('aiPlain')
         self._conv_list_lo = QVBoxLayout(self._conv_list_w)
         self._conv_list_lo.setContentsMargins(0, 0, 0, 0)
         self._conv_list_lo.setSpacing(2)
         self._conv_list_lo.addStretch()
         self._conv_list_sc.setWidget(self._conv_list_w)
         sb.addWidget(self._conv_list_sc, stretch=1)
+        split.addWidget(self._sidebar)
 
-        root.addWidget(self._sidebar)
-
-        main_wrap = QFrame()
-        main = QVBoxLayout(main_wrap); main.setContentsMargins(0,0,0,0); main.setSpacing(0)
-
-        hdr = QFrame(); hl = QHBoxLayout(hdr); hl.setContentsMargins(20,10,20,10); hl.setSpacing(8)
-        self._title = QLabel("AI Data Assistant"); hl.addWidget(self._title); hl.addStretch()
-        self._speed = QLabel(""); self._speed.setVisible(False); hl.addWidget(self._speed)
-        self._usage = QLabel(""); self._usage.setVisible(False); hl.addWidget(self._usage)
-        self._cust_btn = QPushButton("Customize")
-        self._cust_btn.setToolTip("Font size, chart quality, timestamps")
-        self._cust_btn.clicked.connect(self._open_customize); hl.addWidget(self._cust_btn)
-        self._clear_btn = QPushButton("Clear")
-        self._clear_btn.setToolTip("Clear chat history (Ctrl+K)")
-        self._clear_btn.clicked.connect(self._clear_chat); hl.addWidget(self._clear_btn)
-        self._export_btn = QPushButton("Export")
-        self._export_btn.setToolTip("Save this conversation, with its tables, figures and code, as an HTML report")
-        self._export_btn.clicked.connect(self._export_report); hl.addWidget(self._export_btn)
-        self._eject_btn = QPushButton("Eject model")
-        self._eject_btn.setToolTip(
-            "Unload the model from memory without closing the app.\n"
-            "Ollama models are evicted immediately; an MLX server is stopped.")
-        self._eject_btn.clicked.connect(self._eject_model)
-        hl.addWidget(self._eject_btn)
-        tb = QPushButton("Settings"); tb.clicked.connect(self._open_settings)
-        hl.addWidget(tb); self._sbtn = tb
-        self._dot = QLabel("●"); hl.addWidget(self._dot)
-        self._status = QLabel("Not connected"); hl.addWidget(self._status)
-        main.addWidget(hdr); self._hdr = hdr
-
-        self._sug = QFrame(); self._sug_lo = QHBoxLayout(self._sug)
-        self._sug_lo.setContentsMargins(12,6,12,6)
+        main_wrap = QWidget()
+        main = QVBoxLayout(main_wrap)
+        main.setContentsMargins(0, 0, 0, 0)
+        main.setSpacing(6)
+        self._sug = QFrame()
+        self._sug.setObjectName('aiPlain')
+        self._sug_lo = QHBoxLayout(self._sug)
+        self._sug_lo.setContentsMargins(2, 0, 2, 0)
+        self._sug_lo.setSpacing(6)
         main.addWidget(self._sug)
 
+        self._chat_panel = QFrame()
+        self._chat_panel.setObjectName('fbPreview')
+        cp = QVBoxLayout(self._chat_panel)
+        cp.setContentsMargins(1, 1, 1, 1)
+        cp.setSpacing(0)
         self._chat_stack = QStackedWidget()
         self._chat_stack.addWidget(self._conversations[0].scroll)
-        main.addWidget(self._chat_stack, stretch=1)
+        cp.addWidget(self._chat_stack, stretch=1)
+        self._think = QFrame()
+        self._think.setObjectName('aiThink')
+        self._think.setVisible(False)
+        tl = QHBoxLayout(self._think)
+        tl.setContentsMargins(14, 5, 14, 5)
+        tl.setSpacing(8)
+        self._tlbl = QLabel("Thinking…")
+        self._tlbl.setObjectName('fbStatus')
+        tl.addWidget(self._tlbl)
+        prog = QProgressBar()
+        prog.setRange(0, 0)
+        prog.setMaximumHeight(3)
+        prog.setTextVisible(False)
+        tl.addWidget(prog)
+        cp.addWidget(self._think)
+        main.addWidget(self._chat_panel, stretch=1)
 
-        self._think = QFrame(); self._think.setVisible(False)
-        tl = QHBoxLayout(self._think); tl.setContentsMargins(20,5,20,5); tl.setSpacing(8)
-        self._tlbl = QLabel("Thinking…"); tl.addWidget(self._tlbl)
-        prog = QProgressBar(); prog.setRange(0,0); prog.setMaximumHeight(3)
-        tl.addWidget(prog); main.addWidget(self._think)
-
-        outer = QFrame(); outer_l = QVBoxLayout(outer)
-        outer_l.setContentsMargins(16, 8, 16, 10); outer_l.setSpacing(2)
-
+        outer = QWidget()
+        outer_l = QVBoxLayout(outer)
+        outer_l.setContentsMargins(0, 0, 0, 0)
+        outer_l.setSpacing(2)
         self._resize_handle = ComposerResizeHandle()
         self._resize_handle.setToolTip("Drag to resize the input — double-click to reset")
         self._resize_handle.delta_y.connect(self._on_composer_resize)
         self._resize_handle.reset.connect(self._reset_composer_height)
         outer_l.addWidget(self._resize_handle)
-
         self._composer = QFrame()
-        comp_l = QVBoxLayout(self._composer); comp_l.setContentsMargins(8, 8, 8, 8); comp_l.setSpacing(6)
-
+        self._composer.setObjectName('aiComposer')
+        comp_l = QVBoxLayout(self._composer)
+        comp_l.setContentsMargins(8, 6, 8, 6)
+        comp_l.setSpacing(6)
         self._preview_row = QWidget()
         self._preview_lo = QHBoxLayout(self._preview_row)
-        self._preview_lo.setContentsMargins(2, 2, 2, 2); self._preview_lo.setSpacing(6)
+        self._preview_lo.setContentsMargins(2, 2, 2, 2)
+        self._preview_lo.setSpacing(6)
         self._preview_lo.addStretch()
         self._preview_row.setVisible(False)
         comp_l.addWidget(self._preview_row)
-        self._previews = []  
-
-        in_row = QHBoxLayout(); in_row.setContentsMargins(0,0,0,0); in_row.setSpacing(8)
-        self._attach_btn = QPushButton("+"); self._attach_btn.setFixedSize(38, 38)
-        self._attach_btn.setToolTip("Attach image, PDF, or text file")
+        self._previews = []
+        in_row = QHBoxLayout()
+        in_row.setContentsMargins(0, 0, 0, 0)
+        in_row.setSpacing(6)
+        self._attach_btn = QToolButton()
+        self._attach_btn.setToolTip("Attach an image, PDF or text file")
+        self._attach_btn.setAutoRaise(True)
         self._attach_btn.clicked.connect(self._attach_file)
+        self._icon_buttons.append((self._attach_btn, 'fa6s.paperclip', False))
         in_row.addWidget(self._attach_btn, alignment=Qt.AlignBottom)
-
         self._input = AutoGrowTextEdit()
-        self._input.setPlaceholderText(
-            "Ask about your data\u2026   (Shift+Enter for new line, Esc to stop)")
+        self._input.setObjectName('aiInput')
+        self._input.setPlaceholderText("Ask about your data…   (Shift+Enter for a new line, Esc to stop)")
         self._input.submit.connect(self._send)
         in_row.addWidget(self._input, stretch=1)
-
-        btn_col = QVBoxLayout(); btn_col.setSpacing(4)
-        self._stop = QPushButton("\u25a0"); self._stop.setVisible(False); self._stop.setFixedSize(60, 38)
-        self._stop.clicked.connect(self._do_stop); btn_col.addWidget(self._stop)
-        self._sendb = QPushButton("Send \u21b5"); self._sendb.setFixedHeight(38)
-        self._sendb.clicked.connect(self._send); btn_col.addWidget(self._sendb)
-        in_row.addLayout(btn_col)
+        self._stop = QPushButton(" Stop")
+        self._stop.setObjectName('aiStop')
+        self._stop.setToolTip("Stop the model and any running code now (Esc)")
+        self._stop.setVisible(False)
+        self._stop.clicked.connect(self._do_stop)
+        self._icon_buttons.append((self._stop, 'fa6s.stop', True))
+        in_row.addWidget(self._stop, alignment=Qt.AlignBottom)
+        self._sendb = QPushButton(" Send")
+        self._sendb.setObjectName('fbPrimary')
+        self._sendb.clicked.connect(self._send)
+        self._icon_buttons.append((self._sendb, 'fa6s.paper-plane', True))
+        in_row.addWidget(self._sendb, alignment=Qt.AlignBottom)
         comp_l.addLayout(in_row)
         outer_l.addWidget(self._composer)
-
         self._counter = QLabel("0 chars")
+        self._counter.setObjectName('fbHint')
         self._counter.setAlignment(Qt.AlignRight)
         self._input.char_changed.connect(self._update_counter)
         outer_l.addWidget(self._counter)
-
-        main.addWidget(outer); self._inp_frame = outer
-        root.addWidget(main_wrap, stretch=1)
+        main.addWidget(outer)
+        self._inp_frame = outer
+        split.addWidget(main_wrap)
+        split.setStretchFactor(0, 0)
+        split.setStretchFactor(1, 1)
+        split.setSizes([220, 1000])
+        root.addWidget(split, stretch=1)
 
         self._attach_bar = self._preview_row
         self._attach_lbl = self._counter
@@ -837,16 +993,20 @@ class AIChatDialog(QDialog):
         QShortcut(QKeySequence("Ctrl+N"), self).activated.connect(
             lambda: self._new_conversation(switch_to=True))
         QShortcut(QKeySequence("Escape"), self).activated.connect(
-            lambda: self._do_stop() if self._worker else None)
+            lambda: self._do_stop() if (self._worker or self._code_worker) else None)
 
         self._add_conv_list_item(self._conversations[0], is_current=True)
 
         self._apply_theme()
         global_theme.themeChanged.connect(self._on_global_theme_change)
         self._add_ai(
-            "**AI Data Assistant — local models only.**\n\n"
-            "Click **Settings** to connect Ollama or MLX.\n\n")
+            "**AI Data Assistant — runs on your own computer.**\n\n"
+            "Start Ollama or an MLX server, or click **Model** to choose one.")
         self._update_sug(None)
+
+    def _toggle_sidebar(self):
+        """Show or hide the conversation list."""
+        self._sidebar.setVisible(self._sidebar_btn.isChecked())
 
     def _open_settings(self):
         """Open the backend settings and apply the chosen model."""
@@ -855,20 +1015,20 @@ class AIChatDialog(QDialog):
             self._cfg = d.get_config()
             b = self._cfg['backend']
             if b == 'ollama' and self._cfg.get('model'):
-                self._dot.setStyleSheet(f"color:{Theme.c('success_dot')};font-size:10px;")
+                self._set_dot('success_dot')
                 self._status.setText(f"Ollama: {self._cfg['model']}")
                 self._add_ai(f"**Connected — Ollama** `{self._cfg['model']}`")
             elif b == 'mlx':
-                self._dot.setStyleSheet(f"color:{Theme.c('success_dot')};font-size:10px;")
+                self._set_dot('success_dot')
                 self._status.setText(f"MLX: {self._cfg.get('mlx_host','')}")
                 self._add_ai(f"**Connected — MLX** `{self._cfg.get('mlx_host','')}`")
             elif b == 'custom' and self._cfg.get('custom_base_url'):
-                self._dot.setStyleSheet(f"color:{Theme.c('success_dot')};font-size:10px;")
+                self._set_dot('success_dot')
                 mdl = self._cfg.get('custom_model','')
                 self._status.setText(f"Custom API: {mdl or self._cfg.get('custom_base_url','')}")
                 self._add_ai(f"**Connected — Custom API** `{mdl}`")
             else:
-                self._dot.setStyleSheet(f"color:{Theme.c('error_dot')};font-size:10px;")
+                self._set_dot('error_dot')
                 self._status.setText("Not connected")
             self._update_sug(self.current_data)
 
@@ -1145,41 +1305,16 @@ class AIChatDialog(QDialog):
         self._set_sidebar_enabled(True)
         self._input.setFocus()
 
-    def _style_explore_btn(self, btn):
-        """Distinctive accent styling for the Explore button."""
-        size = fs(-2)
-        ac = Theme.c('accent'); ac2 = Theme.c('accent_hover')
-        btn.setStyleSheet(
-            f"QPushButton{{background:{ac};color:white;"
-            f"border:1px solid {ac};border-radius:16px;"
-            f"padding:5px 14px;font-size:{size}px;font-weight:600;}}"
-            f"QPushButton:hover{{background:{ac2};border-color:{ac2};}}"
-            f"QPushButton:disabled{{background:{Theme.c('text_tertiary')};"
-            f"color:{Theme.c('bg')};border-color:{Theme.c('text_tertiary')};}}")
-
     def _style_sug_btn(self, btn):
-        """Style a suggestion chip.
+        """Mark a suggestion chip for the window stylesheet.
 
         Args:
             btn (QPushButton): The chip.
         """
-        size = fs(-2)
-        btn.setStyleSheet(
-            f"QPushButton{{background:{Theme.c('sug_bg')};color:{Theme.c('sug_text')};"
-            f"border:1px solid {Theme.c('sug_border')};border-radius:16px;"
-            f"padding:5px 14px;font-size:{size}px;}}"
-            f"QPushButton:hover{{background:{Theme.c('sug_hover_bg')};"
-            f"border-color:{Theme.c('sug_hover_border')};color:{Theme.c('sug_hover_text')};}}")
+        btn.setObjectName('aiChip')
 
     def _update_sug_style(self):
-        """Restyle the suggestion chips after a theme change."""
-        for i in range(self._sug_lo.count()):
-            w = self._sug_lo.itemAt(i).widget()
-            if isinstance(w, QPushButton):
-                if getattr(self, '_explore_btn', None) is w:
-                    self._style_explore_btn(w)
-                else:
-                    self._style_sug_btn(w)
+        """Kept for callers; chips are styled by the window stylesheet."""
 
     def _on_global_theme_change(self, name):
         """Follow the application theme.
@@ -1187,84 +1322,87 @@ class AIChatDialog(QDialog):
         Args:
             name (str): ``light`` or ``dark``.
         """
-        Theme._dark = (name == "dark"); self._apply_theme()
+        self._apply_theme()
+
+    def _window_qss(self):
+        """The Figure Builder stylesheet plus the chat window's own pieces."""
+        from results.figure_builder.ui import look
+        p = look.palette()
+        size = fs()
+        return look.window_qss(p) + f"""
+        QFrame#aiPanel {{
+            background: {p.bg_secondary};
+            border: 1px solid {p.border_subtle};
+            border-radius: 8px;
+        }}
+        QLabel#aiSection {{
+            color: {p.text_muted}; font-size: {fs(-3)}px; font-weight: 700;
+            letter-spacing: 0.6px; text-transform: uppercase; padding-left: 4px;
+        }}
+        QScrollArea#aiPlain, QWidget#aiPlain, QFrame#aiPlain {{ background: transparent; border: none; }}
+        QFrame#fbPreview QScrollArea {{ background: transparent; border: none; }}
+        QFrame#aiThink {{ background: {p.bg_secondary}; border-top: 1px solid {p.border_subtle}; }}
+        QFrame#aiComposer {{
+            background: {p.bg_secondary};
+            border: 1px solid {p.border};
+            border-radius: 10px;
+        }}
+        QPlainTextEdit#aiInput {{
+            border: none; background: transparent; color: {p.text_primary};
+            font-size: {size}px; padding: 6px 4px;
+        }}
+        QPushButton#aiChip {{
+            background: {p.bg_secondary};
+            color: {p.text_primary};
+            border: 1px solid {p.border};
+            border-radius: 13px;
+            padding: 4px 12px;
+            font-weight: 500;
+            font-size: {fs(-2)}px;
+        }}
+        QPushButton#aiChip:hover {{ background: {p.accent_soft}; border-color: {p.accent}; }}
+        QPushButton#aiStop {{
+            background: {p.danger};
+            color: {p.text_inverse};
+            border: none;
+            padding: 6px 14px;
+        }}
+        QPushButton#aiStop:hover {{ background: {p.danger_border}; }}
+        QPushButton#fbPrimary:disabled {{ background: {p.disabled}; }}
+        """
+
+    def _set_dot(self, kind):
+        """Colour the connection dot.
+
+        Args:
+            kind (str): ``success_dot``, ``error_dot`` or another colour name.
+        """
+        self._dot_kind = kind
+        self._dot.setStyleSheet(f"color:{Theme.c(kind)};font-size:10px;background:transparent;")
 
     def _apply_theme(self):
         """Restyle the whole window for the current theme and font size."""
-        size = fs(); fs2 = fs(-2); fs3 = fs(2)
-        bg  = Theme.c('bg');   bg2 = Theme.c('bg_secondary')
-        fg  = Theme.c('text'); fg2 = Theme.c('text_secondary')
-        bd  = Theme.c('border'); ac = Theme.c('accent'); sf = Theme.c('surface')
-        self.setStyleSheet(
-            f"QDialog{{background:{bg};}}"
-            f"QScrollArea{{border:none;background:{bg};}}"
-            f"QScrollBar:vertical{{background:{Theme.c('scrollbar_bg')};width:8px;border-radius:4px;}}"
-            f"QScrollBar::handle:vertical{{background:{Theme.c('scrollbar_handle')};min-height:30px;border-radius:4px;}}"
-            f"QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{{height:0;}}")
-        if hasattr(self, '_sidebar'):
-            self._sidebar.setStyleSheet(
-                f"QFrame{{background:{bg2};border-right:1px solid {bd};}}")
-            self._new_chat_btn.setStyleSheet(
-                f"QPushButton{{background:{sf};color:{fg};border:1px solid {bd};"
-                f"border-radius:8px;padding:6px 10px;font-size:{fs2}px;font-weight:600;"
-                f"text-align:left;}}"
-                f"QPushButton:hover{{background:{Theme.c('surface_hover')};border-color:{ac};}}")
-            self._conv_hdr.setStyleSheet(
-                f"color:{fg2};font-size:{fs(-3)}px;font-weight:600;"
-                f"text-transform:uppercase;letter-spacing:0.6px;padding-left:6px;"
-                f"background:transparent;")
-            self._conv_list_w.setStyleSheet("QWidget{background:transparent;}")
-            self._conv_list_sc.setStyleSheet("QScrollArea{background:transparent;}")
-            for it in self._conv_items.values():
-                it.apply_theme()
-        self._hdr.setStyleSheet(f"QFrame{{background:{bg2};border-bottom:1px solid {bd};}}")
-        self._title.setStyleSheet(f"font-size:{fs3}px;font-weight:700;color:{fg};")
-        self._speed.setStyleSheet(f"color:{Theme.c('speed_text')};font-size:11px;font-family:monospace;")
-        self._usage.setStyleSheet(f"color:{Theme.c('text_secondary')};font-size:11px;font-family:monospace;")
-        _hdr_btn = (f"QPushButton{{background:{sf};border:1px solid {bd};border-radius:6px;"
-                    f"padding:5px 12px;font-size:{fs2}px;color:{fg};}}"
-                    f"QPushButton:hover{{background:{Theme.c('surface_hover')};}}")
-        self._sbtn.setStyleSheet(_hdr_btn)
-        self._cust_btn.setStyleSheet(_hdr_btn)
-        self._clear_btn.setStyleSheet(_hdr_btn)
-        self._export_btn.setStyleSheet(_hdr_btn)
-        self._eject_btn.setStyleSheet(_hdr_btn)
-        self._status.setStyleSheet(f"color:{fg2};font-size:{fs2}px;")
-        self._sug.setStyleSheet(f"QFrame{{border-bottom:1px solid {Theme.c('border_light')};background:{bg};}}")
-        self._think.setStyleSheet(f"QFrame{{background:{bg2};border-top:1px solid {Theme.c('border_light')};}}")
-        self._tlbl.setStyleSheet(f"color:{fg2};font-size:{fs2}px;font-style:italic;")
-        self._inp_frame.setStyleSheet(f"QFrame{{background:{bg2};border-top:1px solid {bd};}}")
-        self._composer.setStyleSheet(
-            f"QFrame{{background:{Theme.c('input_bg')};border:1px solid {Theme.c('input_border')};"
-            f"border-radius:16px;}}")
-        self._counter.setStyleSheet(
-            f"color:{Theme.c('text_tertiary')};font-size:{fs(-3)}px;"
-            f"font-family:monospace;padding-right:6px;background:transparent;")
-        self._input.setStyleSheet(
-            f"QPlainTextEdit{{border:none;background:transparent;color:{fg};"
-            f"font-size:{size}px;padding:6px 4px;}}")
-        self._attach_btn.setStyleSheet(
-            f"QPushButton{{background:{sf};border:1px solid {bd};border-radius:10px;"
-            f"font-size:20px;color:{fg};}}"
-            f"QPushButton:hover{{background:{Theme.c('surface_hover')};border-color:{ac};}}")
-        _send_ss = (f"QPushButton{{background:{ac};color:white;border:none;border-radius:10px;"
-                    f"padding:8px 16px;font-size:{fs2}px;font-weight:600;}}"
-                    f"QPushButton:hover{{background:{Theme.c('accent_hover')};}}")
-        self._sendb.setStyleSheet(_send_ss)
-        self._stop.setStyleSheet(
-            f"QPushButton{{background:{Theme.c('stop_bg')};color:white;border:none;"
-            f"border-radius:10px;font-size:{fs2}px;font-weight:600;}}"
-            f"QPushButton:hover{{background:{Theme.c('stop_hover')};}}")
+        from results.figure_builder.ui import look
+        p = look.palette()
+        self.setStyleSheet(self._window_qss())
+        for button, name, inverse in getattr(self, '_icon_buttons', []):
+            try:
+                button.setIcon(_icon(name, p.text_inverse if inverse else look.icon_color()))
+            except RuntimeError:
+                pass
+        self._set_dot(getattr(self, '_dot_kind', 'text_tertiary'))
         for conv in self._conversations:
-            conv.cw.setStyleSheet(f"QWidget#chatContent{{background:{bg};}}")
-        for w in self._widgets:
-            if hasattr(w, 'apply_theme'): w.apply_theme()
-        for p in getattr(self, '_previews', []):
-            p.apply_theme()
+            conv.cw.setStyleSheet(f"QWidget#chatContent{{background:{p.bg_tertiary};}}")
+            for w in conv.widgets:
+                if hasattr(w, 'apply_theme'):
+                    w.apply_theme()
+        for it in self._conv_items.values():
+            it.apply_theme()
+        for prev in getattr(self, '_previews', []):
+            prev.apply_theme()
         if hasattr(self, '_resize_handle'):
             self._resize_handle.apply_theme()
             self._resize_handle.update()
-        self._update_sug_style()
 
     def _add_user(self, t):
         """Show a user message.
@@ -1370,32 +1508,39 @@ class AIChatDialog(QDialog):
     def _set_disconnected_status(self):
         """Reset the header indicator after a model has been unloaded."""
         try:
-            self._dot.setStyleSheet(f"color:{Theme.c('error_dot')};font-size:10px;")
+            self._set_dot('error_dot')
             self._status.setText("Not connected")
             self._autoconfigured = False
             self._cfg['model'] = ''
         except Exception:
             _itk_log.exception("Handled exception in _set_disconnected_status")
 
-    def shutdown(self):
-        """Release background work and stop servers this app launched.
+    def shutdown(self, release=False):
+        """Stop background work, and optionally free the model's memory.
 
-        Called when the assistant window closes and when the application quits,
-        so a probe thread, a running generation or a loaded model does not keep
-        holding memory after the user is done.
+        Args:
+            release (bool): Also unload the models used and stop servers the
+                app started. The application does this when it quits.
         """
-        for name in ('_probe', '_worker'):
+        if self._worker is not None or self._code_worker is not None:
+            try:
+                self._do_stop()
+            except Exception:
+                _itk_log.exception("Handled exception stopping the request")
+        for name in ('_probe', '_worker', '_code_worker'):
             thread = getattr(self, name, None)
             if thread is None:
                 continue
             setattr(self, name, None)
             retire_thread(thread)
-        shutdown_launched_servers()
+        if release:
+            from results.ai.servers import release_models
+            release_models()
 
     def closeEvent(self, event):
-        """Stop background threads and launched servers before closing."""
+        """Stop any running request when the window closes; the model stays loaded until the app quits."""
         try:
-            self.shutdown()
+            self.shutdown(release=False)
         except Exception:
             _itk_log.exception("Handled exception in closeEvent")
         super().closeEvent(event)
@@ -1407,7 +1552,7 @@ class AIChatDialog(QDialog):
             label (str): Human-readable backend description, e.g. ``Ollama · x``.
         """
         try:
-            self._dot.setStyleSheet(f"color:{Theme.c('success_dot')};font-size:10px;")
+            self._set_dot('success_dot')
             self._status.setText(label)
         except Exception:
             _itk_log.exception("Handled exception in _set_connected_status")

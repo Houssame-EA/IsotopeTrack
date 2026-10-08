@@ -23,6 +23,8 @@ keep Qt threads alive until they have really finished.
 | `PROBE_RETRY_GAP` | `2.0` |
 | `_LOCAL_HOST_ALIASES` | `('localhost', '127.0.0.1', '[::1]', '::1', '0.0.0.0')` |
 | `_LAUNCHED_SERVERS` | `[]` |
+| `_MODELS_IN_USE` | `{}` |
+| `_RELEASED` | `False` |
 | `_RETIRED_THREADS` | `[]` |
 
 ## Functions
@@ -35,7 +37,10 @@ keep Qt threads alive until they have really finished.
 | `fetch_ollama_model_context` | `(model, base_url=OLLAMA_BASE, timeout=PROBE_TIMEOUT)` | Ask Ollama how large a context window a model actually supports. |
 | `register_launched_server` | `(proc)` | Track a model server this app started so it can be stopped on exit. |
 | `shutdown_launched_servers` | `(timeout=6)` | Stop every model server this app started. |
-| `install_server_shutdown_hooks` | `()` | Register app-exit hooks that stop servers this app started. |
+| `note_model_in_use` | `(backend, model, host='')` | Remember a model the assistant sent a request to, so quitting can release it. |
+| `models_in_use` | `()` | Models the assistant used since the last release. |
+| `release_models` | `(timeout=4)` | Free the memory held by every model the assistant used. |
+| `install_server_shutdown_hooks` | `()` | Release models and stop servers the app started when the app quits. |
 | `unload_ollama_model` | `(model, base_url=OLLAMA_BASE, timeout=10)` | Ask Ollama to drop a model from memory immediately. |
 | `pids_listening_on` | `(port)` | Return the process ids listening on a TCP port. |
 | `port_of` | `(url, default=8080)` | Extract the TCP port from a base URL. |

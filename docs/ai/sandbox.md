@@ -68,6 +68,6 @@ Attributes:
 | `_bind` | `(fn, ds)` | Close an analysis function over the dataset, keeping its docstring. |
 | `build_namespace` | `(ds, collector, tables, findings)` | Assemble what generated code can see. |
 | `_finish_figures` | `(collector, result)` | Style, render and describe the figures, collecting any drawing errors. |
-| `execute` | `(code, ds, timeout=CODE_EXEC_TIMEOUT)` | Run generated code against a dataset. |
+| `execute` | `(code, ds, timeout=CODE_EXEC_TIMEOUT, stop_event=None)` | Run generated code against a dataset. |
 | `compact_table` | `(tbl, max_rows=15)` | Plain-text rendering of a result table for the model. |
 | `result_digest` | `(result, max_rows=15, max_text=2500)` | Everything a result tells the model, compacted for its context window. |

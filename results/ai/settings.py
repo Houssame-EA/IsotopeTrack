@@ -16,7 +16,7 @@ from results.ai.servers import (
     fetch_openai_models, install_server_shutdown_hooks, mlx_server_command, pids_listening_on,
     port_of, register_launched_server, shutdown_launched_servers, terminate_pids,
 )
-from results.ai.theme import UI_PREFS, Theme, style_combo_popup, style_model_list
+from results.ai.theme import UI_PREFS, style_combo_popup, style_model_list
 
 _itk_log = logging.getLogger("IsotopeTrack.results.ai.settings")
 
@@ -168,9 +168,8 @@ class BackendDialog(QDialog):
         lo.addWidget(btns)
 
         self._on_backend(self._backend.currentIndex())
-        self.setStyleSheet(
-            f"QDialog{{background:{Theme.c('bg')};}}"
-            f"QLabel, QCheckBox{{color:{Theme.c('text')};}}")
+        from results.figure_builder.ui import look
+        look.style(self)
         QTimer.singleShot(80, self._fetch_ollama_models)
         QTimer.singleShot(120, self._scan_mlx_models)
         QTimer.singleShot(160, self._apply_model_context)
@@ -495,13 +494,8 @@ class CustomizeDialog(QDialog):
         self.setMinimumWidth(380); self.setMaximumWidth(440)
         lo = QVBoxLayout(self); lo.setSpacing(14)
 
-        fg  = Theme.c('text'); fg2 = Theme.c('text_secondary')
-        bg  = Theme.c('bg');   bd  = Theme.c('border')
-        sf  = Theme.c('surface'); ac = Theme.c('accent')
-        base_ss = (f"QDialog{{background:{bg};}} QLabel{{color:{fg};}} "
-                   f"QFrame{{border:none;}} QGroupBox{{color:{fg};border:1px solid {bd};"
-                   f"border-radius:8px;margin-top:6px;padding-top:6px;font-weight:600;}}")
-        self.setStyleSheet(base_ss)
+        from results.figure_builder.ui import look
+        look.style(self)
 
         fs_row = QHBoxLayout()
         fs_row.addWidget(QLabel("Font size:"))
@@ -522,9 +516,6 @@ class CustomizeDialog(QDialog):
         self._bw_spin.setRange(400, 1000); self._bw_spin.setSingleStep(20)
         self._bw_spin.setValue(UI_PREFS['bubble_max_width'])
         self._bw_spin.setSuffix(" px")
-        self._bw_spin.setStyleSheet(
-            f"QSpinBox{{background:{sf};color:{fg};border:1px solid {bd};"
-            f"border-radius:6px;padding:4px 8px;}}")
         bw_row.addWidget(self._bw_spin); bw_row.addStretch()
         lo.addLayout(bw_row)
 
@@ -534,35 +525,23 @@ class CustomizeDialog(QDialog):
         self._dpi_combo.addItems(["72 — draft", "100 — standard", "150 — high", "200 — ultra"])
         dpi_map = {72: 0, 100: 1, 150: 2, 200: 3}
         self._dpi_combo.setCurrentIndex(dpi_map.get(UI_PREFS['chart_dpi'], 1))
-        self._dpi_combo.setStyleSheet(
-            f"QComboBox{{background:{sf};color:{fg};border:1px solid {bd};"
-            f"border-radius:6px;padding:4px 8px;}}")
         dpi_row.addWidget(self._dpi_combo); dpi_row.addStretch()
         lo.addLayout(dpi_row)
 
         self._ts_chk = QCheckBox("Show message timestamps")
         self._ts_chk.setChecked(UI_PREFS['show_timestamps'])
-        self._ts_chk.setStyleSheet(f"QCheckBox{{color:{fg};font-size:13px;}}")
         lo.addWidget(self._ts_chk)
 
         sep = QFrame(); sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(f"QFrame{{border:none;border-top:1px solid {bd};}}")
         lo.addWidget(sep)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         reset_btn = QPushButton("Reset defaults")
-        reset_btn.setStyleSheet(
-            f"QPushButton{{background:{sf};color:{fg2};border:1px solid {bd};"
-            f"border-radius:8px;padding:8px 16px;font-size:13px;}}"
-            f"QPushButton:hover{{background:{Theme.c('surface_hover')};}}")
         reset_btn.clicked.connect(self._reset)
         btn_row.addWidget(reset_btn)
         apply_btn = QPushButton("Apply")
-        apply_btn.setStyleSheet(
-            f"QPushButton{{background:{ac};color:white;border:none;"
-            f"border-radius:8px;padding:8px 20px;font-size:13px;font-weight:600;}}"
-            f"QPushButton:hover{{background:{Theme.c('accent_hover')};}}")
+        apply_btn.setObjectName("fbPrimary")
         apply_btn.clicked.connect(self._apply)
         btn_row.addWidget(apply_btn)
         lo.addLayout(btn_row)

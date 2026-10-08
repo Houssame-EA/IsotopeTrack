@@ -4,84 +4,81 @@ import re
 
 from PySide6.QtWidgets import QListView
 
-from tools.theme import theme as global_theme
 
 _itk_log = logging.getLogger("IsotopeTrack.results.ai.theme")
 
 
 class Theme:
-    """Light and dark palettes for the chat window, following the app theme."""
+    """Chat window colours, taken from the application theme.
+
+    Every colour comes from the palette in :mod:`tools.theme`, the same one
+    the Figure Builder and the main window use, so the assistant looks like
+    the rest of IsotopeTrack and follows the light and dark switch. The keys
+    below are the chat window's names for palette entries.
+    """
 
     _dark = False
-    LIGHT = {
-        'bg': '#F8FAFC', 'bg_secondary': '#F1F5F9', 'bg_tertiary': '#E2E8F0',
-        'surface': '#FFFFFF', 'surface_hover': '#F1F5F9',
-        'border': '#CBD5E1', 'border_light': '#E2E8F0',
-        'text': '#0F172A', 'text_secondary': '#475569', 'text_tertiary': '#94A3B8',
-        'accent': '#3B82F6', 'accent_hover': '#60A5FA', 'accent_surface': '#EFF6FF',
-        'user_bubble': '#3B82F6', 'user_text': '#FFFFFF',
-        'ai_bubble': '#FFFFFF', 'ai_text': '#0F172A',
-        'think_bg': '#F0FDF4', 'think_border': '#BBF7D0', 'think_text': '#166534',
-        'error_bg': '#FEF2F2', 'error_border': '#FECACA', 'error_text': '#991B1B',
-        'warn_bg': '#FFFBEB', 'warn_border': '#FDE68A', 'warn_text': '#92400E',
-        'code_bg': '#0F172A', 'code_text': '#E2E8F0',
-        'input_bg': '#FFFFFF', 'input_border': '#CBD5E1', 'input_focus': '#3B82F6',
-        'scrollbar_bg': '#E2E8F0', 'scrollbar_handle': '#94A3B8',
-        'success_dot': '#22C55E', 'warn_dot': '#F59E0B', 'error_dot': '#EF4444',
-        'progress_bg': '#E2E8F0', 'progress_chunk': '#3B82F6',
-        'sug_bg': '#F8FAFC', 'sug_text': '#334155', 'sug_border': '#CBD5E1',
-        'sug_hover_bg': '#EFF6FF', 'sug_hover_border': '#3B82F6', 'sug_hover_text': '#2563EB',
-        'stop_bg': '#EF4444', 'stop_hover': '#DC2626', 'speed_text': '#94A3B8',
-        'output_bg': '#0F172A', 'output_border': '#1E293B', 'output_text': '#94A3B8',
+    _MAP = {
+        'bg': 'bg_primary', 'bg_secondary': 'bg_secondary', 'bg_tertiary': 'bg_tertiary',
+        'surface': 'bg_secondary', 'surface_hover': 'bg_hover',
+        'border': 'border', 'border_light': 'border_subtle',
+        'text': 'text_primary', 'text_secondary': 'text_secondary', 'text_tertiary': 'text_muted',
+        'accent': 'accent', 'accent_hover': 'accent_hover', 'accent_surface': 'accent_soft',
+        'user_bubble': 'accent', 'user_text': 'text_inverse',
+        'ai_bubble': 'bg_secondary', 'ai_text': 'text_primary',
+        'error_bg': 'danger_bg', 'error_border': 'danger_border', 'error_text': 'text_primary',
+        'warn_bg': 'warning_bg', 'warn_border': 'warning_border', 'warn_text': 'text_primary',
+        'input_bg': 'bg_secondary', 'input_border': 'border', 'input_focus': 'accent',
+        'scrollbar_bg': 'bg_primary', 'scrollbar_handle': 'border',
+        'success_dot': 'success', 'warn_dot': 'warning', 'error_dot': 'danger',
+        'progress_bg': 'border_subtle', 'progress_chunk': 'accent',
+        'sug_bg': 'bg_secondary', 'sug_text': 'text_primary', 'sug_border': 'border',
+        'sug_hover_bg': 'accent_soft', 'sug_hover_border': 'accent', 'sug_hover_text': 'text_primary',
+        'stop_bg': 'danger', 'stop_hover': 'danger_border', 'speed_text': 'text_muted',
+        'think_bg': 'bg_tertiary', 'think_border': 'border_subtle', 'think_text': 'text_secondary',
     }
-    DARK = {
-        'bg': '#0F172A', 'bg_secondary': '#1E293B', 'bg_tertiary': '#334155',
-        'surface': '#1E293B', 'surface_hover': '#334155',
-        'border': '#334155', 'border_light': '#1E293B',
-        'text': '#F1F5F9', 'text_secondary': '#94A3B8', 'text_tertiary': '#64748B',
-        'accent': '#3B82F6', 'accent_hover': '#60A5FA', 'accent_surface': '#1E3A5F',
-        'user_bubble': '#2563EB', 'user_text': '#FFFFFF',
-        'ai_bubble': '#1E293B', 'ai_text': '#F1F5F9',
-        'think_bg': '#052E16', 'think_border': '#166534', 'think_text': '#4ADE80',
-        'error_bg': '#450A0A', 'error_border': '#7F1D1D', 'error_text': '#FCA5A5',
-        'warn_bg': '#422006', 'warn_border': '#854D0E', 'warn_text': '#FCD34D',
-        'code_bg': '#020617', 'code_text': '#CBD5E1',
-        'input_bg': '#1E293B', 'input_border': '#334155', 'input_focus': '#3B82F6',
-        'scrollbar_bg': '#1E293B', 'scrollbar_handle': '#475569',
-        'success_dot': '#22C55E', 'warn_dot': '#FBBF24', 'error_dot': '#F87171',
-        'progress_bg': '#334155', 'progress_chunk': '#3B82F6',
-        'sug_bg': '#1E293B', 'sug_text': '#CBD5E1', 'sug_border': '#334155',
-        'sug_hover_bg': '#1E3A5F', 'sug_hover_border': '#3B82F6', 'sug_hover_text': '#60A5FA',
-        'stop_bg': '#DC2626', 'stop_hover': '#B91C1C', 'speed_text': '#64748B',
-        'output_bg': '#020617', 'output_border': '#1E293B', 'output_text': '#94A3B8',
-    }
+    _CODE = {'light': {'code_bg': '#1f2937', 'code_text': '#e5e7eb', 'output_bg': '#1f2937',
+                       'output_border': '#374151', 'output_text': '#d1d5db'},
+             'dark': {'code_bg': '#181818', 'code_text': '#d4d4d4', 'output_bg': '#181818',
+                      'output_border': '#3c3c3c', 'output_text': '#c8c8c8'}}
+
+    @classmethod
+    def palette(cls):
+        """The application's current palette."""
+        from results.figure_builder.ui import look
+        return look.palette()
 
     @classmethod
     def is_dark(cls):
-        """Return whether the dark palette is active."""
-        return cls._dark
+        """Return whether the application is in dark mode."""
+        from results.figure_builder.ui import look
+        return look.is_dark()
 
     @classmethod
     def toggle(cls):
-        """Switch between the light and dark palettes."""
+        """Kept for compatibility; the application theme decides."""
         cls._dark = not cls._dark
 
     @classmethod
     def sync_with_global(cls):
         """Follow the application-wide theme."""
-        cls._dark = global_theme.is_dark
+        cls._dark = cls.is_dark()
 
     @classmethod
     def c(cls, key):
-        """Return the colour for *key* in the active palette.
+        """Return the colour for *key* in the current application theme.
 
         Args:
-            key (str): Palette entry name.
+            key (str): Chat window colour name.
 
         Returns:
-            str: Hex colour, magenta when the key is unknown.
+            str: Hex colour.
         """
-        return (cls.DARK if cls._dark else cls.LIGHT).get(key, '#FF00FF')
+        code = cls._CODE['dark' if cls.is_dark() else 'light']
+        if key in code:
+            return code[key]
+        p = cls.palette()
+        return getattr(p, cls._MAP.get(key, key), None) or getattr(p, 'text_primary', '#000000')
 
 
 Theme.sync_with_global()

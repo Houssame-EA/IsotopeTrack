@@ -27,7 +27,7 @@ The particle data the assistant works on, as one pandas table.
 ### [`dialog.py`](dialog.md)
 The AI Data Assistant chat window.
 
-**1** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **74** methods
+**1** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **82** methods
 
 ### [`exploration.py`](exploration.md)
 State of an agentic exploration: the plan, the findings and the steps.
@@ -62,7 +62,7 @@ Running the Python the model writes, safely enough for a local tool.
 ### [`servers.py`](servers.md)
 Local model servers: discovery, launching, stopping and thread housekeeping.
 
-**0** classes &nbsp;·&nbsp; **20** functions &nbsp;·&nbsp; **0** methods
+**0** classes &nbsp;·&nbsp; **23** functions &nbsp;·&nbsp; **0** methods
 
 ### [`settings.py`](settings.md)
 Settings dialogs: which model to use, and how the chat looks.
@@ -72,7 +72,7 @@ Settings dialogs: which model to use, and how the chat looks.
 ### [`streaming.py`](streaming.md)
 Background threads that talk to the model servers.
 
-**2** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **15** methods
+**5** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **26** methods
 
 ### [`synthetic.py`](synthetic.md)
 Synthetic spICP-ToF-MS particle streams with known ground truth.
@@ -82,9 +82,9 @@ Synthetic spICP-ToF-MS particle streams with known ground truth.
 ### [`theme.py`](theme.md)
 Colours, font sizes and markdown rendering shared by the AI chat widgets.
 
-**1** classes &nbsp;·&nbsp; **7** functions &nbsp;·&nbsp; **4** methods
+**1** classes &nbsp;·&nbsp; **7** functions &nbsp;·&nbsp; **5** methods
 
 ### [`widgets.py`](widgets.md)
 Chat window building blocks: message bubbles, tables, figures and inputs.
 
-**16** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **84** methods
+**16** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **86** methods

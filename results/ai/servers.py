@@ -169,18 +169,83 @@ def shutdown_launched_servers(timeout=6):
     return stopped
 
 
+_MODELS_IN_USE = {}
+_RELEASED = False
+
+
+def note_model_in_use(backend, model, host=''):
+    """Remember a model the assistant sent a request to, so quitting can release it.
+
+    Args:
+        backend (str): ``ollama``, ``mlx`` or ``custom``.
+        model (str): Model name.
+        host (str): Server base URL.
+    """
+    global _RELEASED
+    if backend in ('ollama', 'mlx') and model:
+        _MODELS_IN_USE[(backend, model, host or '')] = time.monotonic()
+        _RELEASED = False
+
+
+def models_in_use():
+    """Models the assistant used since the last release.
+
+    Returns:
+        list: ``(backend, model, host)`` tuples.
+    """
+    return list(_MODELS_IN_USE)
+
+
+def release_models(timeout=4):
+    """Free the memory held by every model the assistant used.
+
+    Ollama models are unloaded at once (Ollama would otherwise keep them for
+    several minutes), and MLX servers the app started are stopped. Safe to
+    call more than once; the second call does nothing.
+
+    Args:
+        timeout (float): Seconds allowed per unload request.
+
+    Returns:
+        int: Number of models or servers released.
+    """
+    global _RELEASED
+    if _RELEASED:
+        return 0
+    _RELEASED = True
+    released = 0
+    for backend, model, host in list(_MODELS_IN_USE):
+        if backend == 'ollama':
+            try:
+                if unload_ollama_model(model, host or OLLAMA_BASE, timeout=timeout):
+                    released += 1
+                    _itk_log.info("Unloaded Ollama model %s", model)
+            except Exception:
+                _itk_log.exception("Could not unload Ollama model %s", model)
+    _MODELS_IN_USE.clear()
+    released += shutdown_launched_servers()
+    return released
+
+
 def install_server_shutdown_hooks():
-    """Register app-exit hooks that stop servers this app started."""
+    """Release models and stop servers the app started when the app quits.
+
+    Hooked to Qt's ``aboutToQuit``, which runs before ``Run.py`` ends the
+    process with ``os._exit`` (that skips ``atexit``), and to ``atexit`` for
+    other ways of exiting.
+    """
     try:
         import atexit
-        atexit.register(shutdown_launched_servers)
+        if not getattr(install_server_shutdown_hooks, '_atexit_done', False):
+            atexit.register(release_models)
+            install_server_shutdown_hooks._atexit_done = True
     except Exception:
         _itk_log.exception("Handled exception registering atexit hook")
     try:
         from PySide6.QtWidgets import QApplication
         app = QApplication.instance()
         if app is not None and not getattr(app, '_itk_ai_shutdown_hooked', False):
-            app.aboutToQuit.connect(shutdown_launched_servers)
+            app.aboutToQuit.connect(release_models)
             app._itk_ai_shutdown_hooked = True
     except Exception:
         _itk_log.exception("Handled exception connecting aboutToQuit hook")

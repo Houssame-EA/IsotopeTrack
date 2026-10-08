@@ -17,14 +17,20 @@ Colours, font sizes and markdown rendering shared by the AI chat widgets.
 
 ### `Theme`
 
-Light and dark palettes for the chat window, following the app theme.
+Chat window colours, taken from the application theme.
+
+Every colour comes from the palette in :mod:`tools.theme`, the same one
+the Figure Builder and the main window use, so the assistant looks like
+the rest of IsotopeTrack and follows the light and dark switch. The keys
+below are the chat window's names for palette entries.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `is_dark` | `(cls)` | Return whether the dark palette is active. |
-| `toggle` | `(cls)` | Switch between the light and dark palettes. |
+| `palette` | `(cls)` | The application's current palette. |
+| `is_dark` | `(cls)` | Return whether the application is in dark mode. |
+| `toggle` | `(cls)` | Kept for compatibility; the application theme decides. |
 | `sync_with_global` | `(cls)` | Follow the application-wide theme. |
-| `c` | `(cls, key)` | Return the colour for *key* in the active palette. |
+| `c` | `(cls, key)` | Return the colour for *key* in the current application theme. |
 
 ## Functions
 

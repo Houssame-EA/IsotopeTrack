@@ -3,30 +3,169 @@
 :class:`StreamWorker` streams one chat completion from Ollama, an MLX server
 or any OpenAI-compatible API. :class:`ProbeWorker` looks for a running local
 server so the assistant can connect without a trip to the settings.
+
+Requests go through :class:`CancellableStream`, a thin layer over
+:mod:`http.client` whose socket can be shut from the GUI thread at any
+moment, including while the server is still reading the prompt. Closing the
+connection is how Ollama and MLX servers are told to stop generating, so
+Stop really stops the model instead of only hiding its output.
 """
+import http.client
 import json
 import logging
+import socket
 import threading
 import time
+from urllib.parse import urlsplit
 
-import requests
 from PySide6.QtCore import QThread, Signal
 
 from results.ai.servers import (
-    MLX_BASE, OLLAMA_CHAT, PROBE_ATTEMPTS, PROBE_RETRY_GAP,
-    fetch_ollama_models, fetch_openai_models, local_session,
+    MLX_BASE, OLLAMA_BASE, PROBE_ATTEMPTS, PROBE_RETRY_GAP, fetch_ollama_models,
+    fetch_openai_models,
 )
 
 _itk_log = logging.getLogger("IsotopeTrack.results.ai.streaming")
 
+READ_TIMEOUT = 600
+
+
+class StreamCancelled(Exception):
+    """Raised inside the worker when the user stopped the request."""
+
+
+class CancellableStream:
+    """One streaming POST request that another thread can abort at once.
+
+    Attributes:
+        url (str): Endpoint.
+        status (int): HTTP status once the response arrived.
+    """
+
+    def __init__(self, url, payload, headers=None, timeout=READ_TIMEOUT):
+        """Prepare the request.
+
+        Args:
+            url (str): Full endpoint URL.
+            payload (dict): JSON body.
+            headers (dict): Extra headers.
+            timeout (float): Socket timeout in seconds.
+        """
+        self.url = url
+        self._payload = payload
+        self._headers = dict(headers or {})
+        self._timeout = timeout
+        self._conn = None
+        self._sock = None
+        self._resp = None
+        self._aborted = threading.Event()
+        self.status = 0
+
+    def open(self):
+        """Send the request and wait for the response headers.
+
+        Returns:
+            http.client.HTTPResponse: The response.
+
+        Raises:
+            StreamCancelled: When :meth:`abort` was called meanwhile.
+        """
+        parts = urlsplit(self.url)
+        cls = http.client.HTTPSConnection if parts.scheme == 'https' else http.client.HTTPConnection
+        self._conn = cls(parts.hostname, parts.port, timeout=self._timeout)
+        if self._aborted.is_set():
+            raise StreamCancelled()
+        path = parts.path or '/'
+        if parts.query:
+            path += '?' + parts.query
+        body = json.dumps(self._payload).encode('utf-8')
+        headers = {'Content-Type': 'application/json', 'Accept': 'text/event-stream, application/x-ndjson',
+                   **self._headers}
+        try:
+            self._conn.connect()
+            self._sock = self._conn.sock
+            if self._aborted.is_set():
+                raise StreamCancelled()
+            self._conn.request('POST', path, body=body, headers=headers)
+            self._resp = self._conn.getresponse()
+        except (OSError, http.client.HTTPException):
+            if self._aborted.is_set():
+                raise StreamCancelled() from None
+            raise
+        self.status = self._resp.status
+        return self._resp
+
+    def lines(self):
+        """Yield the response body line by line, decoded.
+
+        Raises:
+            StreamCancelled: When :meth:`abort` cut the stream.
+        """
+        try:
+            while True:
+                if self._aborted.is_set():
+                    raise StreamCancelled()
+                raw = self._resp.readline()
+                if not raw:
+                    break
+                yield raw.decode('utf-8', 'replace').rstrip('\r\n')
+        except (OSError, http.client.HTTPException, ValueError, AttributeError):
+            if self._aborted.is_set():
+                raise StreamCancelled() from None
+            raise
+
+    def read_error(self, limit=2000):
+        """Read a short error body.
+
+        Returns:
+            str: The server's error message, or an empty string.
+        """
+        try:
+            text = self._resp.read(limit).decode('utf-8', 'replace')
+        except Exception:
+            return ''
+        try:
+            data = json.loads(text)
+            err = data.get('error')
+            if isinstance(err, dict):
+                return str(err.get('message', ''))
+            return str(err or text)
+        except Exception:
+            return text.strip()[:300]
+
+    def abort(self):
+        """Cut the connection now; the server sees the client go and stops generating."""
+        self._aborted.set()
+        sock = self._sock or getattr(self._conn, 'sock', None)
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        for closable in (self._resp, self._conn):
+            try:
+                if closable is not None:
+                    closable.close()
+            except Exception:
+                pass
+
+    def close(self):
+        """Release the connection after a normal finish."""
+        try:
+            if self._conn is not None:
+                self._conn.close()
+        except Exception:
+            pass
+
 
 class StreamWorker(QThread):
     """Stream one chat completion from Ollama, MLX or an OpenAI-compatible API."""
-    token_received  = Signal(str)
-    stream_done     = Signal(str)
-    error_occurred  = Signal(str)
-    stats_update    = Signal(int, float)
-    usage_update    = Signal(int, int)
+
+    token_received = Signal(str)
+    stream_done = Signal(str)
+    error_occurred = Signal(str)
+    stats_update = Signal(int, float)
+    usage_update = Signal(int, int)
 
     def __init__(self, backend, msgs, sys_prompt, config, attachments=None):
         """Prepare the request.
@@ -39,28 +178,25 @@ class StreamWorker(QThread):
             attachments (list): Files attached to the last user message.
         """
         super().__init__()
-        self.backend     = backend
-        self.msgs        = msgs
-        self.sys         = sys_prompt
-        self.cfg         = config
+        self.backend = backend
+        self.msgs = msgs
+        self.sys = sys_prompt
+        self.cfg = config
         self.attachments = attachments or []
-        self._cancelled  = threading.Event()
-        self._resp       = None
+        self._cancelled = threading.Event()
+        self._stream = None
 
     def stop(self):
-        """Cancel the request and close the stream."""
+        """Stop the request immediately, wherever it is."""
         self._cancelled.set()
-        if self._resp:
-            try: self._resp.close()
-            except Exception:
-                _itk_log.exception("Handled exception in stop")
+        stream = self._stream
+        if stream is not None:
+            stream.abort()
 
-    def run(self):
-        """Send the request to the configured backend."""
-        if   self.backend == 'mlx':    self._run_mlx()
-        elif self.backend == 'custom': self._run_custom_api()
-        else:                          self._run_ollama()
-
+    @property
+    def cancelled(self):
+        """Whether :meth:`stop` was called."""
+        return self._cancelled.is_set()
 
     def _inject_attachments(self, messages):
         """Inject pending file/image attachments into the last user message."""
@@ -101,180 +237,216 @@ class StreamWorker(QThread):
                 break
         return msgs
 
+    def _ollama_request(self):
+        """URL, payload and headers for Ollama's chat endpoint."""
+        host = (self.cfg.get('ollama_host') or OLLAMA_BASE).rstrip('/')
+        messages = self._inject_attachments([{"role": "system", "content": self.sys}] + self.msgs)
+        payload = {
+            "model": self.cfg.get('model', ''),
+            "messages": messages,
+            "stream": True,
+            "options": {
+                "temperature": self.cfg.get('temperature', 0.2),
+                "num_ctx": self.cfg.get('num_ctx', 8192),
+                "num_predict": int(self.cfg.get('max_reply_tokens', 4096)),
+            },
+        }
+        return f"{host}/api/chat", payload, {}
 
-    def _run_ollama(self):
-        """Stream from Ollama's chat endpoint."""
+    def _openai_payload(self, model):
+        """OpenAI-style payload shared by MLX and custom APIs."""
+        messages = self._inject_attachments_openai([{"role": "system", "content": self.sys}] + self.msgs)
+        payload = {
+            "messages": messages,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+            "temperature": self.cfg.get('temperature', 0.2),
+            "max_tokens": int(self.cfg.get('max_reply_tokens', 4096)),
+        }
+        if model:
+            payload['model'] = model
+        return payload
+
+    def _mlx_request(self):
+        """URL, payload and headers for an MLX server, resolving the served model id."""
+        host = (self.cfg.get('mlx_host') or MLX_BASE).rstrip('/')
+        model = self.cfg.get('model', '')
+        ids, reachable, _ = fetch_openai_models(host, timeout=4)
+        if reachable and ids and model not in ids:
+            _itk_log.info("MLX model %r not served; using %r instead", model, ids[0])
+            model = ids[0]
+        elif not model and ids:
+            model = ids[0]
+        url = host if host.endswith('/v1') else f"{host}/v1"
+        return f"{url}/chat/completions", self._openai_payload(model), {}
+
+    def _custom_request(self):
+        """URL, payload and headers for a user-configured OpenAI-compatible API."""
+        base = self.cfg.get('custom_base_url', '').rstrip('/')
+        if not base:
+            raise ValueError("No base URL configured for the custom API.")
+        headers = {}
+        key = self.cfg.get('custom_api_key', '')
+        if key:
+            headers['Authorization'] = f'Bearer {key}'
+        model = self.cfg.get('custom_model', '') or self.cfg.get('model', '')
+        return f"{base}/chat/completions", self._openai_payload(model), headers
+
+    def _connect_hint(self):
+        """What to tell the user when the server cannot be reached."""
+        if self.backend == 'mlx':
+            return ("Cannot connect to the MLX server.\n"
+                    "Start it with:  mlx_lm.server --model <model-path> --port 8080")
+        if self.backend == 'custom':
+            return f"Cannot connect to {self.cfg.get('custom_base_url', 'the API')}"
+        return "Cannot connect to Ollama. Run: ollama serve"
+
+    def run(self):
+        """Send the request, stream the reply, and stop as soon as asked."""
+        full, tc, t0 = [], 0, time.monotonic()
         try:
-            base_msgs = [{"role": "system", "content": self.sys}] + self.msgs
-            messages  = self._inject_attachments(base_msgs)
-            self._resp = local_session().post(OLLAMA_CHAT, json={
-                "model":   self.cfg.get('model', ''),
-                "messages": messages,
-                "stream":  True,
-                "options": {
-                    "temperature": self.cfg.get('temperature', 0.2),
-                    "num_ctx":     self.cfg.get('num_ctx', 8192),
-                    "num_predict": int(self.cfg.get('max_reply_tokens', 4096)),
-                },
-            }, timeout=300, stream=True)
-            if self._resp.status_code != 200:
-                self.error_occurred.emit(f"Ollama HTTP {self._resp.status_code}"); return
-            self._stream_ndjson()
-        except requests.exceptions.ConnectionError:
-            _itk_log.exception("Handled exception in _run_ollama")
-            if not self._cancelled.is_set():
-                self.error_occurred.emit("Cannot connect to Ollama. Run: ollama serve")
+            if self.backend == 'mlx':
+                url, payload, headers = self._mlx_request()
+            elif self.backend == 'custom':
+                url, payload, headers = self._custom_request()
+            else:
+                url, payload, headers = self._ollama_request()
+            if self.cancelled:
+                raise StreamCancelled()
+            self._stream = CancellableStream(url, payload, headers)
+            if self.cancelled:
+                raise StreamCancelled()
+            self._stream.open()
+            status = self._stream.status
+            if status != 200:
+                detail = self._stream.read_error()
+                if self.backend == 'mlx' and status == 404:
+                    detail = (f"the server did not recognise the model id '{payload.get('model', 'none sent')}'. "
+                              "Restart mlx_lm.server with that model.")
+                self.error_occurred.emit(f"HTTP {status}" + (f": {detail}" if detail else ''))
+                return
+            reader = self._read_ndjson if self.backend == 'ollama' else self._read_sse
+            tc = reader(full, t0)
+        except StreamCancelled:
+            pass
+        except (ConnectionRefusedError, socket.gaierror):
+            if not self.cancelled:
+                self.error_occurred.emit(self._connect_hint())
+            return
         except Exception as e:
-            _itk_log.exception("Handled exception in _run_ollama")
-            if not self._cancelled.is_set(): self.error_occurred.emit(str(e))
+            if not self.cancelled:
+                _itk_log.exception("Model request failed")
+                self.error_occurred.emit(str(e) or type(e).__name__)
+            return
+        finally:
+            if self._stream is not None:
+                self._stream.close()
+        self._finish(full, tc, t0)
 
-    def _iter_stream_lines(self):
-        """Yield response lines, absorbing the teardown that Stop causes.
+    def _read_ndjson(self, full, t0):
+        """Read Ollama's newline-delimited JSON stream.
 
-        Stop closes the streaming response from the GUI thread while this
-        thread is mid-read, which surfaces from urllib3 as an assortment of
-        errors on a socket that no longer exists. Those are expected once
-        cancellation is set and must not reach the user as a failure.
+        Returns:
+            int: Number of chunks received.
         """
-        try:
-            for line in self._resp.iter_lines(decode_unicode=True):
-                yield line
-        except Exception:
-            if not self._cancelled.is_set():
-                raise
-            _itk_log.info("Stream closed while stopping — ignoring teardown error")
-
-    def _stream_ndjson(self):
-        """Read Ollama's newline-delimited JSON stream."""
-        full = []; tc = 0; t0 = time.monotonic()
-        for line in self._iter_stream_lines():
-            if self._cancelled.is_set(): break
-            if not line: continue
-            try: chunk = json.loads(line)
-            except Exception:
-                _itk_log.exception("Handled exception in _stream_ndjson")
+        tc = 0
+        for line in self._stream.lines():
+            if not line:
                 continue
-            content = chunk.get('message', {}).get('content', '')
-            if content: full.append(content); tc += 1; self.token_received.emit(content)
-            if tc % 10 == 0: self.stats_update.emit(tc, time.monotonic()-t0)
+            try:
+                chunk = json.loads(line)
+            except ValueError:
+                continue
+            if chunk.get('error'):
+                raise RuntimeError(str(chunk['error']))
+            content = (chunk.get('message') or {}).get('content', '')
+            if content:
+                full.append(content)
+                tc += 1
+                self.token_received.emit(content)
+                if tc % 10 == 0:
+                    self.stats_update.emit(tc, time.monotonic() - t0)
             if chunk.get('done', False):
                 self.usage_update.emit(int(chunk.get('prompt_eval_count', 0) or 0),
                                        int(chunk.get('eval_count', 0) or 0))
                 break
-        self._finish(full, tc, t0)
+        return tc
 
+    def _read_sse(self, full, t0):
+        """Read an OpenAI-style server-sent event stream.
 
-    def _run_mlx(self):
-        """Stream from an MLX server's OpenAI-compatible endpoint."""
-        try:
-            host = self.cfg.get('mlx_host', MLX_BASE).rstrip('/')
-            base_msgs = [{"role": "system", "content": self.sys}] + self.msgs
-            messages  = self._inject_attachments_openai(base_msgs)
-            model = self.cfg.get('model', '')
-            ids, reachable, _ = fetch_openai_models(host, timeout=4)
-            if reachable and ids and model not in ids:
-                _itk_log.info("MLX model %r not served; using %r instead", model, ids[0])
-                model = ids[0]
-            elif not model and ids:
-                model = ids[0]
-            payload = {
-                "messages":    messages,
-                "stream":      True,
-                "stream_options": {"include_usage": True},
-                "temperature": self.cfg.get('temperature', 0.2),
-                "max_tokens":  int(self.cfg.get('max_reply_tokens', 4096)),
-            }
-            if model:
-                payload['model'] = model
-            self._resp = local_session().post(
-                f"{host}/v1/chat/completions", json=payload, timeout=300, stream=True)
-            if self._resp.status_code == 404:
-                self.error_occurred.emit(
-                    "MLX HTTP 404 — the server did not recognise the model id "
-                    f"'{model or 'none sent'}'. Check the id listed by "
-                    f"{host}/v1/models and restart mlx_lm.server with that model.")
-                return
-            if self._resp.status_code != 200:
-                self.error_occurred.emit(f"MLX HTTP {self._resp.status_code}"); return
-            self._stream_sse()
-        except requests.exceptions.ConnectionError:
-            _itk_log.exception("Handled exception in _run_mlx")
-            if not self._cancelled.is_set():
-                self.error_occurred.emit(
-                    "Cannot connect to MLX server.\n"
-                    "Start it with:  mlx_lm.server --model <model-path> --port 8080")
-        except Exception as e:
-            _itk_log.exception("Handled exception in _run_mlx")
-            if not self._cancelled.is_set(): self.error_occurred.emit(str(e))
-
-    def _stream_sse(self):
-        """Read an OpenAI-style server-sent event stream."""
-        full = []; tc = 0; t0 = time.monotonic()
-        for line in self._iter_stream_lines():
-            if self._cancelled.is_set(): break
-            if not line or not line.startswith('data: '): continue
-            ds = line[6:]
-            if ds.strip() == '[DONE]': break
-            try: ev = json.loads(ds)
-            except Exception:
-                _itk_log.exception("Handled exception in _stream_sse")
+        Returns:
+            int: Number of chunks received.
+        """
+        tc = 0
+        for line in self._stream.lines():
+            if not line.startswith('data:'):
+                continue
+            data = line[5:].strip()
+            if data == '[DONE]':
+                break
+            try:
+                ev = json.loads(data)
+            except ValueError:
                 continue
             usage = ev.get('usage') or {}
             if usage:
                 self.usage_update.emit(int(usage.get('prompt_tokens', 0) or 0),
                                        int(usage.get('completion_tokens', 0) or 0))
-            choices = ev.get('choices') or [{}]
-            content = choices[0].get('delta', {}).get('content', '') if choices else ''
-            if content: full.append(content); tc += 1; self.token_received.emit(content)
-            if tc % 10 == 0: self.stats_update.emit(tc, time.monotonic()-t0)
-        self._finish(full, tc, t0)
-
-
-    def _run_custom_api(self):
-        """Stream from a user-configured OpenAI-compatible API."""
-        try:
-            base = self.cfg.get('custom_base_url', '').rstrip('/')
-            key  = self.cfg.get('custom_api_key', '')
-            model= self.cfg.get('custom_model', '')
-            if not base:
-                self.error_occurred.emit("No base URL configured for Custom API."); return
-            hdrs = {'Content-Type': 'application/json'}
-            if key: hdrs['Authorization'] = f'Bearer {key}'
-            base_msgs = [{"role":"system","content":self.sys}] + self.msgs
-            messages  = self._inject_attachments_openai(base_msgs)
-            self._resp = requests.post(
-                f"{base}/chat/completions",
-                headers=hdrs,
-                json={"model":model,"messages":messages,"stream":True,
-                      "stream_options":{"include_usage":True},
-                      "temperature":self.cfg.get('temperature',0.2),
-                      "max_tokens":int(self.cfg.get('max_reply_tokens', 4096))},
-                timeout=300, stream=True)
-            if self._resp.status_code != 200:
-                try: detail = self._resp.json().get('error',{}).get('message','')
-                except Exception:
-                    _itk_log.exception("Handled exception in _run_custom_api")
-                    detail = ''
-                self.error_occurred.emit(f"API HTTP {self._resp.status_code}: {detail}"); return
-            self._stream_sse()
-        except requests.exceptions.ConnectionError:
-            _itk_log.exception("Handled exception in _run_custom_api")
-            if not self._cancelled.is_set():
-                self.error_occurred.emit(f"Cannot connect to {self.cfg.get('custom_base_url','API')}")
-        except Exception as e:
-            _itk_log.exception("Handled exception in _run_custom_api")
-            if not self._cancelled.is_set(): self.error_occurred.emit(str(e))
+            choices = ev.get('choices') or []
+            content = ((choices[0].get('delta') or {}).get('content') or '') if choices else ''
+            if content:
+                full.append(content)
+                tc += 1
+                self.token_received.emit(content)
+                if tc % 10 == 0:
+                    self.stats_update.emit(tc, time.monotonic() - t0)
+        return tc
 
     def _finish(self, full, tc, t0):
         """Emit the complete reply, or an error when it is empty."""
         complete = ''.join(full).strip()
-        if self._cancelled.is_set():
-            self.stream_done.emit((complete+"\n\n*[Stopped]*") if complete else "*[Cancelled]*")
+        if self.cancelled:
+            self.stream_done.emit((complete + "\n\n*[Stopped]*") if complete else "*[Stopped]*")
         elif complete:
-            self.stats_update.emit(tc, time.monotonic()-t0)
+            self.stats_update.emit(tc, time.monotonic() - t0)
             self.stream_done.emit(complete)
         else:
             self.error_occurred.emit("Empty response.")
+
+
+class CodeWorker(QThread):
+    """Run generated code off the GUI thread, so the window stays usable and Stop works."""
+
+    result_ready = Signal(str, object)
+
+    def __init__(self, code, dataset, timeout=None):
+        """Prepare the run.
+
+        Args:
+            code (str): Python written by the model.
+            dataset (Dataset): The data it works on.
+            timeout (float): Seconds allowed, the sandbox default when ``None``.
+        """
+        super().__init__()
+        self.code = code
+        self.dataset = dataset
+        self.timeout = timeout
+        self._stop = threading.Event()
+
+    def stop(self):
+        """Stop the code at its next line."""
+        self._stop.set()
+
+    def run(self):
+        """Execute the code and hand back the result."""
+        from results.ai.sandbox import CODE_EXEC_TIMEOUT, ExecResult, execute
+        try:
+            res = execute(self.code, self.dataset, self.timeout or CODE_EXEC_TIMEOUT, stop_event=self._stop)
+        except Exception as e:
+            _itk_log.exception("Sandbox run failed")
+            res = ExecResult(error=f"{type(e).__name__}: {e}")
+        self.result_ready.emit(self.code, res)
 
 
 class ProbeWorker(QThread):

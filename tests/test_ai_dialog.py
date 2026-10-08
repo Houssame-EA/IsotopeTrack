@@ -89,6 +89,10 @@ def dialog(monkeypatch):
     yield d
     d.shutdown()
     d.close()
+    node.chat_dialog = None
+    d.deleteLater()
+    from PySide6.QtCore import QCoreApplication, QEvent
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
     app.processEvents()
 
 
@@ -187,3 +191,30 @@ def test_benchmark_questions_have_reference_code():
     dc, truth, _ = make_dataset()
     for q in build_questions(dc, truth):
         assert q.reference.strip()
+
+
+def test_stop_interrupts_running_code_and_frees_the_window(dialog):
+    """Stop during a long code run ends it at once and unlocks the input."""
+    ScriptedWorker.script += ["Looping.\n```python\nwhile True:\n    pass\n```"]
+    dialog._input.setText("loop forever")
+    dialog._send()
+    app = QApplication.instance()
+    end = time.time() + 10
+    while time.time() < end and dialog._code_worker is None:
+        app.processEvents()
+        time.sleep(0.01)
+    assert dialog._code_worker is not None
+    t0 = time.time()
+    dialog._do_stop()
+    assert dialog._worker is None and dialog._code_worker is None
+    assert dialog._input.isEnabled()
+    assert time.time() - t0 < 3
+    assert any('Stopped' in w._lbl.text() for w in _of(dialog, NoticeBubble))
+
+
+def test_closing_the_window_keeps_the_model(dialog, monkeypatch):
+    """Closing the chat window stops work but leaves the model loaded for next time."""
+    released = []
+    monkeypatch.setattr('results.ai.servers.release_models', lambda *a, **k: released.append(1))
+    dialog.close()
+    assert not released
