@@ -70,6 +70,7 @@ it is, and a button naming the plot it adds.
 | `_build_details` | `(self, explanation) → QWidget` | Build the hidden details section: key numbers, then the explanation. |
 | `_toggle_details` | `(self)` | Show or hide the details section. |
 | `_figure_clicked` | `(self)` | Add the explained figure, and confirm on the button. |
+| `_cluster_clicked` | `(self)` | Add a Clustering node for this particle-type finding. |
 | `_clicked` | `(self)` | Add the plot, and confirm on the button. |
 
 ### `SmartInsightsPanel` *(extends `QWidget`)*
@@ -104,6 +105,10 @@ instantiating this directly.
 | `_show_only` | `(self, key: str)` | Show one plot type only. |
 | `_set_status` | `(self, text: str)` | Show a short progress line under the header, or hide it when empty. |
 | `scan` | `(self, force: bool=False)` | Search for whatever the picked plot types still need. |
+| `_refresh_clicked` | `(self)` | Search again from scratch after the refresh button is pressed. |
+| `_pick_filter` | `(self, node_type: str \| None)` | Show the plot type picked from the menu, and log the choice. |
+| `_pick_focus` | `(self, symbol: str)` | Search around the element picked from the menu, and log the choice. |
+| `_new_bar_clicked` | `(self)` | Show the findings that were held back, and log the click. |
 | `refresh` | `(self)` | Search everything again from scratch. |
 | `run_category` | `(self, key: str, force: bool=False)` | Show only the plot types one detector feeds, and search for them. |
 | `_check_scope` | `(self)` | Search again when the loaded samples or replicate groups have changed. |
@@ -152,6 +157,7 @@ instantiating this directly.
 | `_load_filter` | `() → str \| None` | Read the plot type the user last chose to show, or ``None`` for all. |
 | `_save_filter` | `(node_type: str \| None) → None` | Remember which plot type the user chose to show. |
 | `_discard` | `(widget: QWidget)` | Take a widget off the screen now and delete it once Qt is idle. |
+| `log_click` | `(description: str, context: dict \| None=None)` | Record a click in Insights in the user-action log. |
 | `element_symbols` | `(particles) → list[str]` | Element symbols detected in *particles*, lightest first. |
 | `card_key` | `(s: Suggestion) → tuple` | Identity of a finding's card, so a card can be kept across refreshes. |
 | `integrate_insights_panel` | `(canvas_dialog, splitter: QSplitter) → SmartInsightsPanel` | Append a :class:`SmartInsightsPanel` as the rightmost pane of *splitter*. |

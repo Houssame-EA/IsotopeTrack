@@ -27,7 +27,7 @@ Figures that tell the story behind a finding.
 ### [`panel.py`](panel.md)
 The Insights side panel of the results canvas.
 
-**5** classes &nbsp;·&nbsp; **18** functions &nbsp;·&nbsp; **54** methods
+**5** classes &nbsp;·&nbsp; **19** functions &nbsp;·&nbsp; **59** methods
 
 ### [`replicates.py`](replicates.md)
 Work out which samples are replicates of one another.

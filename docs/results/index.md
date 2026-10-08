@@ -32,7 +32,7 @@ Concentration-Comparison Plot Node – dot-and-circle strip chart.
 ### [`results_correlation.py`](results-correlation.md)
 
 
-**6** classes &nbsp;·&nbsp; **2** functions &nbsp;·&nbsp; **76** methods
+**6** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **87** methods
 
 ### [`results_heatmap.py`](results-heatmap.md)
 
