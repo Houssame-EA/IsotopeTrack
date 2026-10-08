@@ -20,7 +20,8 @@ from results.figure_builder.core import engine as E
 from results.figure_builder.charts.categorical import BAR_SORTS, PIE_LABELS, PIE_MODES
 from results.figure_builder.charts.distributions import MARKS
 from results.figure_builder.charts.extra import STRIP_COLORS, STRIP_SIZES
-from results.figure_builder.charts.matrices import HEAT_SPREADS, ZERO_HANDLING
+from results.figure_builder.charts.matrices import (
+    HEAT_COL_ORDERS, HEAT_QUANTITIES, HEAT_SEARCH_MODES, HEAT_SORTS, HEAT_SPREADS, ZERO_HANDLING)
 from results.figure_builder.charts.more import LOLLI_STATS, SHARE_MODES, TIME_MODES
 from results.figure_builder.charts.network import NODE_SIZES, PCA_TRANSFORMS
 from results.figure_builder.charts.special import TERNARY_FILTERS
@@ -129,8 +130,15 @@ FIELDS = [
     ('Data', 'What to plot', 'heat_value', 'Cell value', 'combo', {'heatmap'},
      {'mean': 'Mean', 'median': 'Median', 'gmean': 'Geometric mean', 'mode': 'Mode', 'sum': 'Sum',
       'detect': 'Detected in (% of particles)', 'count': 'Particles detected'}),
-    ('Data', 'What to plot', 'heat_sort', 'Rank combinations by', 'combo', {'heatmap'},
-     {'count': 'Number of particles', 'amount': 'Share of the summed amount'}),
+    ('Data', 'What to plot', 'heat_quantity', 'Values shown', 'combo', {'heatmap'}, HEAT_QUANTITIES),
+    ('Data', 'What to plot', 'heat_sort', 'Rank rows by', 'combo', {'heatmap'}, HEAT_SORTS),
+    ('Data', 'What to plot', 'heat_sort_el', 'Element to rank by', 'text', {'heatmap'}, 'e.g. Fe'),
+    ('Data', 'What to plot', 'heat_col_order', 'Order columns', 'combo', {'heatmap'}, HEAT_COL_ORDERS),
+    ('Data', 'What to plot', 'heat_search', 'Only rows with', 'text', {'heatmap'}, 'e.g. Fe, Ti'),
+    ('Data', 'What to plot', 'heat_search_mode', 'Match', 'combo', {'heatmap'}, HEAT_SEARCH_MODES),
+    ('Data', 'What to plot', 'heat_start', 'Start at rank', 'int', {'heatmap'}, (1, 10000)),
+    ('Data', 'What to plot', 'heat_min_share', 'Min share of the amount (%)', 'float', {'heatmap'},
+     (0, 100, 0.5)),
     ('Data', 'What to plot', 'zero_handling', 'Particles in each pair', 'combo', {'corr_matrix'},
      {'': 'Automatic (hide zero values)', **ZERO_HANDLING}),
     ('Data', 'What to plot', 'corr_diff', 'Difference of the first two groups (Δr)', 'check',
@@ -723,7 +731,8 @@ class PanelEditor(QWidget):
         if self._loading or self.panel is None:
             return
         self.panel[key] = value
-        if key in ('kind', 'group_by', 'test', 'pie_mode', 'rules', 'y', 'heat_rows', 'show_fit', 'trend',
+        if key in ('kind', 'group_by', 'test', 'pie_mode', 'rules', 'y', 'heat_rows', 'heat_sort',
+                   'heat_search', 'show_fit', 'trend',
                    'share_mode', 'facet', 'bin_mode', 'donut', 'color_by', 'agg', 'stat_band',
                    'natural_line', 'dl_value'):
             if key == 'kind' and value == 'code' and not (self.panel.get('code') or '').strip():
@@ -809,7 +818,14 @@ class PanelEditor(QWidget):
         if key in ('dl_label', 'dl_color'):
             return kind in kinds and bool(str(p.get('dl_value') or '').strip())
         if key == 'heat_sort':
+            return kind == 'heatmap' and p.get('heat_rows') != 'particles'
+        if key == 'heat_sort_el':
+            return kind == 'heatmap' and p.get('heat_rows') != 'particles' and p.get('heat_sort') == 'element'
+        if key in ('heat_search', 'heat_start', 'heat_min_share'):
             return kind == 'heatmap' and p.get('heat_rows') == 'combinations'
+        if key == 'heat_search_mode':
+            return (kind == 'heatmap' and p.get('heat_rows') == 'combinations'
+                    and bool((p.get('heat_search') or '').strip()))
         if key == 'heat_spread':
             return kind == 'heatmap' and p.get('heat_rows') != 'particles'
         if key in ('c_min', 'c_max') and kind in ('scatter', 'ternary'):

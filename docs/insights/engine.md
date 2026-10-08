@@ -36,6 +36,7 @@ the extra detectors in :mod:`results.insights.discovery`.
 | `FDR_Q` | `0.05` |
 | `MIN_ABS_CORRELATION` | `0.5` |
 | `MAX_CORRELATION_CARDS` | `4` |
+| `FOCUS_CAP` | `20` |
 | `BIMODALITY_SCAN_ORDER` | `('element_diameter_nm', 'particle_diameter_nm', 'element_…` |
 | `MIN_BIMODALITY_PARTICLES` | `60` |
 | `BIMODALITY_KDE_SAMPLE` | `4000` |
@@ -151,6 +152,8 @@ Attributes:
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
+| `involves` | `(self, *labels) → bool` | Whether a finding about *labels* concerns the focused element. |
+| `cap` | `(self, n: int) → int` | How many findings a detector may keep: *n*, or many more under a focus. |
 | `n` | `(self) → int` | Return the number of particles in the context. |
 | `sample_names` | `(self) → list[str]` | Return the scope's sample names as a list. |
 | `is_multi` | `(self) → bool` | Return whether the context spans more than one sample. |
@@ -204,6 +207,7 @@ Signals:
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `symbol_of` | `(label: str) → str` | Element symbol of an isotope label such as ``"56Fe"`` or ``"Fe56"``. |
 | `_safe_float` | `(v) → float \| None` | Coerce *v* to a positive float, or ``None`` if it is not usable. |
 | `_build_matrix` | `(particles: list[dict], data_key: str='elements') → tuple[dict[str, np` | Build the element matrix in a single sparse pass. |
 | `_correlate_pair` | `(a: np.ndarray, b: np.ndarray, min_overlap: int=MIN_CORR_OVERLAP) → di` | Correlate two element columns both parametrically and by rank. |
@@ -225,11 +229,13 @@ Signals:
 | `build_context` | `(scene, parent_window, scope: AnalysisScope \| None=None) → AnalysisCon` | Resolve, gather and build a context in one call. |
 | `invalidate_context_cache` | `() → None` | Drop every cached context. |
 | `_say` | `(progress, message: str) → None` | Report progress if the caller supplied a callback. |
+| `_focus_correlation_card` | `(ctx, pairs, significant, adjusted) → 'Suggestion'` | One card listing the focused element's correlation with every element tested. |
 | `_analyse_correlation` | `(ctx: AnalysisContext, progress=None) → list[Suggestion]` | Find element pairs that vary together. |
 | `_analyse_isotope` | `(ctx: AnalysisContext, progress=None) → list[Suggestion]` | Examine isotope ratios within one material. |
 | `_scan_bimodality` | `(ctx: AnalysisContext, progress=None) → list[Suggestion]` | Look for elements whose measurements fall into two separate populations. |
 | `_analyse_distribution` | `(ctx: AnalysisContext, progress=None) → list[Suggestion]` | Describe the shape and spread of individual element distributions. |
 | `_analyse_composition` | `(ctx: AnalysisContext, progress=None) → list[Suggestion]` | Summarise which element combinations particles actually contain. |
+| `_focus_composition` | `(ctx: AnalysisContext, combos: dict) → list[Suggestion]` | What the focused element comes with: its particles' element combinations. |
 | `_comparison_groups` | `(ctx: AnalysisContext) → list[tuple[ReplicateGroup, list[int]]]` | List the replicate groups available for a between-group comparison. |
 | `_group_selection` | `(groups) → dict` | Samples and selector grouping for a card about some replicate groups. |
 | `_analyse_comparison` | `(ctx: AnalysisContext, progress=None) → list[Suggestion]` | Find elements whose signal differs between replicate groups. |
@@ -245,6 +251,8 @@ Signals:
 | `_dedupe_suggestions` | `(suggestions: list[Suggestion], per_type_limit: int \| None=None) → lis` | Rank suggestions and drop the ones that repeat each other. |
 | `_within_units` | `(ctx: AnalysisContext) → list[tuple[AnalysisContext, ReplicateGroup \| ` | Split the scope into the per-group contexts within-group detectors search. |
 | `_run_detector` | `(ctx: AnalysisContext, analyser: InsightCategory, progress=None, shoul` | Run one detector the way its kind requires. |
+| `focused` | `(ctx: AnalysisContext, symbol: str) → AnalysisContext` | The same context, searching only around the element *symbol*. |
+| `_about_focus` | `(ctx: AnalysisContext, found: list[Suggestion]) → list[Suggestion]` | Keep only findings naming the focused element; everything without a focus. |
 | `analyse` | `(ctx: AnalysisContext, categories=None, progress=None, should_stop=Non` | Run detectors over *ctx* and collect their suggestions. |
 | `context_for_stream` | `(data: dict \| None) → AnalysisContext \| None` | Build an analysis context from a canvas data stream. |
 | `findings_for_stream` | `(data: dict \| None, limit: int=12, should_stop=None) → list[Suggestion` | Run every Insights detector over a canvas data stream. |

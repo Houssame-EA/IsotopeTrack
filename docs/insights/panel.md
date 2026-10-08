@@ -96,6 +96,9 @@ instantiating this directly.
 | `_apply_theme` | `(self)` | Restyle the panel from the current theme palette. |
 | `_update_types_label` | `(self)` | Say on the plot types button what is being shown. |
 | `_sync_filter_actions` | `(self)` | Tick the menu item matching the current filter. |
+| `_fill_focus_menu` | `(self, symbols: list[str])` | List the elements that can be searched around, and mark the current one. |
+| `current_focus` | `(self) → str` | Return the element symbol being searched around, or an empty string. |
+| `set_focus` | `(self, symbol: str)` | Search around one element, or every element when *symbol* is empty. |
 | `current_filter` | `(self) → str \| None` | Return the plot type being shown, or ``None`` for all of them. |
 | `_set_filter` | `(self, node_type: str \| None)` | Show one plot type, or all of them. |
 | `_show_only` | `(self, key: str)` | Show one plot type only. |
@@ -149,6 +152,7 @@ instantiating this directly.
 | `_load_filter` | `() → str \| None` | Read the plot type the user last chose to show, or ``None`` for all. |
 | `_save_filter` | `(node_type: str \| None) → None` | Remember which plot type the user chose to show. |
 | `_discard` | `(widget: QWidget)` | Take a widget off the screen now and delete it once Qt is idle. |
+| `element_symbols` | `(particles) → list[str]` | Element symbols detected in *particles*, lightest first. |
 | `card_key` | `(s: Suggestion) → tuple` | Identity of a finding's card, so a card can be kept across refreshes. |
 | `integrate_insights_panel` | `(canvas_dialog, splitter: QSplitter) → SmartInsightsPanel` | Append a :class:`SmartInsightsPanel` as the rightmost pane of *splitter*. |
 | `make_insights_toggle_button` | `(canvas_dialog, splitter: QSplitter) → QPushButton` | Create the header button that shows and hides the insights panel. |

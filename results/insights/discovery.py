@@ -262,7 +262,7 @@ def analyse_interference(ctx, progress=None) -> list:
             targets.append((mass // 2, "doubly charged ion", f"{symbol}{_SUPERSCRIPT_TWO_PLUS}"))
         for target_mass, kind, species in targets:
             for child in by_mass.get(target_mass, []):
-                if child == parent or parsed[child][1] == symbol:
+                if child == parent or parsed[child][1] == symbol or not ctx.involves(parent, child):
                     continue
                 stats = _interference_stats(ctx, parent, child)
                 if stats is not None:
@@ -272,7 +272,7 @@ def analyse_interference(ctx, progress=None) -> list:
     found.sort(key=lambda f: -f[4]["score"])
     seen_children: set[str] = set()
     for parent, child, kind, species, st in found:
-        if child in seen_children or len(out) >= 3:
+        if child in seen_children or len(out) >= ctx.cap(3):
             continue
         seen_children.add(child)
         slope = f", slope {st['slope']:.2f} on log axes" if st["slope"] is not None else ""
@@ -395,7 +395,7 @@ def analyse_stoichiometry(ctx, progress=None) -> list:
     for i in range(len(els)):
         for j in range(i + 1, len(els)):
             a, b = els[i], els[j]
-            if _same_symbol(a, b) or mass_related(a, b):
+            if _same_symbol(a, b) or mass_related(a, b) or not ctx.involves(a, b):
                 continue
             co = det[a] & det[b]
             n = int(co.sum())
@@ -420,7 +420,7 @@ def analyse_stoichiometry(ctx, progress=None) -> list:
     out = []
     used: set[str] = set()
     for coupling, a, b, ratio, spread, independent, n in found:
-        if len(out) >= 3 or (a in used and b in used):
+        if len(out) >= ctx.cap(3) or (a in used and b in used):
             continue
         used.update((a, b))
         unit = "molar" if molar else "count"
@@ -488,7 +488,7 @@ def analyse_cooccurrence(ctx, progress=None) -> list:
     for i in range(len(els)):
         for j in range(i + 1, len(els)):
             a, b = els[i], els[j]
-            if _same_symbol(a, b) or mass_related(a, b):
+            if _same_symbol(a, b) or mass_related(a, b) or not ctx.involves(a, b):
                 continue
             na, nb = ctx.det_counts[a], ctx.det_counts[b]
             nab = int((ctx.det_mask[a] & ctx.det_mask[b]).sum())
@@ -518,8 +518,11 @@ def analyse_cooccurrence(ctx, progress=None) -> list:
                       key=lambda x: -(x[0][7] * x[0][6]))
     apart = sorted((k for k in kept if k[0][0] == "avoid"),
                    key=lambda x: x[0][3] / x[0][5])
-    chosen = together[:2] + apart[:1]
-    chosen += [k for k in together[2:] + apart[1:]][: 3 - len(chosen)]
+    if ctx.focus:
+        chosen = (together + apart)[:ctx.cap(3)]
+    else:
+        chosen = together[:2] + apart[:1]
+        chosen += [k for k in together[2:] + apart[1:]][: 3 - len(chosen)]
 
     out = []
     for (kind, rare, common, nab, n_rare, expected, confidence, lift, _p), q in chosen:
@@ -604,7 +607,7 @@ def analyse_rare(ctx, progress=None) -> list:
     out = []
     covered: set[str] = set()
     for consistency, count, el, companions in found:
-        if len(out) >= 3:
+        if len(out) >= ctx.cap(3):
             break
         if el in covered:
             continue
@@ -724,7 +727,7 @@ def analyse_ternary(ctx, progress=None) -> list:
                 continue
             for k in range(j + 1, len(els)):
                 trio = (els[i], els[j], els[k])
-                if len({mass_symbol(e)[1] for e in trio}) < 3:
+                if len({mass_symbol(e)[1] for e in trio}) < 3 or not ctx.involves(*trio):
                     continue
                 n = int((ij & ctx.det_mask[els[k]]).sum())
                 if best is None or n > best[0]:
@@ -820,7 +823,7 @@ def analyse_detection_limit(ctx, progress=None) -> list:
                     "elements")
     matrix, det = ctx.matrix_for(data_key)
     found = []
-    for el in ctx.frequent_elements():
+    for el in [e for e in ctx.frequent_elements() if ctx.involves(e)]:
         if el not in matrix:
             continue
         values = matrix[el][det[el]]
@@ -840,7 +843,7 @@ def analyse_detection_limit(ctx, progress=None) -> list:
     unit = rr._DATA_KEY_UNITS.get(data_key, "")
     label = rr._DATA_KEY_LABELS.get(data_key, "Counts")
     out = []
-    for bottom, el, low_value, n in found[:2]:
+    for bottom, el, low_value, n in found[:ctx.cap(2)]:
         out.append(rr.Suggestion(
             title=f"{el} {noun} cut off at the detection limit",
             reasoning=(
@@ -894,7 +897,7 @@ def analyse_size_composition(ctx, progress=None) -> list:
     multi = count >= 2
 
     tests = []
-    for el in ctx.frequent_elements():
+    for el in [e for e in ctx.frequent_elements() if ctx.involves(e)]:
         if el not in matrix:
             continue
         m = det[el] & multi & (total > 0)
@@ -916,7 +919,7 @@ def analyse_size_composition(ctx, progress=None) -> list:
     kept.sort(key=lambda x: -abs(x[0][1]))
 
     out = []
-    for (el, rho, _p, n), q in kept[:2]:
+    for (el, rho, _p, n), q in kept[:ctx.cap(2)]:
         falls = rho < 0
         spec = _figure_spec(
             "Element Mass (fg)", kind="scatter", x="total", y=f"mass:{el} / total",
@@ -1716,7 +1719,7 @@ def analyse_isotope_groups(ctx, progress=None) -> list:
             and t[4] > REPLICATE_MARGIN * t[5]]
     kept.sort(key=lambda x: -x[0][4])
     out = []
-    for (symbol, num, den, _p, gap, spread, hi_g, lo_g, hi_v, lo_v, method), q in kept[:3]:
+    for (symbol, num, den, _p, gap, spread, hi_g, lo_g, hi_v, lo_v, method), q in kept[:ctx.cap(3)]:
         rep = (f", more than the {10 ** spread - 1:.1%} spread between replicates"
                if spread > 0 else "")
         out.append(rr.Suggestion(

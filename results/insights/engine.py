@@ -106,6 +106,15 @@ MIN_ABS_CORRELATION = 0.50
 """Effect-size floor, applied on top of significance, for a correlation card."""
 
 MAX_CORRELATION_CARDS = 4
+
+FOCUS_CAP = 20
+"""Most findings one detector keeps when the search is focused on one element."""
+
+
+def symbol_of(label: str) -> str:
+    """Element symbol of an isotope label such as ``"56Fe"`` or ``"Fe56"``."""
+    m = re.match(r"^\d*\s*([A-Z][a-z]?)", str(label or "").strip())
+    return m.group(1) if m else str(label)
 """Most correlation pairs to surface from one scan."""
 
 _DATA_KEY_LABELS: dict[str, str] = {
@@ -894,6 +903,21 @@ class AnalysisContext:
     unit_matrices: dict = field(default_factory=dict)
     cache: dict = field(default_factory=dict)
     label: str = ""
+    focus: str = ""
+
+    def involves(self, *labels) -> bool:
+        """Whether a finding about *labels* concerns the focused element.
+
+        Always true without a focus. Isotope labels are compared by element
+        symbol, so every isotope of the focused element counts.
+        """
+        if not self.focus:
+            return True
+        return any(symbol_of(label) == self.focus for label in labels)
+
+    def cap(self, n: int) -> int:
+        """How many findings a detector may keep: *n*, or many more under a focus."""
+        return max(n, FOCUS_CAP) if self.focus else n
 
     @property
     def n(self) -> int:
@@ -916,7 +940,10 @@ class AnalysisContext:
         Returns:
             Element labels, most frequently detected first.
         """
-        return [el for el, _ in sorted(self.det_counts.items(), key=lambda x: -x[1])]
+        ranked = [el for el, _ in sorted(self.det_counts.items(), key=lambda x: -x[1])]
+        if self.focus:
+            ranked.sort(key=lambda el: symbol_of(el) != self.focus)
+        return ranked
 
     def frequent_elements(self, min_frac: float = 0.04, min_abs: int = 5) -> list[str]:
         """Select the elements detected often enough to be worth testing.
@@ -929,10 +956,14 @@ class AnalysisContext:
             min_abs: Absolute floor applied when the dataset is small.
 
         Returns:
-            Element labels passing the threshold, most abundant first.
+            Element labels passing the threshold, most abundant first; under
+            a focus the focused element's isotopes come first and are kept
+            whenever they have at least *min_abs* detections.
         """
         floor = max(min_abs, self.n * min_frac)
-        return [el for el in self.elements_by_abundance() if self.det_counts[el] >= floor]
+        return [el for el in self.elements_by_abundance()
+                if self.det_counts[el] >= floor
+                or (self.focus and symbol_of(el) == self.focus and self.det_counts[el] >= min_abs)]
 
     def matrix_for(self, data_key: str) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
         """Return the matrix and detection mask for one measurement.
@@ -1013,6 +1044,7 @@ class AnalysisContext:
             sample_idx=self.sample_idx[idx],
             unit_matrices=units,
             label=label,
+            focus=self.focus,
         )
 
     def group_mask(self, group: ReplicateGroup) -> np.ndarray:
@@ -1173,6 +1205,35 @@ def _say(progress, message: str) -> None:
         progress(message)
 
 
+def _focus_correlation_card(ctx, pairs, significant, adjusted) -> "Suggestion":
+    """One card listing the focused element's correlation with every element tested."""
+    rows = []
+    for k, (a, b, res) in enumerate(pairs):
+        other = b if symbol_of(a) == ctx.focus else a
+        rows.append((abs(res["spearman"]), other, res["spearman"], res["overlap"],
+                     bool(significant[k]), float(adjusted[k])))
+    rows.sort(key=lambda r: -r[0])
+    strong = [r for r in rows if r[4] and r[0] >= MIN_ABS_CORRELATION]
+    focus_label = next((a if symbol_of(a) == ctx.focus else b for a, b, _r in pairs), ctx.focus)
+    listed = ", ".join(f"{r[1]} (ρ = {r[2]:+.2f})" for r in strong[:6]) or "none"
+    return Suggestion(
+        title=f"{ctx.focus} against every element",
+        reasoning=(
+            f"{ctx.focus} was correlated with {len(rows)} element"
+            f"{'s' if len(rows) != 1 else ''} in the particles carrying both. "
+            f"Clear links after correcting {len(rows)} tests: {listed}."
+        ),
+        category="correlation",
+        confidence=0.7 if strong else 0.35,
+        explain_key="correlation",
+        details=[(r[1], f"ρ = {r[2]:+.2f}, {r[3]:,} particles, "
+                        + (_fmt_q(r[5]) if r[4] else "not significant")) for r in rows[:16]],
+        node_type="correlation_matrix",
+        config={"elements": [focus_label] + sorted(r[1] for r in rows[:11])},
+        elements=(focus_label,) + tuple(sorted(r[1] for r in strong[:5])),
+    )
+
+
 def _analyse_correlation(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
     """Find element pairs that vary together.
 
@@ -1199,7 +1260,8 @@ def _analyse_correlation(ctx: AnalysisContext, progress=None) -> list[Suggestion
 
     _say(progress, "Correlating element pairs…")
     pairs = [(a, b, res) for a, b, res in correlated_pairs(ctx, els)
-             if not _disc.same_element(a, b) and not _disc.interference_pair(ctx, a, b)]
+             if not _disc.same_element(a, b) and not _disc.interference_pair(ctx, a, b)
+             and ctx.involves(a, b)]
 
     if pairs:
         _say(progress, f"Correcting {len(pairs)} pairwise tests…")
@@ -1212,7 +1274,9 @@ def _analyse_correlation(ctx: AnalysisContext, progress=None) -> list[Suggestion
         ]
         kept.sort(key=lambda t: -abs(t[2]["spearman"]))
 
-        for ea, eb, res, q_value in kept[:MAX_CORRELATION_CARDS]:
+        if ctx.focus:
+            out.append(_focus_correlation_card(ctx, pairs, significant, adjusted))
+        for ea, eb, res, q_value in kept[:ctx.cap(MAX_CORRELATION_CARDS)]:
             rho = res["spearman"]
             direction = "positive" if rho > 0 else "negative"
             strength = "Strong" if abs(rho) >= 0.80 else "Moderate"
@@ -1247,7 +1311,7 @@ def _analyse_correlation(ctx: AnalysisContext, progress=None) -> list[Suggestion
                 elements=(ea, eb),
             ))
 
-    if len(els) >= 4:
+    if len(els) >= 4 and not ctx.focus:
         out.append(Suggestion(
             title=f"Full matrix: {len(els)} elements",
             reasoning=(
@@ -1296,7 +1360,7 @@ def _scan_bimodality(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
 
     reported: set[str] = set()
     for data_key in BIMODALITY_SCAN_ORDER:
-        if data_key not in available or len(out) >= MAX_BIMODALITY_CARDS:
+        if data_key not in available or len(out) >= ctx.cap(MAX_BIMODALITY_CARDS):
             continue
 
         noun = _DATA_KEY_NOUNS.get(data_key, "value")
@@ -1307,7 +1371,7 @@ def _scan_bimodality(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
 
         findings = []
         for el in sorted(matrix, key=lambda e: -int(det_mask[e].sum())):
-            if el in reported:
+            if el in reported or not ctx.involves(el):
                 continue
             split = _detect_bimodality(matrix[el][det_mask[el]])
             if split is not None:
@@ -1318,7 +1382,7 @@ def _scan_bimodality(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
         label = _DATA_KEY_LABELS.get(data_key, "Counts")
 
         for el, split in findings:
-            if len(out) >= MAX_BIMODALITY_CARDS:
+            if len(out) >= ctx.cap(MAX_BIMODALITY_CARDS):
                 break
             reported.add(el)
             low, high = split["modes"]
@@ -1362,7 +1426,7 @@ def _analyse_distribution(ctx: AnalysisContext, progress=None) -> list[Suggestio
         variable elements and a histogram for the single most variable one.
     """
     out: list[Suggestion] = _scan_bimodality(ctx, progress)
-    els = ctx.frequent_elements()
+    els = [el for el in ctx.frequent_elements() if ctx.involves(el)]
     if not els:
         return out
 
@@ -1435,6 +1499,8 @@ def _analyse_composition(ctx: AnalysisContext, progress=None) -> list[Suggestion
             combos[detected] = combos.get(detected, 0) + 1
     if not combos:
         return out
+    if ctx.focus:
+        return _focus_composition(ctx, combos)
 
     top_combo, top_count = max(combos.items(), key=lambda x: x[1])
     confidence = min(top_count / ctx.n + 0.3, 0.88)
@@ -1468,6 +1534,40 @@ def _analyse_composition(ctx: AnalysisContext, progress=None) -> list[Suggestion
         config={},
     ))
     return out
+
+
+def _focus_composition(ctx: AnalysisContext, combos: dict) -> list[Suggestion]:
+    """What the focused element comes with: its particles' element combinations."""
+    mine = {c: n for c, n in combos.items() if any(symbol_of(el) == ctx.focus for el in c)}
+    total = sum(mine.values())
+    if not total:
+        return []
+    ranked = sorted(mine.items(), key=lambda x: -x[1])
+    label = next(el for el in ranked[0][0] if symbol_of(el) == ctx.focus)
+    alone = sum(n for c, n in mine.items() if len(c) == 1)
+    partners: dict[str, int] = {}
+    for c, n in mine.items():
+        for el in c:
+            if symbol_of(el) != ctx.focus:
+                partners[el] = partners.get(el, 0) + n
+    top_partners = sorted(partners.items(), key=lambda x: -x[1])[:6]
+    listed = ", ".join(f"{el} {100 * n / total:.0f}%" for el, n in top_partners) or "nothing"
+    return [Suggestion(
+        title=f"What {ctx.focus} comes with",
+        reasoning=(
+            f"{total:,} particles carry {ctx.focus}; {100 * alone / total:.0f}% of them carry "
+            f"nothing else. Most often found with: {listed}."
+        ),
+        category="composition",
+        confidence=0.6,
+        explain_key="composition",
+        details=[("Particles with " + ctx.focus, f"{total:,} of {ctx.n:,}"),
+                 (f"{ctx.focus} alone", f"{100 * alone / total:.0f}%")]
+                + [(" + ".join(c[:5]), f"{n:,} ({100 * n / total:.0f}%)") for c, n in ranked[:8]],
+        node_type="heatmap_plot",
+        config={"search_element": label, "filter_combinations": True},
+        elements=(label,),
+    )]
 
 
 MIN_GROUP_FOLD = 1.5
@@ -1545,7 +1645,7 @@ def _analyse_comparison(ctx: AnalysisContext, progress=None) -> list[Suggestion]
 
     _say(progress, "Comparing sample groups…")
     tests = []
-    for el in ctx.frequent_elements():
+    for el in [e for e in ctx.frequent_elements() if ctx.involves(e)]:
         column, detected = ctx.matrix[el], ctx.det_mask[el]
         summaries = []
         for group, indices in groups:
@@ -1596,7 +1696,7 @@ def _analyse_comparison(ctx: AnalysisContext, progress=None) -> list[Suggestion]
     ]
     kept.sort(key=lambda x: -x[0][2])
 
-    for (el, _p, gap, spread, hi_g, lo_g, method, n_groups), q_value in kept[:2]:
+    for (el, _p, gap, spread, hi_g, lo_g, method, n_groups), q_value in kept[:ctx.cap(2)]:
         fold = 10 ** gap
         if spread > 0:
             rep_text = f", well beyond the ×{10 ** spread:.2f} spread between replicates"
@@ -1683,6 +1783,8 @@ def _analyse_signature(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
     _say(progress, "Comparing group signatures…")
     tests: list[tuple] = []
     for el, mask in ctx.det_mask.items():
+        if not ctx.involves(el):
+            continue
         rates = []
         for group, indices in groups:
             mean_rate, spread, hits, size = _group_rates(ctx, mask, indices)
@@ -1708,7 +1810,7 @@ def _analyse_signature(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
         kept = [(t, float(adjusted[k])) for k, t in enumerate(tests) if significant[k]]
         kept.sort(key=lambda x: -(x[0][2][0] - x[0][3][0]))
 
-        for (el, _p, top, bottom), q_value in kept[:2]:
+        for (el, _p, top, bottom), q_value in kept[:ctx.cap(2)]:
             absent = bottom[1] == 0
             distinctive = bottom[0] <= top[0] * SIGNATURE_ABSENCE_RATIO
             top_name, bottom_name = top[3].name, bottom[3].name
@@ -1765,7 +1867,7 @@ def _signature_combination(ctx: AnalysisContext, groups) -> Suggestion | None:
     floor = max(5, int(0.01 * ctx.n))
     best = None
     for combo, combo_id in ids.items():
-        if counts[combo_id] < floor:
+        if counts[combo_id] < floor or not ctx.involves(*combo):
             continue
         mask = combo_ids == combo_id
         shares = []
@@ -1834,7 +1936,7 @@ def _analyse_outlier(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
     _say(progress, "Scanning for outliers…")
 
     flagged: list[tuple[float, str, int]] = []
-    for el in ctx.frequent_elements():
+    for el in [e for e in ctx.frequent_elements() if ctx.involves(e)]:
         values = ctx.matrix[el][ctx.det_mask[el]]
         if len(values) < 20:
             continue
@@ -2142,7 +2244,8 @@ def _within_units(ctx: AnalysisContext) -> list[tuple[AnalysisContext, Replicate
         ``(context, group)`` pairs; *group* is ``None`` when the scope has no
         grouping at all.
     """
-    cached = ctx.cache.get("within_units")
+    cache_key = ("within_units", ctx.focus)
+    cached = ctx.cache.get(cache_key)
     if cached is not None:
         return cached
     groups = list(ctx.scope.groups)
@@ -2154,7 +2257,7 @@ def _within_units(ctx: AnalysisContext) -> list[tuple[AnalysisContext, Replicate
             mask = ctx.group_mask(group)
             if int(mask.sum()) >= MIN_WITHIN_GROUP_PARTICLES:
                 units.append((ctx.subset(mask, group.name), group))
-    ctx.cache["within_units"] = units
+    ctx.cache[cache_key] = units
     return units
 
 
@@ -2176,7 +2279,7 @@ def _run_detector(ctx: AnalysisContext, analyser: InsightCategory, progress=None
         The detector's suggestions, each carrying its samples.
     """
     if analyser.kind != "within":
-        return list(analyser.run(ctx, progress))
+        return _about_focus(ctx, list(analyser.run(ctx, progress)))
     units = _within_units(ctx)
     items = []
     for sub, group in units:
@@ -2185,8 +2288,25 @@ def _run_detector(ctx: AnalysisContext, analyser: InsightCategory, progress=None
         for s in analyser.run(sub, progress):
             items.append((s, group))
     if all(group is None for _s, group in items):
-        return [s for s, _g in items]
-    return _disc.merge_group_findings(items, ctx.sample_names, len(units))
+        return _about_focus(ctx, [s for s, _g in items])
+    return _about_focus(ctx, _disc.merge_group_findings(items, ctx.sample_names, len(units)))
+
+
+def focused(ctx: AnalysisContext, symbol: str) -> AnalysisContext:
+    """The same context, searching only around the element *symbol*.
+
+    Columns and derived caches are shared, since they do not depend on the
+    focus; only which findings the detectors look for changes.
+    """
+    import dataclasses
+    return dataclasses.replace(ctx, focus=symbol_of(symbol))
+
+
+def _about_focus(ctx: AnalysisContext, found: list[Suggestion]) -> list[Suggestion]:
+    """Keep only findings naming the focused element; everything without a focus."""
+    if not ctx.focus:
+        return found
+    return [s for s in found if s.elements and ctx.involves(*s.elements)]
 
 
 def analyse(ctx: AnalysisContext, categories=None, progress=None,
@@ -2322,7 +2442,7 @@ class _AnalysisWorker(QThread):
 
     def __init__(self, scope: AnalysisScope, particles: list[dict],
                  sample_idx: np.ndarray, categories=None, node_types=None,
-                 dedupe: bool = True):
+                 dedupe: bool = True, focus: str = ""):
         """Prepare an analysis run.
 
         Args:
@@ -2333,6 +2453,9 @@ class _AnalysisWorker(QThread):
             node_types: Plot nodes to search for. All of them when omitted.
             dedupe: De-duplicate before emitting. The panel passes ``False``
                 and de-duplicates for whichever view is showing.
+            focus: Element symbol to search around, e.g. ``"Fe"``; every
+                detector then looks only at findings naming it and keeps
+                many more of them. Empty searches everything.
         """
         super().__init__()
         self._scope = scope
@@ -2341,6 +2464,7 @@ class _AnalysisWorker(QThread):
         self._categories = tuple(categories) if categories else None
         self._node_types = tuple(node_types) if node_types is not None else None
         self._dedupe = dedupe
+        self._focus = focus
         self._abort = False
 
     def cancel(self) -> None:
@@ -2372,6 +2496,8 @@ class _AnalysisWorker(QThread):
 
         self.progress.emit("Building element matrix…")
         ctx = build_context_from(self._scope, self._particles, self._sample_idx)
+        if self._focus:
+            ctx = focused(ctx, self._focus)
 
         if self._stop():
             return

@@ -685,6 +685,27 @@ def _discard(widget: QWidget):
     widget.deleteLater()
 
 
+def element_symbols(particles) -> list[str]:
+    """Element symbols detected in *particles*, lightest first.
+
+    Args:
+        particles: Particle dicts carrying an ``elements`` mapping.
+
+    Returns:
+        Each symbol once, ordered by the mass of its lightest isotope.
+    """
+    lightest: dict[str, int] = {}
+    labels: set = set()
+    for p in particles:
+        labels.update((p.get("elements") or {}).keys())
+    for label in labels:
+        mass, symbol = _disc.mass_symbol(label)
+        if not symbol:
+            continue
+        lightest[symbol] = min(lightest.get(symbol, 10 ** 6), mass or 10 ** 6)
+    return sorted(lightest, key=lambda sym: (lightest[sym], sym))
+
+
 def card_key(s: Suggestion) -> tuple:
     """Identity of a finding's card, so a card can be kept across refreshes."""
     return (s.node_type, s.category, s.title, tuple(s.samples), tuple(s.elements))
@@ -736,6 +757,8 @@ class SmartInsightsPanel(QWidget):
         self._scope: AnalysisScope | None = None
         self._retired: list[_AnalysisWorker] = []
         self._filter: str | None = _load_filter()
+        self._focus = ""
+        self._focus_symbols: list[str] = []
         self._cards: dict[tuple, _Card] = {}
         self._held = False
         self.setMinimumWidth(self.MIN_WIDTH)
@@ -818,8 +841,19 @@ class SmartInsightsPanel(QWidget):
             self._type_actions[key] = action
         self._sync_filter_actions()
         self._types_btn.setMenu(self._types_menu)
+        self._focus_btn = QToolButton()
+        self._focus_btn.setObjectName("iTypesBtn")
+        self._focus_btn.setPopupMode(QToolButton.InstantPopup)
+        self._focus_btn.setCursor(Qt.PointingHandCursor)
+        self._focus_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self._focus_btn.setToolTip("Search around one element: its correlations, isotope ratios, "
+                                   "fixed ratios, companions, differences between groups and more")
+        self._focus_menu = QMenu(self._focus_btn)
+        self._focus_btn.setMenu(self._focus_menu)
+        self._fill_focus_menu([])
         types_row = QHBoxLayout()
         types_row.addWidget(self._types_btn)
+        types_row.addWidget(self._focus_btn)
         types_row.addStretch()
         head.addLayout(types_row)
         root.addWidget(self._hdr)
@@ -944,6 +978,50 @@ class SmartInsightsPanel(QWidget):
             action.setChecked(key == self._filter)
         self._update_types_label()
 
+    def _fill_focus_menu(self, symbols: list[str]):
+        """List the elements that can be searched around, and mark the current one."""
+        self._focus_symbols = list(symbols)
+        self._focus_menu.clear()
+        from PySide6.QtGui import QActionGroup
+        group = QActionGroup(self._focus_menu)
+        group.setExclusive(True)
+        every = self._focus_menu.addAction("All elements")
+        every.setCheckable(True)
+        every.setChecked(not self._focus)
+        group.addAction(every)
+        every.triggered.connect(lambda: self.set_focus(""))
+        if symbols:
+            self._focus_menu.addSeparator()
+        for symbol in symbols:
+            action = self._focus_menu.addAction(symbol)
+            action.setCheckable(True)
+            action.setChecked(symbol == self._focus)
+            group.addAction(action)
+            action.triggered.connect(lambda _checked=False, sym=symbol: self.set_focus(sym))
+        self._focus_btn.setText(f"Element: {self._focus or 'all'}  ▾")
+
+    def current_focus(self) -> str:
+        """Return the element symbol being searched around, or an empty string."""
+        return self._focus
+
+    def set_focus(self, symbol: str):
+        """Search around one element, or every element when *symbol* is empty.
+
+        Every detector runs again looking only for findings that name the
+        element, with their usual limits on how many to keep lifted, so all
+        its correlations, isotope ratios, fixed ratios, companions and
+        differences between groups are listed.
+
+        Args:
+            symbol: Element symbol such as ``"Fe"``, or ``""`` for all.
+        """
+        symbol = symbol if symbol in self._focus_symbols else ""
+        if symbol == self._focus:
+            return
+        self._focus = symbol
+        self._fill_focus_menu(self._focus_symbols)
+        self.scan(force=True)
+
     def current_filter(self) -> str | None:
         """Return the plot type being shown, or ``None`` for all of them."""
         return self._filter
@@ -1022,9 +1100,14 @@ class SmartInsightsPanel(QWidget):
                                    "here as each check finishes.")
 
         particles, sample_idx = gather_scope_data(self._scene, self._pw, scope)
+        symbols = element_symbols(particles)
+        if symbols != self._focus_symbols:
+            if self._focus and self._focus not in symbols:
+                self._focus = ""
+            self._fill_focus_menu(symbols)
         order = [k for k in category_keys() if k in needed]
         self._worker = _AnalysisWorker(scope, particles, sample_idx,
-                                       categories=order, dedupe=False)
+                                       categories=order, dedupe=False, focus=self._focus)
         self._worker.progress.connect(self._set_status)
         self._worker.partial.connect(
             lambda found, detector, key=scope.key: self._on_partial(found, detector, key))
@@ -1147,7 +1230,8 @@ class SmartInsightsPanel(QWidget):
     def visible_suggestions(self) -> list[Suggestion]:
         """Return the cards for the picked plot types, ranked and de-duplicated."""
         if self._filter is None:
-            return _dedupe_suggestions(self._found)
+            return _dedupe_suggestions(self._found,
+                                       FOCUSED_CARD_LIMIT if self._focus else None)
         wanted = [s for s in self._found if s.node_type == self._filter]
         return _dedupe_suggestions(wanted, FOCUSED_CARD_LIMIT)
 
@@ -1158,7 +1242,7 @@ class SmartInsightsPanel(QWidget):
         out, so picking one never leads to an empty list.
         """
         finished = self._worker is None and self._scope is not None and bool(self._ran)
-        total = len(_dedupe_suggestions(self._found))
+        total = len(_dedupe_suggestions(self._found, FOCUSED_CARD_LIMIT if self._focus else None))
         self._all_action.setText(f"All plot types  ({total})" if self._ran else "All plot types")
         for key, action in self._type_actions.items():
             label = NODE_TYPE_META[key]
@@ -1187,11 +1271,12 @@ class SmartInsightsPanel(QWidget):
         self._update_chip_counts()
         n = len(self._suggestions)
         busy = searching or self._worker is not None
+        about = f" about {self._focus}" if self._focus else ""
         if busy:
-            self._count_lbl.setText(f"Searching… {n} finding{'s' if n != 1 else ''} so far")
+            self._count_lbl.setText(f"Searching… {n} finding{'s' if n != 1 else ''}{about} so far")
         else:
-            self._count_lbl.setText(f"{n} finding{'s' if n != 1 else ''}" if n
-                                    else "No findings")
+            self._count_lbl.setText(f"{n} finding{'s' if n != 1 else ''}{about}" if n
+                                    else f"No findings{about}")
         if not force and self._cards and self._pointer_over_list():
             shown = set(self._cards)
             new = sum(1 for s in self._suggestions if card_key(s) not in shown)
@@ -1309,6 +1394,9 @@ class SmartInsightsPanel(QWidget):
         if self._filter is not None:
             return (f"Nothing to show as a {NODE_TYPE_META[self._filter].lower()} plot. "
                     "Choose All plot types to see every finding.")
+        if self._focus:
+            return (f"Nothing stands out about {self._focus}. Choose All elements to search "
+                    "everything.")
         return "Nothing stands out yet. Load more samples to compare."
 
     def _show_empty(self):

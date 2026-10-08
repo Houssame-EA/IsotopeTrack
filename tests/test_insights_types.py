@@ -239,3 +239,76 @@ def test_switching_plot_type_replaces_the_cards_at_once():
     assert len(visible_types()) > 2
     panel._teardown()
     panel.close()
+
+
+def test_focus_finds_everything_about_one_element():
+    """Focusing on Ce lists its fixed ratios, correlations and companions, and nothing else."""
+    ctx = context(replicated_pool())
+    found = []
+    for key in rr.category_keys():
+        found += rr._run_detector(rr.focused(ctx, "Ce"), rr._ANALYSERS[key])
+    assert found
+    for s in found:
+        assert any(rr.symbol_of(e) == "Ce" for e in s.elements), s.title
+    titles = {s.title for s in found}
+    assert "Ce against every element" in titles and "What Ce comes with" in titles
+    assert {"140Ce vs 139La", "140Ce vs 146Nd"} <= titles
+    assert any(s.category == "stoichiometry" for s in found)
+    plain = []
+    for key in rr.category_keys():
+        plain += rr._run_detector(ctx, rr._ANALYSERS[key])
+    assert not any(s.title == "Ce against every element" for s in plain)
+
+
+def test_focus_searches_each_element_afresh():
+    """A second focus on the same data is not served the first focus's group split."""
+    ctx = context(replicated_pool())
+    for symbol in ("Fe", "Ce"):
+        found = []
+        for key in ("correlation", "stoichiometry"):
+            found += rr._run_detector(rr.focused(ctx, symbol), rr._ANALYSERS[key])
+        assert found and all(any(rr.symbol_of(e) == symbol for e in s.elements) for s in found)
+
+
+def test_focus_includes_isotope_ratios():
+    """With two isotopes measured, focusing on the element brings its isotope ratio."""
+    from tests.test_insights_figures import particles as lead_particles
+    pool = {"S1": lead_particles(1, 1.18, "S1"), "S2": lead_particles(2, 1.18, "S2")}
+    ctx = context(pool)
+    found = []
+    for key in rr.category_keys():
+        found += rr._run_detector(rr.focused(ctx, "Pb"), rr._ANALYSERS[key])
+    assert any(s.category in ("isotope", "isotope_groups") for s in found)
+    assert all(any(rr.symbol_of(e) == "Pb" for e in s.elements) for s in found)
+
+
+def test_panel_focus_menu_lists_elements_and_reruns():
+    """The panel offers each element, and picking one shows only findings about it."""
+    import time
+    from PySide6.QtWidgets import QApplication
+    from tests.test_insights_discovery import FakeScene, FakeWindow
+    from results.insights import panel as ip
+    app = QApplication.instance() or QApplication([])
+    panel = ip.SmartInsightsPanel(FakeScene(), FakeWindow(replicated_pool()))
+    panel.show()
+
+    def wait():
+        start = time.time()
+        while panel._worker is not None and time.time() - start < 120:
+            app.processEvents()
+            time.sleep(0.01)
+
+    panel.scan()
+    wait()
+    assert panel._focus_symbols == ["Al", "Si", "Ti", "Mn", "Fe", "La", "Ce", "Nd"]
+    everything = len(panel._suggestions)
+    panel.set_focus("Ce")
+    wait()
+    assert panel.current_focus() == "Ce" and "about Ce" in panel._count_lbl.text()
+    cards = [c for c in panel.findChildren(ip._Card) if c.isVisible()]
+    assert cards and all(any(rr.symbol_of(e) == "Ce" for e in c._s.elements) for c in cards)
+    panel.set_focus("")
+    wait()
+    assert len(panel._suggestions) == everything
+    panel._teardown()
+    panel.close()
