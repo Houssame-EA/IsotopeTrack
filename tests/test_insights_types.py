@@ -157,7 +157,7 @@ def _typed_table(pool):
 @pytest.mark.parametrize("which", [0, 1, 2, 3])
 def test_type_stories_draw(which):
     """The overview and each type card build a lettered figure that draws without error."""
-    from results import ai_figures as af
+    from tests.figure_checks import render_problems
     from results.insights import figures as F
     pool = replicated_pool()
     cards = disc.analyse_particle_types(context(pool))
@@ -168,7 +168,7 @@ def test_type_stories_draw(which):
     spec = F.figure_for(card, ctx)
     assert spec is not None and spec["data_type"] == "Element Mass (fg)"
     assert 4 <= len(spec["panels"]) - 1 <= F.MAX_PANELS
-    assert af.render_problems(spec, table) == []
+    assert render_problems(spec, table) == []
 
 
 def test_type_only_keeps_one_type():

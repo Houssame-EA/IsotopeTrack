@@ -13,12 +13,11 @@ import random
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from results import ai_figures as af
-from results.ai_figure_view import table_for
 from results.insights import engine as rr
 from results.insights import figures as F
 from results.insights import panel as ip
 from results.insights.explain import EXPLANATIONS, explanation_for
+from tests.figure_checks import render_problems, table_for
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -143,7 +142,7 @@ def test_every_design_draws(app, stream, key):
     assert caption["text"].count("(") >= len(plots)
     assert caption["text"].startswith("t. (a) ")
     assert spec["figure"]["panel_letters"]
-    assert af.render_problems(spec, table) == []
+    assert render_problems(spec, table) == []
 
 
 def test_context_records_quantities_and_smallest_values():
@@ -467,4 +466,4 @@ def test_new_panels_join_the_stories_when_the_data_allows(app, stream):
     spec = F.figure_for(sig, ctx)
     table.detection_limits = {"140Ce": {"mass": {"S1": 0.02, "S2": 0.02}}}
     table.sample_members = {"S1": ["S1"], "S2": ["S2"]}
-    assert af.render_problems(spec, table) == []
+    assert render_problems(spec, table) == []
