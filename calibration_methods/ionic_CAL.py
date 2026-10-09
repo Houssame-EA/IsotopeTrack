@@ -12,6 +12,7 @@ from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QKeySequence, QFont, QColor, QBrush, QAction, QShortcut
 import loading.vitesse_loading
 from widget.periodic_table_widget import PeriodicTableWidget, named_element_lists
+from widget.frozen_column import FrozenColumns
 from widget.custom_plot_widget import CalibrationPlotWidget, EnhancedPlotWidget
 import os
 import qtawesome as qta
@@ -412,6 +413,7 @@ class IonicCalibrationWindow(QMainWindow):
         
         self.table.itemChanged.connect(self.on_data_changed)
         self.table.cellClicked.connect(self.on_table_cell_clicked)
+        self.frozen_sample_column = FrozenColumns(self.table, 1)
         
         table_frame = QFrame()
         table_frame.setFrameShape(QFrame.Shape.StyledPanel)

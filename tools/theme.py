@@ -1631,6 +1631,11 @@ def app_qss(p: Palette) -> str:
         alternate-background-color: {p.bg_tertiary};
     }}
     QHeaderView {{ background: {p.bg_tertiary}; border: none; }}
+    QTableView#frozenColumn {{
+        border: none;
+        border-right: 2px solid {p.border};
+        border-radius: 0;
+    }}
     QHeaderView::section {{
         background: {p.bg_tertiary};
         color: {p.text_secondary};
