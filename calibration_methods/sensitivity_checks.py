@@ -260,3 +260,38 @@ class SensitivityHistory:
         change = (slope - prev[1]) / prev[1] * 100.0
         return {'day': prev[0], 'previous': prev[1], 'change_pct': float(change),
                 'flag': bool(abs(change) > limit_pct)}
+
+
+def drift_factors(x, y, included=None):
+    """
+    Relative sensitivity at each standard, from standards measured more than once.
+
+    Points are taken in acquisition order (their position in the list). The
+    non-zero concentration measured most often (the highest one on a tie)
+    is the drift monitor: its first measurement defines a factor of 1, each
+    later repeat gives the factor ``y_repeat / y_first`` at its position, and
+    every other standard gets the factor interpolated linearly between the
+    bracketing repeats (held constant before the first and after the last).
+
+    Args:
+        x, y: Concentrations and mean signals, in acquisition order.
+        included: Optional bool mask; only included points act as monitors.
+
+    Returns:
+        numpy array of factors (divide signals by it to correct), or None
+        when no standard was repeated.
+    """
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    mask = np.ones(len(x), bool) if included is None else np.asarray(included, bool)
+    groups = defaultdict(list)
+    for i, (xi, yi) in enumerate(zip(x, y)):
+        if mask[i] and xi > 0 and yi > 0:
+            groups[round(float(xi), 9)].append(i)
+    repeated = [(len(idx), conc, idx) for conc, idx in groups.items() if len(idx) >= 2]
+    if not repeated:
+        return None
+    _, _, idx = max(repeated)
+    positions = np.array(idx, float)
+    ratios = y[idx] / y[idx[0]]
+    return np.interp(np.arange(len(x), dtype=float), positions, ratios)

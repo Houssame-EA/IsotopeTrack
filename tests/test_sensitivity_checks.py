@@ -131,3 +131,55 @@ def test_window_checks(tmp_path):
     assert 'Ce-139.9054' in w._sensitivity_history.data
     w.data_modified = False
     w.deleteLater()
+
+
+class TestDriftFactors:
+    def test_interpolates_between_bracketing_repeats(self):
+        x = [5, 0, 1, 10, 5, 20, 5]
+        y = [500, 0, 98, 960, 480, 1880, 460]
+        f = sc.drift_factors(x, y)
+        assert f[0] == pytest.approx(1.0)
+        assert f[4] == pytest.approx(0.96)
+        assert f[6] == pytest.approx(0.92)
+        assert f[2] == pytest.approx(1.0 - 0.04 * 2 / 4)
+        assert f[5] == pytest.approx(0.94)
+
+    def test_correction_restores_a_linear_calibration(self):
+        x = np.array([5.0, 1.0, 10.0, 5.0, 20.0, 5.0])
+        true = 100.0 * x
+        decay = np.linspace(1.0, 0.85, x.size)
+        f = sc.drift_factors(x, true * decay)
+        assert true * decay / f == pytest.approx(true)
+
+    def test_excluded_repeat_is_not_used(self):
+        f = sc.drift_factors([5, 1, 5], [500, 100, 400], included=[True, True, False])
+        assert f is None
+
+    def test_no_repeat(self):
+        assert sc.drift_factors([0, 1, 5], [0, 1, 5]) is None
+
+
+def test_window_drift_toggle():
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    from calibration_methods.ionic_CAL import IonicCalibrationWindow
+
+    w = IonicCalibrationWindow()
+    x = np.array([5.0, 1.0, 10.0, 5.0, 20.0, 5.0])
+    decay = np.linspace(1.0, 0.85, x.size)
+    y = 100.0 * x * decay
+    s = np.full(x.size, 2.0)
+    mask = np.ones(x.size, bool)
+    plain = w._fit_with_drift(x, y, s, mask, 1.0)
+    assert 'drift_factors' not in plain
+    w.drift_action.blockSignals(True)
+    w.drift_action.setChecked(True)
+    w.drift_action.blockSignals(False)
+    fixed = w._fit_with_drift(x, y, s, mask, 1.0)
+    assert fixed['simple']['slope'] == pytest.approx(100.0)
+    assert fixed['y_raw'] == pytest.approx(y.tolist())
+    w.calibration_results['K-38.9637'] = dict(fixed, folders=[f's{i}' for i in range(6)])
+    drift = w._drift_check(w.calibration_results['K-38.9637'], mask)
+    assert drift['corrected'] and not drift['flag'] and drift['max_drift_pct'] < -10
+    w.data_modified = False
+    w.deleteLater()

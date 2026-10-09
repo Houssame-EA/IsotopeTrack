@@ -337,6 +337,13 @@ class IonicCalibrationWindow(QMainWindow):
         self.checks_action.setToolTip("Calibration checks: uncertainty, linearity, abundance, drift, blank, history")
         self.checks_action.triggered.connect(self.show_checks)
         bar.addWidget(self._tool(self.checks_action, 'fa6s.stethoscope'))
+        self.drift_action = QAction("Drift correction", self)
+        self.drift_action.setCheckable(True)
+        self.drift_action.setToolTip(
+            "Correct the standards for drift using a standard measured more than once\n"
+            "(interpolated between its repeats, in the order of the data table)")
+        self.drift_action.toggled.connect(self._on_drift_toggled)
+        bar.addWidget(self._tool(self.drift_action, 'fa6s.wave-square'))
         bar.addWidget(self._separator())
         bar.addSpacing(6)
         bar.addWidget(QLabel("Unit"))
@@ -1229,7 +1236,7 @@ class IonicCalibrationWindow(QMainWindow):
                 'slope': slope,
                 'ci95': unc['ci95'],
                 'linearity': sensitivity_checks.linearity_check(xi, yi),
-                'drift': sensitivity_checks.repeat_standard_drift(xi, yi),
+                'drift': self._drift_check(data, keep),
                 'blank': sensitivity_checks.blank_source(xi),
                 'history': history.compare(key, slope),
             })
@@ -1240,6 +1247,21 @@ class IonicCalibrationWindow(QMainWindow):
                 1 for k in ('linearity', 'drift', 'history', 'abundance')
                 if row[k] and row[k]['flag']) + (1 if row['blank'] and not row['blank']['is_blank'] else 0)
         return rows
+
+    @staticmethod
+    def _drift_check(data, keep):
+        """Repeated-standard drift on the uncorrected signals; not flagged
+        when drift correction was applied to this isotope.
+        """
+        y = np.asarray(data.get('y_raw', data.get('y', [])), float)
+        x = np.asarray(data.get('x', []), float)
+        if len(y) != len(x) or len(keep) != len(x):
+            return None
+        drift = sensitivity_checks.repeat_standard_drift(x[keep], y[keep])
+        if drift and data.get('drift_factors') is not None:
+            drift['corrected'] = True
+            drift['flag'] = False
+        return drift
 
     def _history(self):
         if getattr(self, '_sensitivity_history', None) is None:
@@ -1324,7 +1346,8 @@ class IonicCalibrationWindow(QMainWindow):
                  bool(lin and lin['flag']),
                  "Top standard vs the line of the other standards; consider excluding it if flagged")
             d = row['drift']
-            cell(r, 5, f"{d['max_drift_pct']:+.1f}% at {d['at_x']:g} {unit} ({d['repeats']}×)" if d else "none repeated",
+            cell(r, 5, (f"{d['max_drift_pct']:+.1f}% at {d['at_x']:g} {unit} ({d['repeats']}×)"
+                        + (" · corrected" if d.get('corrected') else "")) if d else "none repeated",
                  bool(d and d['flag']), "First to last measurement of a standard run more than once")
             b = row['blank']
             cell(r, 6, ("blank (0)" if b['is_blank'] else f"lowest standard ({b['x']:g} {unit})") if b else "—",
@@ -1345,6 +1368,36 @@ class IonicCalibrationWindow(QMainWindow):
         row_layout.addWidget(close)
         layout.addLayout(row_layout)
         dialog.exec()
+
+    def _fit_with_drift(self, x, y, y_std, included_mask, density):
+        """
+        Run the three fits, first correcting the standards for drift when
+        "Drift correction" is on and a standard was measured more than once.
+
+        Signals and their standard deviations are divided by the factor of
+        :func:`sensitivity_checks.drift_factors` (acquisition order = order
+        of the samples in the data table). The uncorrected values are kept
+        as ``y_raw`` / ``y_std_raw`` and the factors as ``drift_factors``.
+        """
+        factors = None
+        if getattr(self, 'drift_action', None) is not None and self.drift_action.isChecked():
+            factors = sensitivity_checks.drift_factors(x, y, included_mask)
+        if factors is None:
+            return run_all_fits_on_subset(x, y, y_std, included_mask, density)
+        result = run_all_fits_on_subset(x, y / factors, y_std / factors, included_mask, density)
+        if result is not None:
+            result['y_raw'] = np.asarray(y, float).tolist()
+            result['y_std_raw'] = np.asarray(y_std, float).tolist()
+            result['drift_factors'] = factors.tolist()
+        return result
+
+    def _on_drift_toggled(self, checked):
+        """Refit with or without drift correction when the toggle changes."""
+        ual = _ual()
+        if ual:
+            ual.log_action('PARAMETER_CHANGE', f'Drift correction {"on" if checked else "off"}')
+        if self.calibration_results:
+            self.calculate_calibration()
 
     def apply_manual_to_all_isotopes(self):
         """
@@ -2038,6 +2091,7 @@ class IonicCalibrationWindow(QMainWindow):
                 "concentration_unit": self.unit_combo.currentText(),
                 "calibration_results": self.calibration_results,
                 "sensitivity_overrides": self.sensitivity_overrides,
+                "drift_correction": self.drift_action.isChecked(),
                 "table_data": self.get_table_data(),
                 "isotope_method_preferences": self.isotope_method_preferences
             }
@@ -2101,6 +2155,9 @@ class IonicCalibrationWindow(QMainWindow):
             self.calibration_results = session_data["calibration_results"]
             self.sensitivity_overrides = session_data.get("sensitivity_overrides", {})
             self.isotope_method_preferences = session_data.get("isotope_method_preferences", {})
+            self.drift_action.blockSignals(True)
+            self.drift_action.setChecked(bool(session_data.get("drift_correction", False)))
+            self.drift_action.blockSignals(False)
 
             self.excluded_points = {}
             for k, rec in (self.calibration_results or {}).items():
@@ -3206,8 +3263,8 @@ class IonicCalibrationWindow(QMainWindow):
             return False
 
         x     = np.asarray(data.get('x', []),     dtype=float)
-        y     = np.asarray(data.get('y', []),     dtype=float)
-        y_std = np.asarray(data.get('y_std', []), dtype=float)
+        y     = np.asarray(data.get('y_raw', data.get('y', [])),     dtype=float)
+        y_std = np.asarray(data.get('y_std_raw', data.get('y_std', [])), dtype=float)
         folders = data.get('folders', [])
 
         if len(x) == 0 or not folders:
@@ -3219,8 +3276,7 @@ class IonicCalibrationWindow(QMainWindow):
 
         density = data.get('density', 'N/A')
 
-        new_result = run_all_fits_on_subset(
-            x, y, y_std, included_mask, density)
+        new_result = self._fit_with_drift(x, y, y_std, included_mask, density)
         if new_result is None:
             return False
 
@@ -3583,7 +3639,7 @@ class IonicCalibrationWindow(QMainWindow):
                     included_mask = np.array(
                         [f not in excluded_folders for f in folders_list])
 
-                    isotope_result = run_all_fits_on_subset(
+                    isotope_result = self._fit_with_drift(
                         x, y, y_std, included_mask, density)
                     if isotope_result is None:
         
