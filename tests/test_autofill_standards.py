@@ -98,3 +98,34 @@ def test_autofill_fills_only_named_elements(qapp):
     assert set(row(8).values()) == {'-1'}
     w.data_modified = False
     w.deleteLater()
+
+
+def test_list_loaded_in_periodic_table_is_recognised(qapp, tmp_path, monkeypatch):
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    from widget import periodic_table_widget as ptw
+    from calibration_methods.ionic_CAL import IonicCalibrationWindow
+
+    QSettings.setPath(QSettings.Format.NativeFormat, QSettings.Scope.UserScope, str(tmp_path))
+    QSettings("IsotopeTrack", "IsotopeTrack").remove("periodic_table/loaded_lists")
+    list_file = tmp_path / '68B-A.txt'
+    list_file.write_text('Fe:55.9349\nFe:56.9354\n', encoding='utf-8')
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **k: (str(list_file), ''))
+    monkeypatch.setattr(QMessageBox, 'information', lambda *a, **k: None)
+    monkeypatch.setattr(QMessageBox, 'warning', lambda *a, **k: None)
+
+    ptw.PeriodicTableWidget().load_selections()
+    assert ptw.loaded_lists()['68B-A'] == ['Fe']
+    assert ptw.named_element_lists()['71A'] == ptw.PRESET_LISTS['71A']
+
+    w = IonicCalibrationWindow()
+    w.selected_isotopes = {'Fe': [55.9349, 56.9354], 'Ce': [139.9054]}
+    w.update_table_columns()
+    w.table.setRowCount(1)
+    w.table.setItem(0, 0, QTableWidgetItem('68b_a 1ppb'))
+    w.auto_fill_concentrations()
+    values = {w.table.horizontalHeaderItem(c).data(0x0100): w.table.item(0, c).text()
+              for c in range(1, w.table.columnCount())}
+    assert values == {'Fe-55.9349': '1.0', 'Fe-56.9354': '1.0', 'Ce-139.9054': '-1'}
+    w.data_modified = False
+    w.deleteLater()

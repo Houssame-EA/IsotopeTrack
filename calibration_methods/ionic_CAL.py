@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
 from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QKeySequence, QFont, QColor, QBrush, QAction, QShortcut
 import loading.vitesse_loading
-from widget.periodic_table_widget import PeriodicTableWidget, PRESET_LISTS
+from widget.periodic_table_widget import PeriodicTableWidget, named_element_lists
 from widget.custom_plot_widget import CalibrationPlotWidget, EnhancedPlotWidget
 import os
 import qtawesome as qta
@@ -1477,8 +1477,9 @@ class IonicCalibrationWindow(QMainWindow):
 
         The concentration (or 0 for a blank) is read from each sample name.
         When the name also names elements that are selected, for example
-        ``Fe_Ce_10ppb``, ``140Ce 5 ppb`` or a standard of the periodic
-        table's preset lists such as ``71A_2ppb``, only the columns of those elements
+        ``Fe_Ce_10ppb``, ``140Ce 5 ppb``, a preset standard such as
+        ``71A_2ppb``, or a list loaded in the periodic table under its file
+        name (``68B-A.txt`` for ``68B-A_1ppb``), only the columns of those elements
         (every selected isotope of each) get the concentration and the other
         empty cells get -1, so they are left out of the calibration. A
         recognised preset standard always restricts the fill to its own
@@ -1490,6 +1491,7 @@ class IonicCalibrationWindow(QMainWindow):
         matched_samples = 0
         elements = self.periodic_table.get_elements() if self.periodic_table else []
         selected = set(self.selected_isotopes)
+        standards = named_element_lists()
 
         column_elements = {}
         for col in range(1, self.table.columnCount()):
@@ -1510,8 +1512,8 @@ class IonicCalibrationWindow(QMainWindow):
 
                 in_standard = None
                 if float(concentration) != 0:
-                    named = elements_in_sample_name(sample_name, elements, PRESET_LISTS) & selected
-                    if named or standards_in_sample_name(sample_name, PRESET_LISTS)[0]:
+                    named = elements_in_sample_name(sample_name, elements, standards) & selected
+                    if named or standards_in_sample_name(sample_name, standards)[0]:
                         in_standard = named
                         matched_samples += 1
 

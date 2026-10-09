@@ -1,4 +1,5 @@
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, QPoint
+import os
+from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, QPoint, QSettings
 from PySide6.QtGui import QColor, QPainter, QLinearGradient
 from PySide6.QtWidgets import (QGridLayout, QPushButton, QVBoxLayout,
                                QLabel, QSizePolicy, QHBoxLayout, QDialog, QApplication,
@@ -69,6 +70,46 @@ PRESET_LISTS = {
                      'Ga', 'In', 'Fe', 'Pb', 'Li', 'Mg', 'Mn', 'Ni', 'K', 'Rb', 'Se', 
                      'Ag', 'Na', 'Sr', 'Tl', 'U', 'V', 'Zn']
 }
+
+
+_LOADED_LISTS_KEY = "periodic_table/loaded_lists"
+
+
+def loaded_lists():
+    """
+    Element lists loaded from files in the periodic table, by name.
+
+    Every list opened with the periodic table's Load button is remembered
+    under its file name (``68B-A.txt`` → ``68B-A``), across restarts, so
+    the name can be recognised in sample names like a built-in preset.
+
+    Returns:
+        {list name: [element symbols]}.
+    """
+    try:
+        import json
+        raw = QSettings("IsotopeTrack", "IsotopeTrack").value(_LOADED_LISTS_KEY, "{}")
+        data = json.loads(raw) if isinstance(raw, str) else {}
+        return {str(k): [str(e) for e in v] for k, v in data.items() if isinstance(v, list)}
+    except Exception:
+        _itk_log.exception("Could not read the loaded element lists")
+        return {}
+
+
+def remember_loaded_list(name, symbols):
+    """Remember the element list *name* (see :func:`loaded_lists`)."""
+    try:
+        import json
+        lists = loaded_lists()
+        lists[str(name)] = sorted(set(symbols))
+        QSettings("IsotopeTrack", "IsotopeTrack").setValue(_LOADED_LISTS_KEY, json.dumps(lists))
+    except Exception:
+        _itk_log.exception("Could not remember the loaded element list")
+
+
+def named_element_lists():
+    """Built-in presets and the lists loaded from files, by name."""
+    return {**PRESET_LISTS, **loaded_lists()}
 
 class AnimatedButton(QPushButton):
     def __init__(self, parent=None):
@@ -1660,6 +1701,8 @@ class PeriodicTableWidget(QDialog):
                     selections_by_element[symbol].append(mass)
 
                 applied_count, missing_elements = self.update_selection(selections_by_element)
+                remember_loaded_list(os.path.splitext(os.path.basename(file_name))[0],
+                                     selections_by_element.keys())
 
                 success_msg = f"Successfully loaded {applied_count} isotope selections!"
                 if missing_elements:
