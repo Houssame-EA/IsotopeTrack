@@ -1,7 +1,7 @@
 import sys
 from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
-    QComboBox, QLabel, QWidget, QScrollArea
+    QComboBox, QLabel, QWidget, QScrollArea, QFrame
 )
 from PySide6.QtCore import Qt, Signal
 import qtawesome as qta
@@ -10,7 +10,7 @@ from calibration_methods.TE_input import InputMethodCalibration
 from calibration_methods.TE_number import NumberMethodWidget
 from calibration_methods.TE_mass import MassMethodWidget
 from calibration_methods.te_common import (
-    base_stylesheet, return_button_style,
+    base_stylesheet, return_button_style, return_button_icon_color,
 )
 from tools.theme import theme
 from calibration_methods import calibration_registry
@@ -74,41 +74,31 @@ class TransportRateCalibrationWindow(QDialog):
         Runs on init and whenever theme.themeChanged fires.
         """
         p = theme.palette
-        self.setStyleSheet(
-            base_stylesheet(p)
-            + f"""
-                QDialog {{ background-color: {p.bg_primary}; }}
-                QScrollArea {{ border: none; background-color: transparent; }}
-                QToolButton {{ border: none; padding: 5px; }}
-                QToolButton:hover {{
-                    background-color: {p.bg_hover};
-                    border-radius: 3px;
-                }}
-            """
-        )
+        self.setStyleSheet(base_stylesheet(p))
         if hasattr(self, "return_btn"):
             self.return_btn.setStyleSheet(return_button_style(p))
-            icon_color = "#ffffff" if p.name == "dark" else "#B81414"
-            self.return_btn.setIcon(qta.icon("fa6s.house", color=icon_color))
+            self.return_btn.setIcon(
+                qta.icon("fa6s.house", color=return_button_icon_color(p)))
 
     # ── UI construction ──────────────────────────────────────────────────
 
     def _build_ui(self):
         """Construct the header, method selector, content area, and scroll wrapper."""
         main_widget = QWidget()
+        main_widget.setObjectName("scrollContent")
         main_layout = QVBoxLayout(main_widget)
-        main_layout.setSpacing(15)
-        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(8)
+        main_layout.setContentsMargins(8, 8, 8, 8)
 
-        header = QHBoxLayout()
-        title = QLabel("Transport Rate Calibration")
-        title.setObjectName("dialogTitle")
-        header.addWidget(title)
-        header.addStretch()
+        toolbar = QFrame()
+        toolbar.setObjectName("fbToolbar")
+        header = QHBoxLayout(toolbar)
+        header.setContentsMargins(6, 4, 6, 4)
+        header.setSpacing(6)
 
-        self.return_btn = QPushButton("Back to Main")
+        self.return_btn = QPushButton(" Back to Main")
         self.return_btn.setObjectName("returnButton")
-        self.return_btn.setFixedSize(150, 45)
+        self.return_btn.setToolTip("Hide this window and return to the main window")
         def _back_and_log():
             ual = _ual()
             if ual:
@@ -116,15 +106,23 @@ class TransportRateCalibrationWindow(QDialog):
             self.hide()
         self.return_btn.clicked.connect(_back_and_log)
         header.addWidget(self.return_btn)
-        main_layout.addLayout(header)
 
-        selector_row = QHBoxLayout()
+        sep = QFrame()
+        sep.setObjectName("fbSep")
+        sep.setFrameShape(QFrame.VLine)
+        header.addWidget(sep)
+
+        title = QLabel("Transport Rate Calibration")
+        title.setObjectName("appTitle")
+        header.addWidget(title)
+        header.addSpacing(12)
+
         self.method_combo = QComboBox()
         self.method_combo.addItems(self.selected_methods)
-        selector_row.addWidget(QLabel("Select Method:"))
-        selector_row.addWidget(self.method_combo)
-        selector_row.addStretch()
-        main_layout.addLayout(selector_row)
+        header.addWidget(QLabel("Method"))
+        header.addWidget(self.method_combo)
+        header.addStretch()
+        main_layout.addWidget(toolbar)
 
         self._content_widget = QWidget()
         self._content_layout = QVBoxLayout(self._content_widget)
@@ -145,6 +143,7 @@ class TransportRateCalibrationWindow(QDialog):
         main_layout.addWidget(self._content_widget)
 
         scroll = QScrollArea()
+        scroll.setFrameShape(QFrame.NoFrame)
         scroll.setWidget(main_widget)
         scroll.setWidgetResizable(True)
 

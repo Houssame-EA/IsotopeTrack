@@ -1485,3 +1485,214 @@ def html_table_css(p: Palette) -> str:
             color: {p.text_primary};
         }}
     """
+
+def app_qss(p: Palette) -> str:
+    """The shared IsotopeTrack window stylesheet, in the Figure Builder's look.
+
+    Flat white cards on the window background, underline tabs, neutral
+    buttons with a single accent call-to-action (object name ``fbPrimary``,
+    also accepted as ``primaryBtn``), and icon tool buttons that only show a
+    frame on hover. Every colour comes from *p*, so a window styled with this
+    follows the light/dark switch when it re-applies the sheet on
+    ``themeChanged``.
+
+    Object names understood by the sheet:
+
+    * ``fbRoot`` / ``appRoot`` – a top-level container painted with the window colour
+    * ``fbToolbar`` / ``appToolbar`` – the rounded toolbar card at the top of a window
+    * ``fbSep`` – a thin vertical separator inside a toolbar
+    * ``fbPreview`` – a tinted card that holds a plot or preview
+    * ``fbPrimary`` / ``primaryBtn`` – the one accent button of a window
+    * ``fbHint``, ``fbStatus``, ``fbError``, ``fbEmpty``, ``appTitle`` – text roles
+    """
+    return f"""
+    QDialog, QMainWindow, QWidget#fbRoot, QWidget#appRoot {{
+        background: {p.bg_primary};
+        color: {p.text_primary};
+    }}
+    QLabel {{ color: {p.text_primary}; background: transparent; }}
+    QLabel#fbHint {{ color: {p.text_muted}; font-size: 11px; }}
+    QLabel#fbStatus {{ color: {p.text_muted}; }}
+    QLabel#fbError {{ color: {p.danger}; font-weight: 600; padding: 2px 4px; }}
+    QLabel#fbEmpty {{ color: {p.text_muted}; padding: 12px; }}
+    QLabel#appTitle {{ color: {p.text_primary}; font-size: 15px; font-weight: 700; padding: 0 6px; }}
+    QFrame#fbToolbar, QFrame#appToolbar {{
+        background: {p.bg_secondary};
+        border: 1px solid {p.border_subtle};
+        border-radius: 8px;
+    }}
+    QFrame#fbSep {{ color: {p.border}; }}
+    QFrame#fbPreview {{
+        background: {p.bg_tertiary};
+        border: 1px solid {p.border_subtle};
+        border-radius: 8px;
+    }}
+    QToolBar {{ background: transparent; border: none; spacing: 2px; padding: 2px; }}
+    QToolButton {{
+        background: transparent;
+        color: {p.text_primary};
+        border: 1px solid transparent;
+        border-radius: 6px;
+        padding: 4px 8px;
+    }}
+    QToolButton:hover {{ background: {p.accent_soft}; border-color: {p.border}; }}
+    QToolButton:pressed, QToolButton:checked {{ background: {p.bg_selected}; border-color: {p.accent}; }}
+    QToolButton:disabled {{ color: {p.text_muted}; }}
+    QToolButton::menu-indicator {{ image: none; width: 0; }}
+    QPushButton {{
+        background: {p.bg_tertiary};
+        color: {p.text_primary};
+        border: 1px solid {p.border};
+        border-radius: 6px;
+        padding: 5px 12px;
+        font-weight: 600;
+    }}
+    QPushButton:hover {{ background: {p.accent_soft}; border-color: {p.accent}; }}
+    QPushButton:pressed {{ background: {p.bg_selected}; }}
+    QPushButton:disabled {{
+        background: {p.bg_tertiary};
+        color: {p.text_muted};
+        border-color: {p.border_subtle};
+    }}
+    QPushButton#fbPrimary, QPushButton#primaryBtn {{
+        background: {p.accent};
+        color: {p.text_inverse};
+        border: none;
+        padding: 6px 14px;
+    }}
+    QPushButton#fbPrimary:hover, QPushButton#primaryBtn:hover {{ background: {p.accent_hover}; }}
+    QPushButton#fbPrimary:pressed, QPushButton#primaryBtn:pressed {{ background: {p.accent_pressed}; }}
+    QPushButton#fbPrimary:disabled, QPushButton#primaryBtn:disabled {{
+        background: {p.disabled};
+        color: {p.text_inverse};
+    }}
+    QTabWidget::pane {{
+        border: 1px solid {p.border_subtle};
+        border-radius: 6px;
+        background: {p.bg_secondary};
+        top: -1px;
+    }}
+    QTabBar::tab {{
+        background: transparent;
+        color: {p.text_secondary};
+        padding: 5px 10px;
+        border-bottom: 2px solid transparent;
+        font-weight: 600;
+    }}
+    QTabBar::tab:selected {{ color: {p.accent}; border-bottom: 2px solid {p.accent}; }}
+    QTabBar::tab:hover {{ color: {p.text_primary}; }}
+    QGroupBox {{
+        background: {p.bg_secondary};
+        border: 1px solid {p.border_subtle};
+        border-radius: 8px;
+        margin-top: 14px;
+        padding: 8px 6px 4px 6px;
+        font-weight: 600;
+        color: {p.text_secondary};
+    }}
+    QGroupBox::title {{
+        subcontrol-origin: margin;
+        left: 10px;
+        padding: 0 4px;
+        color: {p.text_secondary};
+    }}
+    QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QFontComboBox {{
+        background: {p.bg_secondary};
+        color: {p.text_primary};
+        border: 1px solid {p.border};
+        border-radius: 5px;
+        padding: 3px 6px;
+        min-height: 20px;
+    }}
+    QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
+        border: 1px solid {p.accent};
+    }}
+    QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {{
+        background: {p.bg_tertiary};
+        color: {p.text_muted};
+        border-color: {p.border_subtle};
+    }}
+    QLineEdit[invalid="true"] {{ border: 1.5px solid {p.danger}; background: {p.danger_bg}; }}
+    QComboBox QAbstractItemView {{
+        background: {p.bg_secondary};
+        color: {p.text_primary};
+        selection-background-color: {p.accent_soft};
+        selection-color: {p.text_primary};
+    }}
+    QPlainTextEdit, QTextEdit, QTextBrowser, QTableView, QTableWidget,
+    QListView, QListWidget, QTreeView, QTreeWidget {{
+        background: {p.bg_secondary};
+        color: {p.text_primary};
+        border: 1px solid {p.border_subtle};
+        border-radius: 6px;
+        gridline-color: {p.border_subtle};
+        selection-background-color: {p.accent_soft};
+        selection-color: {p.text_primary};
+        alternate-background-color: {p.bg_tertiary};
+    }}
+    QHeaderView {{ background: {p.bg_tertiary}; border: none; }}
+    QHeaderView::section {{
+        background: {p.bg_tertiary};
+        color: {p.text_secondary};
+        border: none;
+        border-right: 1px solid {p.border_subtle};
+        border-bottom: 1px solid {p.border_subtle};
+        padding: 4px 6px;
+        font-weight: 600;
+    }}
+    QTableCornerButton::section {{
+        background: {p.bg_tertiary};
+        border: none;
+        border-right: 1px solid {p.border_subtle};
+        border-bottom: 1px solid {p.border_subtle};
+    }}
+    QCheckBox, QRadioButton {{ color: {p.text_primary}; spacing: 6px; background: transparent; }}
+    QCheckBox::indicator {{
+        width: 15px; height: 15px; border-radius: 4px;
+        border: 1.5px solid {p.border_strong}; background: {p.bg_secondary};
+    }}
+    QCheckBox::indicator:checked {{ background: {p.accent}; border-color: {p.accent}; }}
+    QCheckBox::indicator:indeterminate {{ background: {p.accent_soft}; border-color: {p.accent}; }}
+    QCheckBox::indicator:disabled {{ border-color: {p.border}; background: {p.bg_tertiary}; }}
+    QRadioButton::indicator {{
+        width: 14px; height: 14px; border-radius: 8px;
+        border: 1.5px solid {p.border_strong}; background: {p.bg_secondary};
+    }}
+    QRadioButton::indicator:checked {{ background: {p.accent}; border-color: {p.accent}; }}
+    QMenu {{
+        background: {p.bg_secondary};
+        color: {p.text_primary};
+        border: 1px solid {p.border};
+        border-radius: 6px;
+        padding: 4px;
+    }}
+    QMenu::item {{ padding: 5px 22px 5px 12px; border-radius: 4px; }}
+    QMenu::item:selected {{ background: {p.accent_soft}; color: {p.text_primary}; }}
+    QMenu::item:disabled {{ color: {p.text_muted}; }}
+    QMenu::separator {{ height: 1px; background: {p.border_subtle}; margin: 4px 8px; }}
+    QSplitter::handle {{ background: transparent; }}
+    QSplitter::handle:hover {{ background: {p.accent_soft}; }}
+    QScrollBar:vertical {{ background: transparent; width: 8px; margin: 2px; }}
+    QScrollBar::handle:vertical {{ background: {p.border}; border-radius: 4px; min-height: 24px; }}
+    QScrollBar::handle:vertical:hover {{ background: {p.text_muted}; }}
+    QScrollBar:horizontal {{ background: transparent; height: 8px; margin: 2px; }}
+    QScrollBar::handle:horizontal {{ background: {p.border}; border-radius: 4px; min-width: 24px; }}
+    QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
+    QProgressBar {{
+        background: {p.bg_tertiary};
+        border: 1px solid {p.border_subtle};
+        border-radius: 5px;
+        text-align: center;
+        color: {p.text_primary};
+        min-height: 14px;
+    }}
+    QProgressBar::chunk {{ background: {p.accent}; border-radius: 4px; }}
+    QStatusBar {{ background: {p.bg_primary}; color: {p.text_muted}; border: none; }}
+    QStatusBar::item {{ border: none; }}
+    QToolTip {{
+        background: {p.bg_secondary};
+        color: {p.text_primary};
+        border: 1px solid {p.border};
+        padding: 4px 6px;
+    }}
+    """

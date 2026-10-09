@@ -2772,7 +2772,8 @@ class CalibrationPlotWidget(EnhancedPlotWidget):
             eq = f"y = {slope:.4g} \u00B7 x \u2212 {abs(intercept):.4g}"
 
         suffix = f"  [{self._last_unit_label}]" if self._last_unit_label else ""
-        lines = [f"{eq}{suffix}", f"R\u00B2 = {r2:.5f}"]
+        lines = [f"{eq}{suffix}",
+                 f"R\u00B2 = {r2:.5f}" if np.isfinite(r2) else "manual slope"]
         if self._excluded:
             lines.append(f"({len(self._excluded)} point(s) excluded)")
         self._equation_text.setText('\n'.join(lines))
