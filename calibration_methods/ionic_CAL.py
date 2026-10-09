@@ -25,6 +25,7 @@ from calibration_methods.te_common import (
 
 
 from tools.theme import theme
+from calibration_methods import sensitivity_checks
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.calibration_methods.ionic_CAL")
 from tools.logging_utils import log_context
@@ -331,6 +332,11 @@ class IonicCalibrationWindow(QMainWindow):
         bar.addWidget(self._separator())
         bar.addWidget(self._tool(load_session_action, 'fa6s.file-import'))
         bar.addWidget(self._tool(save_action, 'fa6s.floppy-disk'))
+        bar.addWidget(self._separator())
+        self.checks_action = QAction("Checks", self)
+        self.checks_action.setToolTip("Calibration checks: uncertainty, linearity, abundance, drift, blank, history")
+        self.checks_action.triggered.connect(self.show_checks)
+        bar.addWidget(self._tool(self.checks_action, 'fa6s.stethoscope'))
         bar.addWidget(self._separator())
         bar.addSpacing(6)
         bar.addWidget(QLabel("Unit"))
@@ -1170,6 +1176,175 @@ class IonicCalibrationWindow(QMainWindow):
                            {'method': global_method,
                             'isotope_count': len(self.calibration_results)})
         self.statusBar.showMessage(f"Applied {global_method} to all isotopes", 3000)
+
+    def _abundance_of(self, element, mass):
+        """Natural abundance (%) of an isotope from the periodic table, or None."""
+        element_data = next((e for e in self.periodic_table.get_elements()
+                             if e['symbol'] == element), None)
+        if not element_data:
+            return None
+        iso = next((i for i in element_data.get('isotopes', [])
+                    if isinstance(i, dict) and abs(i.get('mass', 0) - float(mass)) < 0.001), None)
+        return iso.get('abundance') if iso else None
+
+    def _method_record(self, key, data):
+        """The calibration record of the method in use for *key*."""
+        method_map = {'Force through zero': 'zero', 'Simple linear': 'simple',
+                      'Weighted': 'weighted', 'Manual': 'manual'}
+        method = method_map.get(self.isotope_method_preferences.get(key, ''), 'simple')
+        return method, data.get(method) or data.get('simple', {})
+
+    def compute_checks(self):
+        """
+        Run every calibration check on the current results.
+
+        Returns:
+            list of dicts, one per isotope, with the check results and a
+            ``warnings`` count.
+        """
+        history = self._history()
+        rows, abundance_inputs = [], {}
+        for key, data in sorted(self.calibration_results.items(),
+                                key=lambda kv: float(kv[0].split('-')[1])):
+            element, mass = key.split('-')
+            excluded = self.excluded_points.get(key, set())
+            folders = data.get('folders', [])
+            x = np.asarray(data.get('x', []), float)
+            y = np.asarray(data.get('y', []), float)
+            y_std = np.asarray(data.get('y_std', []), float)
+            keep = np.array([f not in excluded for f in folders], bool) if len(folders) == len(x) else np.ones(len(x), bool)
+            xi, yi, si = x[keep], y[keep], (y_std[keep] if len(y_std) == len(x) else None)
+            method, record = self._method_record(key, data)
+            slope = float(record.get('slope', float('nan')))
+            if method == 'manual':
+                unc = {'se': float('nan'), 'ci95': float('nan')}
+            else:
+                unc = sensitivity_checks.slope_uncertainty(xi, yi, si, method)
+            abundance = self._abundance_of(element, float(mass))
+            abundance_inputs[key] = (element, slope, abundance)
+            rows.append({
+                'key': key,
+                'label': self.get_isotope_label(element, float(mass)),
+                'method': method,
+                'slope': slope,
+                'ci95': unc['ci95'],
+                'linearity': sensitivity_checks.linearity_check(xi, yi),
+                'drift': sensitivity_checks.repeat_standard_drift(xi, yi),
+                'blank': sensitivity_checks.blank_source(xi),
+                'history': history.compare(key, slope),
+            })
+        abundance = sensitivity_checks.abundance_check(abundance_inputs)
+        for row in rows:
+            row['abundance'] = abundance.get(row['key'])
+            row['warnings'] = sum(
+                1 for k in ('linearity', 'drift', 'history', 'abundance')
+                if row[k] and row[k]['flag']) + (1 if row['blank'] and not row['blank']['is_blank'] else 0)
+        return rows
+
+    def _history(self):
+        if getattr(self, '_sensitivity_history', None) is None:
+            self._sensitivity_history = sensitivity_checks.SensitivityHistory()
+        return self._sensitivity_history
+
+    def run_checks(self, record_history=False):
+        """
+        Run the checks, show the warning count on the Checks button and,
+        after a calculation, add today's slopes to the sensitivity history.
+        """
+        if not self.calibration_results:
+            return []
+        rows = self.compute_checks()
+        if record_history:
+            self._history().record({r['key']: r['slope'] for r in rows if r['method'] != 'manual'})
+        warnings = sum(r['warnings'] for r in rows)
+        self._check_rows = rows
+        self.checks_action.setText(f"Checks ({warnings})" if warnings else "Checks")
+        if warnings:
+            self.statusBar.showMessage(
+                f"Calibration complete — {warnings} check warning(s); open Checks for details", 8000)
+        return rows
+
+    def show_checks(self):
+        """Open the Checks window: one row per isotope, warnings highlighted."""
+        if not self.calibration_results:
+            QMessageBox.information(self, "Checks", "Calculate the calibration first.")
+            return
+        rows = self.run_checks()
+        p = theme.palette
+        unit = self.unit_combo.currentText()
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Calibration Checks")
+        dialog.resize(1280, 560)
+        dialog.setStyleSheet(base_stylesheet(p))
+        layout = QVBoxLayout(dialog)
+        hint = QLabel(
+            f"Flags: top standard more than {sensitivity_checks.LINEARITY_LIMIT_PCT:g}% below the line of the others · "
+            f"isotope more than {sensitivity_checks.ABUNDANCE_LIMIT_PCT:g}% off its element's abundance scaling "
+            "(oxide or isobaric overlap if high) · "
+            f"repeated standard changed more than {sensitivity_checks.DRIFT_LIMIT_PCT:g}% during the run · "
+            "no 0-concentration blank for the LOD noise · "
+            f"slope changed more than {sensitivity_checks.HISTORY_LIMIT_PCT:g}% since the last day saved.")
+        hint.setObjectName("helpInfo")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        headers = ["Isotope", "Method", f"Slope ± 95% CI (cps/{unit})", "vs abundance",
+                   "Top standard", "Repeated standards", "LOD noise from", "vs last day"]
+        table = QTableWidget(len(rows), len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        warn_bg = QBrush(QColor(p.warning_bg))
+
+        def cell(r, c, text, flag=False, tip=""):
+            item = QTableWidgetItem(("⚠ " if flag else "") + text)
+            if flag:
+                item.setBackground(warn_bg)
+            if tip:
+                item.setToolTip(tip)
+            table.setItem(r, c, item)
+
+        names = {'zero': 'Force through zero', 'simple': 'Simple linear',
+                 'weighted': 'Weighted', 'manual': 'Manual'}
+        for r, row in enumerate(rows):
+            cell(r, 0, row['label'])
+            cell(r, 1, names.get(row['method'], row['method']))
+            slope_txt = f"{row['slope']:.4g}"
+            if np.isfinite(row['ci95']):
+                rel = row['ci95'] / row['slope'] * 100 if row['slope'] else float('nan')
+                slope_txt += f" ± {row['ci95']:.2g} ({rel:.1f}%)"
+            cell(r, 2, slope_txt)
+            a = row['abundance']
+            cell(r, 3, f"{a['deviation_pct']:+.1f}%" if a else "—", bool(a and a['flag']),
+                 "Slope per % abundance relative to the median of this element's isotopes")
+            lin = row['linearity']
+            cell(r, 4, (f"{lin['top_deviation_pct']:+.1f}% at {lin['top_x']:g} {unit}; "
+                        f"slope {lin['slope_change_pct']:+.1f}% with it") if lin else "—",
+                 bool(lin and lin['flag']),
+                 "Top standard vs the line of the other standards; consider excluding it if flagged")
+            d = row['drift']
+            cell(r, 5, f"{d['max_drift_pct']:+.1f}% at {d['at_x']:g} {unit} ({d['repeats']}×)" if d else "none repeated",
+                 bool(d and d['flag']), "First to last measurement of a standard run more than once")
+            b = row['blank']
+            cell(r, 6, ("blank (0)" if b['is_blank'] else f"lowest standard ({b['x']:g} {unit})") if b else "—",
+                 bool(b and not b['is_blank']),
+                 "Include a 0-concentration standard so LOD and LOQ use the true blank noise")
+            h = row['history']
+            cell(r, 7, f"{h['change_pct']:+.1f}% vs {h['day']}" if h else "no earlier day",
+                 bool(h and h['flag']), "Slope compared with the latest earlier day in the history")
+
+        table.resizeColumnsToContents()
+        table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(table)
+        close = QPushButton("Close")
+        close.setObjectName("fbPrimary")
+        close.clicked.connect(dialog.accept)
+        row_layout = QHBoxLayout()
+        row_layout.addStretch()
+        row_layout.addWidget(close)
+        layout.addLayout(row_layout)
+        dialog.exec()
 
     def apply_manual_to_all_isotopes(self):
         """
@@ -2623,6 +2798,10 @@ class IonicCalibrationWindow(QMainWindow):
 
         progress.setValue(100)
         self.statusBar.showMessage("Calibration complete", 3000)
+        try:
+            self.run_checks(record_history=True)
+        except Exception:
+            _itk_log.exception("Calibration checks failed")
         
         self.tab_widget.setCurrentIndex(2)
 

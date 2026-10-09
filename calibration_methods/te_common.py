@@ -1083,6 +1083,14 @@ def run_all_fits_on_subset(x, y, y_std, included_mask, density):
     fom_weighted = compute_figures_of_merit(
         f_weighted["slope"], f_weighted["intercept"], sigma_blank)
 
+    from calibration_methods.sensitivity_checks import slope_uncertainty
+    unc_zero = slope_uncertainty(xi, yi, method='zero')
+    unc_simple = slope_uncertainty(xi, yi, method='simple')
+    unc_weighted = slope_uncertainty(xi, yi, si, method='weighted')
+    fom_zero.update(slope_se=unc_zero['se'], slope_ci95=unc_zero['ci95'])
+    fom_simple.update(slope_se=unc_simple['se'], slope_ci95=unc_simple['ci95'])
+    fom_weighted.update(slope_se=unc_weighted['se'], slope_ci95=unc_weighted['ci95'])
+
     return {
         'zero': {
             'slope':     f_zero["slope"],
