@@ -3431,7 +3431,7 @@ class IonicCalibrationWindow(QMainWindow):
         dialog.setMinimumWidth(500)
         dialog.setMinimumHeight(400)
 
-        dialog.setStyleSheet(_build_ionic_qss(theme.palette))
+        dialog.setStyleSheet(base_stylesheet(theme.palette))
         layout = QVBoxLayout(dialog)
         
         instruction = QLabel("Choose your data source type:")
