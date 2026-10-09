@@ -1154,7 +1154,46 @@ def compute_outlier_indices(y, y_fit, included_mask, z_threshold=1.5):
         if abs(residuals[i] / s) > z_threshold
     }
 
-def elements_in_sample_name(sample_name, elements):
+def standards_in_sample_name(sample_name, presets):
+    """
+    Named multi-element standards (preset lists) found in a sample name.
+
+    A preset such as ``71A``, ``68A-B`` or ``CMS-1 Rare Earth`` matches in
+    any case, with ``-``, ``_``, ``.`` or a space (or nothing) between its
+    characters, and not inside a longer word or number: ``71A_2ppb`` and
+    ``68a_b 1 ppb`` match, ``171A`` does not. For a preset with spaces its
+    first word alone (``CMS-1``) also matches.
+
+    Args:
+        sample_name: The sample (file or folder) name.
+        presets: {preset name: [element symbols]}.
+
+    Returns:
+        (set of element symbols of the matched presets,
+         sample name with the matched text blanked out).
+    """
+    import re
+    found = set()
+    remaining = sample_name
+    names = []
+    for preset in presets:
+        names.append((preset, preset))
+        head = preset.split(' ')[0]
+        if head != preset:
+            names.append((head, preset))
+    names.sort(key=lambda item: -len(item[0]))
+    for text, preset in names:
+        chars = [re.escape(c) for c in text if c.isalnum()]
+        if not chars:
+            continue
+        pattern = r'(?<![A-Za-z0-9])' + r'[-_. ]?'.join(chars) + r'(?![A-Za-z0-9])'
+        if re.search(pattern, remaining, flags=re.IGNORECASE):
+            found.update(presets[preset])
+            remaining = re.sub(pattern, ' ', remaining, flags=re.IGNORECASE)
+    return found, remaining
+
+
+def elements_in_sample_name(sample_name, elements, presets=None):
     """
     Elements named in a calibration sample name.
 
@@ -1164,11 +1203,15 @@ def elements_in_sample_name(sample_name, elements):
     so lower-case unit text such as ``ppb`` is never read as ``Pb``, and
     all-capital words of three letters or more (``PPB``, ``ICP``, ``STD``)
     are ignored. Full
-    element names (``Iron``, ``cerium``) are recognised in any case.
+    element names (``Iron``, ``cerium``) are recognised in any case. When
+    *presets* is given, named standards such as ``71A`` contribute all
+    their elements (see :func:`standards_in_sample_name`), and their text
+    is not read again as symbols (``68B-C`` is not boron and carbon).
 
     Args:
         sample_name: The sample (file or folder) name.
         elements: Periodic-table entries, each with ``symbol`` and ``name``.
+        presets: Optional {standard name: [element symbols]}.
 
     Returns:
         set of element symbols found in the name.
@@ -1177,6 +1220,8 @@ def elements_in_sample_name(sample_name, elements):
     symbols = {e['symbol'] for e in elements}
     names = {str(e.get('name', '')).lower(): e['symbol'] for e in elements if e.get('name')}
     found = set()
+    if presets:
+        found, sample_name = standards_in_sample_name(sample_name, presets)
 
     def split_symbols(run):
         if not run:
