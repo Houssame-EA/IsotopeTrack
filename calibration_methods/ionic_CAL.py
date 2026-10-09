@@ -18,6 +18,7 @@ import qtawesome as qta
 import loading.tofwerk_loading
 
 from calibration_methods.te_common import (
+    elements_in_sample_name,
     NumericDelegate, return_button_style, return_button_icon_color, base_stylesheet,
     fit_zero, compute_figures_of_merit, run_all_fits_on_subset,
     compute_outlier_indices,
@@ -1472,43 +1473,77 @@ class IonicCalibrationWindow(QMainWindow):
 
     def auto_fill_concentrations(self):
         """
-        Automatically fill concentration values based on sample names.
-        
-        Uses pattern matching to extract concentration values from sample names
-        and fills empty or -1 cells in the concentration table.
+        Fill concentrations from the sample names.
+
+        The concentration (or 0 for a blank) is read from each sample name.
+        When the name also names elements that are selected, for example
+        ``Fe_Ce_10ppb`` or ``140Ce 5 ppb``, only the columns of those elements
+        (every selected isotope of each) get the concentration and the other
+        empty cells get -1, so they are left out of the calibration. A name
+        naming no selected element fills every column, as for a
+        multi-element standard. Cells that already hold a value are kept.
         """
         self.ignore_item_changed = True
         filled_count = 0
-        
+        matched_samples = 0
+        elements = self.periodic_table.get_elements() if self.periodic_table else []
+        selected = set(self.selected_isotopes)
+
+        column_elements = {}
+        for col in range(1, self.table.columnCount()):
+            header = self.table.horizontalHeaderItem(col)
+            key = header.data(Qt.ItemDataRole.UserRole) if header else None
+            if key:
+                column_elements[col] = str(key).split('-')[0]
+
         try:
             for row in range(self.table.rowCount()):
                 file_item = self.table.item(row, 0)
-                if file_item:
-                    sample_name = file_item.text()
-                    concentration = self.extract_concentration_from_sample_name(sample_name)
-                    
-                    if concentration != "-1":
-                        for col in range(1, self.table.columnCount()):
-                            current_item = self.table.item(row, col)
-                            if not current_item or current_item.text() in ["-1", ""]:
-                                self.table.setItem(row, col, QTableWidgetItem(concentration))
-                                filled_count += 1
+                if not file_item:
+                    continue
+                sample_name = file_item.text()
+                concentration = self.extract_concentration_from_sample_name(sample_name)
+                if concentration == "-1":
+                    continue
+
+                in_standard = None
+                if float(concentration) != 0:
+                    named = elements_in_sample_name(sample_name, elements) & selected
+                    if named:
+                        in_standard = named
+                        matched_samples += 1
+
+                for col in range(1, self.table.columnCount()):
+                    current_item = self.table.item(row, col)
+                    if current_item and current_item.text() not in ("-1", ""):
+                        continue
+                    element = column_elements.get(col)
+                    if in_standard is None or element in in_standard:
+                        value = concentration
+                    else:
+                        value = "-1"
+                    if current_item is None or current_item.text() != value:
+                        self.table.setItem(row, col, QTableWidgetItem(value))
+                        if value != "-1":
+                            filled_count += 1
         finally:
             self.ignore_item_changed = False
             if filled_count > 0:
                 self.data_modified = True
                 self.save_action.setEnabled(True)
-        
+
         ual = _ual()
         if ual:
             ual.log_action('DATA_OP',
                            f'Auto-fill concentrations: {filled_count} cells filled',
-                           {'filled': filled_count})
+                           {'filled': filled_count, 'element_matched_samples': matched_samples})
         if filled_count > 0:
-            self.statusBar.showMessage(f"Auto-filled {filled_count} concentration values", 5000)
+            detail = (f" ({matched_samples} sample(s) filled only for the elements in their name)"
+                      if matched_samples else "")
+            self.statusBar.showMessage(f"Auto-filled {filled_count} concentration values{detail}", 6000)
         else:
             self.statusBar.showMessage("No concentration patterns detected in sample names", 3000)
-        
+
     def filter_results_table(self):
         """
         Filter the results table based on the selected option.

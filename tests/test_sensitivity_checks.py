@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for calibration_methods/sensitivity_checks.py and the Checks window data."""
 import numpy as np
 import pytest

@@ -1153,3 +1153,49 @@ def compute_outlier_indices(y, y_fit, included_mask, z_threshold=1.5):
         i for i in included_idx
         if abs(residuals[i] / s) > z_threshold
     }
+
+def elements_in_sample_name(sample_name, elements):
+    """
+    Elements named in a calibration sample name.
+
+    A name is cut into letter runs (digits, spaces and punctuation separate
+    them). A run counts when it spells one or more element symbols with
+    their exact capitalisation (``Fe``, ``FeCe``, the ``Ce`` of ``140Ce``),
+    so lower-case unit text such as ``ppb`` is never read as ``Pb``, and
+    all-capital words of three letters or more (``PPB``, ``ICP``, ``STD``)
+    are ignored. Full
+    element names (``Iron``, ``cerium``) are recognised in any case.
+
+    Args:
+        sample_name: The sample (file or folder) name.
+        elements: Periodic-table entries, each with ``symbol`` and ``name``.
+
+    Returns:
+        set of element symbols found in the name.
+    """
+    import re
+    symbols = {e['symbol'] for e in elements}
+    names = {str(e.get('name', '')).lower(): e['symbol'] for e in elements if e.get('name')}
+    found = set()
+
+    def split_symbols(run):
+        if not run:
+            return []
+        for size in (2, 1):
+            head = run[:size]
+            if len(head) == size and head in symbols:
+                rest = split_symbols(run[size:])
+                if rest is not None:
+                    return [head] + rest
+        return None
+
+    for run in re.findall(r'[A-Za-z]+', sample_name):
+        if run.lower() in names:
+            found.add(names[run.lower()])
+            continue
+        if len(run) >= 3 and run.isupper():
+            continue
+        parts = split_symbols(run) if run[0].isupper() else None
+        if parts:
+            found.update(parts)
+    return found

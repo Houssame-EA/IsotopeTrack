@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for the manual sensitivity override of the Ionic Calibration window.
 
 A manual slope replaces the fitted calibration of one isotope, so it feeds
