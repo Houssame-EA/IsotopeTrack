@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QDialog
 import sys
 
 from tools import particle_classifier_dialog as pcd
+from tools import particle_classifier_simple_dialog as psd
 from tools.particle_classifier_node import ParticleClassifierNode
 
 
@@ -944,7 +945,7 @@ class TestNodeConfigureRoundTrip:
                 return [{'id_a': 'x', 'id_b': 'y', 'expr_a': '60Ni',
                          'expr_b': '60Ni+107Ag'}]
 
-        monkeypatch.setattr(pcd, "ParticleClassifierDialog", _FakeDialog)
+        monkeypatch.setattr(psd, "SimpleClassifierDialog", _FakeDialog)
         result = node.configure(None)
         assert result is True
         assert node.definitions[0]['expression_text'] == '60Ni'
@@ -966,7 +967,7 @@ class TestNodeConfigureRoundTrip:
             def __init__(self, *a, **kw): pass
             def exec(self): return QDialog.Rejected
 
-        monkeypatch.setattr(pcd, "ParticleClassifierDialog", _FakeDialog)
+        monkeypatch.setattr(psd, "SimpleClassifierDialog", _FakeDialog)
         assert node.configure(None) is False
         assert node.definitions == []  # untouched
 
