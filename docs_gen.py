@@ -63,7 +63,7 @@ SECTIONS = [
       # no reference page at all until it was listed here explicitly.
       ROOT / "results/classifier_view.py"]),
     ("Results", "results",
-     "All plot/analysis result modules (bar charts, isotope ratios, AI, …).",
+     "All plot/analysis result modules (bar charts, isotope ratios, …).",
      [p for p in _glob("results/results_*.py")]),
     ("Insights", "insights",
      "The discovery engine behind the Insights panel: replicate grouping and "
@@ -73,6 +73,11 @@ SECTIONS = [
      "The clustering feature in one package: the dialog, the pipeline sweep, "
      "the animated teaching view and its NumPy stepper engine.",
      _glob("results/cluster/*.py", exclude=("__init__.py",))),
+    ("AI Assistant", "ai",
+     "The AI Data Assistant: the particle table and spICP-ToF-MS analyses the "
+     "model calls, model-drawn figures, the sandbox, prompts, exploration and "
+     "the benchmark.",
+     _glob("results/ai/*.py", exclude=("__init__.py",))),
     ("Widgets & UI", "widgets_ui",
      "Reusable dialogs, tables, and UI widgets.",
      [p for p in _glob("widget/*.py")

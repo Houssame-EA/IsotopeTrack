@@ -39,7 +39,7 @@ from results.results_correlation import CorrelationPlotDisplayDialog, Correlatio
 from results.results_isotope import IsotopicRatioDisplayDialog, IsotopicRatioPlotNode
 from results.cluster.dialog import ClusteringDisplayDialog, ClusteringPlotNode
 from results.results_triangle import TriangleDisplayDialog, TrianglePlotNode
-from results.results_AI import AIAssistantNode
+from results.ai.node import AIAssistantNode
 from results.results_box_plot import BoxPlotDisplayDialog, BoxPlotNode
 from results.results_molar_ratio import MolarRatioDisplayDialog, MolarRatioPlotNode
 from results.results_single_multiple import (

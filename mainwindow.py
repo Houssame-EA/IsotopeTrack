@@ -6665,7 +6665,8 @@ class MainWindow(QMainWindow):
             thresholds = threshold_data.get(element_key, {})
 
             r_squared = method_data.get('r_squared', 0) if method_data else 0
-            row_class = ' class="warning"' if r_squared < 0.9 else ''
+            r_squared_known = r_squared == r_squared
+            row_class = ' class="warning"' if r_squared_known and r_squared < 0.9 else ''
 
             display_text += f"<tr{row_class}>"
             display_text += f"<td>{display_label}</td>"
@@ -6675,7 +6676,7 @@ class MainWindow(QMainWindow):
                 display_text += f"<td>{method_data.get('bec', 'N/A'):.2e}</td>"
                 display_text += f"<td>{method_data.get('lod', 'N/A'):.2e}</td>"
                 display_text += f"<td>{method_data.get('loq', 'N/A'):.2e}</td>"
-                display_text += f"<td>{r_squared:.4f}</td>"
+                display_text += f"<td>{r_squared:.4f}</td>" if r_squared_known else "<td>—</td>"
             else:
                 display_text += "<td>Not calibrated</td>" * 5
 

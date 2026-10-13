@@ -123,6 +123,13 @@ if __name__ == "__main__":
 
     exit_code = app.exec()
 
+    ai_servers = sys.modules.get('results.ai.servers')
+    if ai_servers is not None:
+        try:
+            ai_servers.release_models()
+        except Exception:
+            _itk_log.exception("Could not release the AI models")
+
     for w in app.main_windows:
         try:
             w.close()

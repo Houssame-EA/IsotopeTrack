@@ -138,7 +138,6 @@ nav:
     - "classifier_view.py": canvas_shared/classifier-view.md
 - Results:
     - Overview: results/index.md
-    - "results_AI.py": results/results-ai.md
     - "results_bar_charts.py": results/results-bar-charts.md
     - "results_box_plot.py": results/results-box-plot.md
     - "results_composition_wheel.py": results/results-composition-wheel.md
@@ -171,6 +170,25 @@ nav:
     - "palette.py": cluster/palette.md
     - "prep.py": cluster/prep.md
     - "tools.py": cluster/tools.md
+- AI Assistant:
+    - Overview: ai/index.md
+    - "analysis.py": ai/analysis.md
+    - "attachments.py": ai/attachments.md
+    - "benchmark.py": ai/benchmark.md
+    - "data.py": ai/data.md
+    - "dialog.py": ai/dialog.md
+    - "exploration.py": ai/exploration.md
+    - "figures.py": ai/figures.md
+    - "node.py": ai/node.md
+    - "prompts.py": ai/prompts.md
+    - "report.py": ai/report.md
+    - "sandbox.py": ai/sandbox.md
+    - "servers.py": ai/servers.md
+    - "settings.py": ai/settings.md
+    - "streaming.py": ai/streaming.md
+    - "synthetic.py": ai/synthetic.md
+    - "theme.py": ai/theme.md
+    - "widgets.py": ai/widgets.md
 - Widgets & UI:
     - Overview: widgets_ui/index.md
     - "batch_parameters.py": widgets_ui/batch-parameters.md

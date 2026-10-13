@@ -6,25 +6,28 @@ from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
                                QFileDialog, QMessageBox, QDialog, QListView, QAbstractItemView,
                                QTreeView, QComboBox, QLabel, QSplitter, QGroupBox,
-                               QMenu, QTabWidget, QToolBar, QStatusBar, QMainWindow,
+                               QMenu, QTabWidget, QToolButton, QStatusBar, QMainWindow,
                                QFrame, QRadioButton, QDoubleSpinBox, QCheckBox, QProgressDialog)
 from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QKeySequence, QFont, QColor, QBrush, QAction, QShortcut
 import loading.vitesse_loading
-from widget.periodic_table_widget import PeriodicTableWidget
+from widget.periodic_table_widget import PeriodicTableWidget, named_element_lists
+from widget.frozen_column import FrozenColumns
 from widget.custom_plot_widget import CalibrationPlotWidget, EnhancedPlotWidget
 import os
 import qtawesome as qta
 import loading.tofwerk_loading
 
 from calibration_methods.te_common import (
-    NumericDelegate, return_button_style,
+    elements_in_sample_name, standards_in_sample_name,
+    NumericDelegate, return_button_style, return_button_icon_color, base_stylesheet,
     fit_zero, compute_figures_of_merit, run_all_fits_on_subset,
     compute_outlier_indices,
 )
 
 
 from tools.theme import theme
+from calibration_methods import sensitivity_checks
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.calibration_methods.ionic_CAL")
 from tools.logging_utils import log_context
@@ -40,333 +43,13 @@ def _ual():
         return None
 
 
-def _build_ionic_qss(p) -> str:
-    """Full stylesheet for the Ionic Calibration window, built from a
-    theme Palette.  Covers main window, toolbar, tabs, tables, buttons,
-    inputs, group boxes, scroll areas, and the status bar.
-    """
-    return f"""
-        /* Base window + widgets ---------------------------------------- */
-        QMainWindow, QWidget {{
-            background-color: {p.bg_primary};
-            color: {p.text_primary};
-        }}
-
-        /* Toolbar ------------------------------------------------------ */
-        QToolBar {{
-            background-color: {p.bg_secondary};
-            border: none;
-            border-bottom: 1px solid {p.border};
-            padding: 4px;
-            spacing: 4px;
-        }}
-        QToolButton {{
-            background-color: transparent;
-            color: {p.text_primary};
-            border: 1px solid transparent;
-            border-radius: 4px;
-            padding: 5px 8px;
-        }}
-        QToolButton:hover {{
-            background-color: {p.bg_hover};
-            border: 1px solid {p.border};
-        }}
-        QToolButton:pressed,
-        QToolButton:checked {{
-            background-color: {p.accent_soft};
-            border: 1px solid {p.accent};
-            color: {p.text_primary};
-        }}
-
-        /* Tabs --------------------------------------------------------- */
-        QTabWidget::pane {{
-            border: 1px solid {p.border};
-            background-color: {p.bg_secondary};
-            border-radius: 4px;
-            top: -1px;
-        }}
-        /* The QTabBar itself — the strip the tabs sit on.  Without this
-           the area to the right of the last tab shows the OS default
-           (white on macOS). */
-        QTabBar {{
-            background-color: {p.bg_primary};
-            qproperty-drawBase: 0;
-        }}
-        QTabWidget::tab-bar {{
-            alignment: left;
-        }}
-        QTabBar::tab {{
-            background-color: {p.bg_tertiary};
-            color: {p.text_secondary};
-            padding: 8px 16px;
-            border: 1px solid {p.border};
-            border-bottom: none;
-            border-top-left-radius: 4px;
-            border-top-right-radius: 4px;
-            margin-right: 2px;
-        }}
-        QTabBar::tab:selected {{
-            background-color: {p.bg_secondary};
-            color: {p.text_primary};
-            border-bottom: 1px solid {p.bg_secondary};
-        }}
-        QTabBar::tab:hover:!selected {{
-            background-color: {p.bg_hover};
-            color: {p.text_primary};
-        }}
-
-        /* Tables ------------------------------------------------------- */
-        QTableWidget {{
-            background-color: {p.bg_secondary};
-            alternate-background-color: {p.bg_tertiary};
-            color: {p.text_primary};
-            gridline-color: {p.border};
-            border: 1px solid {p.border};
-            border-radius: 4px;
-            selection-background-color: {p.accent_soft};
-            selection-color: {p.text_primary};
-        }}
-        QTableWidget::item {{
-            padding: 4px 6px;
-        }}
-        QTableWidget::item:selected {{
-            background-color: {p.accent_soft};
-            color: {p.text_primary};
-        }}
-        QHeaderView::section {{
-            background-color: {p.bg_tertiary};
-            color: {p.text_primary};
-            padding: 6px;
-            border: none;
-            border-right: 1px solid {p.border};
-            border-bottom: 1px solid {p.border};
-            font-weight: bold;
-        }}
-        QTableCornerButton::section {{
-            background-color: {p.bg_tertiary};
-            border: none;
-            border-right: 1px solid {p.border};
-            border-bottom: 1px solid {p.border};
-        }}
-
-        /* Buttons (non-special — special ones use object names) ------- */
-        QPushButton {{
-            background-color: {p.bg_tertiary};
-            color: {p.text_primary};
-            border: 1px solid {p.border};
-            border-radius: 4px;
-            padding: 6px 14px;
-        }}
-        QPushButton:hover {{
-            background-color: {p.bg_hover};
-            border: 1px solid {p.accent};
-        }}
-        QPushButton:pressed {{
-            background-color: {p.accent_pressed};
-            color: {p.text_inverse};
-            border-color: {p.accent_pressed};
-        }}
-        QPushButton:disabled {{
-            background-color: {p.bg_secondary};
-            color: {p.text_muted};
-            border: 1px solid {p.border_subtle};
-        }}
-
-        /* Inputs ------------------------------------------------------- */
-        QLineEdit,
-        QComboBox,
-        QDoubleSpinBox,
-        QSpinBox {{
-            background-color: {p.bg_tertiary};
-            color: {p.text_primary};
-            border: 1px solid {p.border};
-            border-radius: 4px;
-            padding: 4px 8px;
-            selection-background-color: {p.accent};
-            selection-color: {p.text_inverse};
-        }}
-        QLineEdit:focus,
-        QComboBox:focus,
-        QDoubleSpinBox:focus,
-        QSpinBox:focus {{
-            border: 1px solid {p.accent};
-        }}
-        QComboBox::drop-down {{ border: none; width: 20px; }}
-        QComboBox QAbstractItemView {{
-            background-color: {p.bg_secondary};
-            color: {p.text_primary};
-            selection-background-color: {p.accent_soft};
-            selection-color: {p.text_primary};
-            border: 1px solid {p.border};
-            outline: 0;
-        }}
-
-        /* Check + radio indicators ------------------------------------ */
-        QCheckBox, QRadioButton {{
-            color: {p.text_primary};
-            background-color: transparent;
-            spacing: 6px;
-        }}
-        QCheckBox::indicator,
-        QRadioButton::indicator {{
-            width: 16px;
-            height: 16px;
-        }}
-        QCheckBox::indicator:unchecked {{
-            border: 1px solid {p.border};
-            background-color: {p.bg_tertiary};
-            border-radius: 3px;
-        }}
-        QCheckBox::indicator:checked {{
-            border: 1px solid {p.accent};
-            background-color: {p.accent};
-            border-radius: 3px;
-        }}
-        QRadioButton::indicator:unchecked {{
-            border: 2px solid {p.border};
-            background-color: {p.bg_tertiary};
-            border-radius: 9px;
-        }}
-        QRadioButton::indicator:checked {{
-            border: 2px solid {p.accent};
-            background-color: {p.accent};
-            border-radius: 9px;
-        }}
-
-        /* Group boxes ------------------------------------------------- */
-        QGroupBox {{
-            color: {p.text_primary};
-            background-color: {p.bg_secondary};
-            border: 1px solid {p.border};
-            border-radius: 6px;
-            margin-top: 1em;
-            padding-top: 10px;
-        }}
-        QGroupBox::title {{
-            subcontrol-origin: margin;
-            padding: 0 8px;
-        }}
-
-        /* Scroll areas + scrollbars ----------------------------------- */
-        QScrollArea {{
-            background-color: transparent;
-            border: none;
-        }}
-        QScrollBar:vertical {{
-            background: {p.bg_primary};
-            width: 10px;
-            border: none;
-            margin: 0;
-        }}
-        QScrollBar::handle:vertical {{
-            background: {p.border};
-            border-radius: 5px;
-            min-height: 20px;
-        }}
-        QScrollBar::handle:vertical:hover {{ background: {p.text_muted}; }}
-        QScrollBar::add-line:vertical,
-        QScrollBar::sub-line:vertical {{ height: 0; }}
-        QScrollBar:horizontal {{
-            background: {p.bg_primary};
-            height: 10px;
-            border: none;
-            margin: 0;
-        }}
-        QScrollBar::handle:horizontal {{
-            background: {p.border};
-            border-radius: 5px;
-            min-width: 20px;
-        }}
-        QScrollBar::handle:horizontal:hover {{ background: {p.text_muted}; }}
-        QScrollBar::add-line:horizontal,
-        QScrollBar::sub-line:horizontal {{ width: 0; }}
-
-        /* Menus, tooltips, splitters, status bar ---------------------- */
-        QMenu {{
-            background-color: {p.bg_secondary};
-            color: {p.text_primary};
-            border: 1px solid {p.border};
-            padding: 4px;
-        }}
-        QMenu::item {{ padding: 5px 20px; }}
-        QMenu::item:selected {{
-            background-color: {p.accent_soft};
-            color: {p.text_primary};
-        }}
-        QToolTip {{
-            background-color: {p.bg_secondary};
-            color: {p.text_primary};
-            border: 1px solid {p.border};
-            padding: 4px;
-        }}
-        QSplitter::handle {{ background-color: {p.border}; }}
-        QStatusBar {{
-            background-color: {p.bg_secondary};
-            color: {p.text_secondary};
-            border-top: 1px solid {p.border};
-        }}
-
-        /* Named widgets (object-name-targeted) ------------------------ */
-        QLabel#helpInfo {{
-            background-color: {p.accent_soft};
-            color: {p.text_primary};
-            padding: 10px;
-            border-radius: 4px;
-        }}
-        QLabel#helpWarning {{
-            background-color: {p.warning_bg};
-            color: {p.text_primary};
-            border: 1px solid {p.warning_border};
-            padding: 10px;
-            border-radius: 4px;
-        }}
-        QLabel#helpMuted {{
-            color: {p.text_muted};
-            margin-left: 20px;
-            font-size: 11px;
-        }}
-        QLabel#dialogInstruction {{
-            color: {p.text_primary};
-            font-size: 14px;
-            font-weight: bold;
-            margin: 10px;
-        }}
-        QLabel#titleLabel {{
-            color: {p.text_primary};
-            font-size: 20px;
-            font-weight: bold;
-        }}
-        QFrame#tableFrame {{
-            background-color: {p.bg_secondary};
-            border: 1px solid {p.border};
-            border-radius: 4px;
-        }}
-        QPushButton#primaryBtn {{
-            background-color: {p.success};
-            color: {p.text_inverse};
-            border: none;
-            border-radius: 4px;
-            padding: 8px 16px;
-            font-weight: bold;
-            min-width: 80px;
-        }}
-        QPushButton#primaryBtn:hover {{
-            background-color: {p.accent_hover};
-        }}
-        QPushButton#secondaryBtn {{
-            background-color: {p.bg_tertiary};
-            color: {p.text_primary};
-            border: 1px solid {p.border};
-            border-radius: 4px;
-            padding: 8px 16px;
-            font-weight: bold;
-            min-width: 80px;
-        }}
-        QPushButton#secondaryBtn:hover {{
-            background-color: {p.bg_hover};
-            border-color: {p.accent};
-        }}
-    """
+def _r2_text(value, digits):
+    """R² for display; '—' when there is none (a manual slope is not a fit)."""
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    return f"{value:.{digits}f}" if np.isfinite(value) else "—"
 
 
 def _build_ionic_status_colors(p) -> dict:
@@ -471,31 +154,22 @@ class IonicCalibrationWindow(QMainWindow):
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(5)
-        
-        header_layout = QHBoxLayout()
+        main_layout.setContentsMargins(8, 8, 8, 4)
+        main_layout.setSpacing(6)
 
-        title_label = QLabel("Ionic Calibration Analysis")
-        title_label.setObjectName("titleLabel")
-        header_layout.addWidget(title_label)
-
-        header_layout.addStretch()
-
-        self.return_button = QPushButton("Back to Main")
+        self._tool_icons = []
+        self.return_button = QPushButton(" Back to Main")
         self.return_button.setObjectName("returnButton")
-        self.return_button.setFixedSize(150, 45)
-        self._refresh_return_button()
+        self.return_button.setToolTip("Hide this window and return to the main window")
         def _back_to_main():
             ual = _ual()
             if ual:
                 ual.log_action('CLICK', 'Ionic Calibration — Back to Main')
             self.hide()
         self.return_button.clicked.connect(_back_to_main)
-        header_layout.addWidget(self.return_button)
-        
-        main_layout.addLayout(header_layout)
-                
+
+        main_layout.addWidget(self.setup_toolbar())
+
         self.tab_widget = QTabWidget()
         self.tab_widget.setTabPosition(QTabWidget.TabPosition.North)
         self.tab_widget.setTabShape(QTabWidget.TabShape.Rounded)
@@ -504,8 +178,6 @@ class IonicCalibrationWindow(QMainWindow):
         self.data_tab = QWidget()
         self.sensitivity_tab = QWidget()  
         self.calibration_tab = QWidget()
-        
-        self.setup_toolbar()
         
         self.setup_data_tab()
         self.setup_sensitivity_tab()
@@ -524,34 +196,44 @@ class IonicCalibrationWindow(QMainWindow):
 
         self.resize(1280, 900)
 
+        self._refresh_tool_icons()
+        self._refresh_return_button()
         self.create_shortcuts()
 
     def apply_theme(self, *_):
-        """Re-apply the full ionic-calibration stylesheet from the current
-        theme palette.  Called on init and whenever the user toggles light/
-        dark — any widgets that show dynamic colors (e.g. the results table
-        status cells) are refreshed via refresh_status_colors().
+        """Re-apply the shared calibration stylesheet from the current palette.
+
+        Called on init and whenever the user toggles light/dark; also
+        recolours the toolbar icons and repaints the results-table status
+        cells.
         """
         p = theme.palette
-        self.setStyleSheet(_build_ionic_qss(p))
+        self.setStyleSheet(base_stylesheet(p))
         self._status_colors = _build_ionic_status_colors(p)
+        self._refresh_tool_icons()
         self._refresh_plot_label_colors()
         self._refresh_results_table_colors()
         self._refresh_return_button()
 
+    def _refresh_tool_icons(self):
+        """Recolour the toolbar icons for the current theme."""
+        p = theme.palette
+        for widget, name, inverse in getattr(self, "_tool_icons", []):
+            try:
+                widget.setIcon(qta.icon(name, color=p.text_inverse if inverse else p.text_secondary))
+            except RuntimeError:
+                pass
+
     def _refresh_return_button(self):
-        """Apply the current theme's return-button style + a readable icon
-        color.  The button widget may not exist yet on the first call from
-        initUI — check before touching it.
+        """Apply the theme's 'Back to Main' style and icon colour, if the
+        button exists yet.
         """
         btn = getattr(self, "return_button", None)
         if btn is None:
             return
         p = theme.palette
         btn.setStyleSheet(return_button_style(p))
-
-        icon_color = "#ffffff" if p.name == "dark" else "#B81414"
-        btn.setIcon(qta.icon('fa6s.house', color=icon_color))
+        btn.setIcon(qta.icon('fa6s.house', color=return_button_icon_color(p)))
 
     def _refresh_plot_label_colors(self):
         """Swap the pyqtgraph axis label color to the current theme's
@@ -586,54 +268,104 @@ class IonicCalibrationWindow(QMainWindow):
         except Exception:
             _itk_log.exception("Handled exception in _refresh_results_table_colors")
 
+    def _tool(self, action, icon):
+        """A flat toolbar button driven by *action*, with a themed icon."""
+        button = QToolButton()
+        button.setDefaultAction(action)
+        button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        button.setAutoRaise(True)
+        self._tool_icons.append((button, icon, False))
+        return button
+
+    @staticmethod
+    def _separator():
+        line = QFrame()
+        line.setObjectName("fbSep")
+        line.setFrameShape(QFrame.Shape.VLine)
+        return line
+
     def setup_toolbar(self):
         """
-        Create and configure the main toolbar.
-        
-        Adds actions for loading folders, saving/loading sessions, calculating calibration,
-        selecting elements, and unit selection combo box.
+        Build the toolbar card at the top of the window.
+
+        Holds the way back to the main window, the session and data actions,
+        element selection and the concentration unit, and ends with the
+        window's one accent button, Calculate. Returns the card widget.
         """
-        toolbar = QToolBar("Main Toolbar")
-        toolbar.setIconSize(QSize(24, 24))
-        toolbar.setMovable(False)
-        self.addToolBar(toolbar)
-        
         load_action = QAction("Load Folders", self)
+        load_action.setToolTip("Load calibration data folders (Ctrl+O)")
         load_action.setStatusTip("Load data folders")
         load_action.triggered.connect(self.load_folders)
-        
-        save_action = QAction("Save Session", self)
+
+        save_action = QAction("Save", self)
+        save_action.setToolTip("Save the session (Ctrl+S)")
         save_action.setStatusTip("Save current session")
         save_action.triggered.connect(self.save_session)
-        
-        load_session_action = QAction("Load Session", self)
+
+        load_session_action = QAction("Open", self)
+        load_session_action.setToolTip("Open a saved session (Ctrl+L)")
         load_session_action.setStatusTip("Load saved session")
         load_session_action.triggered.connect(self.load_session)
-        
+
         calculate_action = QAction("Calculate", self)
+        calculate_action.setToolTip("Fit every isotope (F5)")
         calculate_action.setStatusTip("Calculate calibration")
         calculate_action.triggered.connect(self.calculate_calibration)
-        
-        element_select_action = QAction("Select Elements", self)
+
+        element_select_action = QAction("Elements", self)
+        element_select_action.setToolTip("Choose elements and isotopes from the periodic table (Ctrl+E)")
         element_select_action.setStatusTip("Select elements and isotopes")
         element_select_action.triggered.connect(self.show_periodic_table)
-        
-        toolbar.addAction(load_action)
-        toolbar.addAction(save_action)
-        toolbar.addAction(load_session_action)
-        toolbar.addSeparator()
-        toolbar.addAction(calculate_action)
-        toolbar.addAction(element_select_action)
-        
-        toolbar.addSeparator()
-        toolbar.addWidget(QLabel("Unit:"))
+
+        card = QFrame()
+        card.setObjectName("fbToolbar")
+        bar = QHBoxLayout(card)
+        bar.setContentsMargins(6, 4, 6, 4)
+        bar.setSpacing(2)
+
+        bar.addWidget(self.return_button)
+        bar.addWidget(self._separator())
+        title = QLabel("Ionic Calibration")
+        title.setObjectName("appTitle")
+        bar.addWidget(title)
+        bar.addWidget(self._separator())
+        bar.addWidget(self._tool(load_action, 'fa6s.folder-open'))
+        bar.addWidget(self._tool(element_select_action, 'fa6s.table-cells'))
+        bar.addWidget(self._separator())
+        bar.addWidget(self._tool(load_session_action, 'fa6s.file-import'))
+        bar.addWidget(self._tool(save_action, 'fa6s.floppy-disk'))
+        bar.addWidget(self._separator())
+        self.checks_action = QAction("Checks", self)
+        self.checks_action.setToolTip("Calibration checks: uncertainty, linearity, abundance, drift, blank, history")
+        self.checks_action.triggered.connect(self.show_checks)
+        bar.addWidget(self._tool(self.checks_action, 'fa6s.stethoscope'))
+        self.drift_action = QAction("Drift correction", self)
+        self.drift_action.setCheckable(True)
+        self.drift_action.setToolTip(
+            "Correct the standards for drift using a standard measured more than once\n"
+            "(interpolated between its repeats, in the order of the data table)")
+        self.drift_action.toggled.connect(self._on_drift_toggled)
+        bar.addWidget(self._tool(self.drift_action, 'fa6s.wave-square'))
+        bar.addWidget(self._separator())
+        bar.addSpacing(6)
+        bar.addWidget(QLabel("Unit"))
         self.unit_combo = QComboBox()
         self.unit_combo.addItems(['ppb'])
         self.unit_combo.currentTextChanged.connect(self.update_concentration_unit)
-        toolbar.addWidget(self.unit_combo)
-        
+        bar.addWidget(self.unit_combo)
+        bar.addStretch()
+
+        self.calculate_button = QPushButton(" Calculate")
+        self.calculate_button.setObjectName("fbPrimary")
+        self.calculate_button.setToolTip(calculate_action.toolTip())
+        self.calculate_button.clicked.connect(calculate_action.trigger)
+        calculate_action.enabledChanged.connect(self.calculate_button.setEnabled)
+        self._tool_icons.append((self.calculate_button, 'fa6s.calculator', True))
+        bar.addWidget(self.calculate_button)
+
         self.save_action = save_action
         self.calculate_action = calculate_action
+        return card
 
     def setup_data_tab(self):
         """
@@ -681,6 +413,7 @@ class IonicCalibrationWindow(QMainWindow):
         
         self.table.itemChanged.connect(self.on_data_changed)
         self.table.cellClicked.connect(self.on_table_cell_clicked)
+        self.frozen_sample_column = FrozenColumns(self.table, 1)
         
         table_frame = QFrame()
         table_frame.setFrameShape(QFrame.Shape.StyledPanel)
@@ -750,9 +483,9 @@ class IonicCalibrationWindow(QMainWindow):
         layout.setSpacing(10)
         
         help_label = QLabel(
-            "Configure manual sensitivity values for specific elements. "
-            "Check the 'Override' checkbox to use manual slope instead of calibration results. "
-            "This allows you to selectively override individual elements."
+            "Tick Override to replace the fitted slope of an isotope by a manual one. "
+            "It starts from the Simple-linear fit and can be edited in its row; "
+            "LOD and LOQ follow the slope. Untick to return to the best fit."
         )
         help_label.setWordWrap(True)
         help_label.setObjectName("helpWarning")
@@ -766,20 +499,20 @@ class IonicCalibrationWindow(QMainWindow):
         
         global_slope_controls.addWidget(QLabel("Global Manual Slope:"))
         self.global_manual_slope_input = QDoubleSpinBox()
-        self.global_manual_slope_input.setRange(0.0, 1e15)
+        self.global_manual_slope_input.setRange(0.01, 1e15)
         self.global_manual_slope_input.setDecimals(2)
         self.global_manual_slope_input.setValue(10.0)
         self.global_manual_slope_input.setSuffix(" cps/ppb")
         global_slope_controls.addWidget(self.global_manual_slope_input)
         
-        apply_all_btn = QPushButton("Apply to All Elements")
+        apply_all_btn = QPushButton("Override All")
         apply_all_btn.clicked.connect(self.apply_global_slope_to_all)
-        apply_all_btn.setToolTip("Apply global slope value to all elements in the table")
+        apply_all_btn.setToolTip("Override every isotope with this slope")
         global_slope_controls.addWidget(apply_all_btn)
         
-        apply_checked_btn = QPushButton("Apply to Checked Only")
+        apply_checked_btn = QPushButton("Apply to Overridden")
         apply_checked_btn.clicked.connect(self.apply_global_slope_to_checked)
-        apply_checked_btn.setToolTip("Apply global slope value only to elements with Override checked")
+        apply_checked_btn.setToolTip("Give this slope to the isotopes whose Override is ticked")
         global_slope_controls.addWidget(apply_checked_btn)
         
         global_slope_controls.addStretch()
@@ -794,7 +527,7 @@ class IonicCalibrationWindow(QMainWindow):
         self.sensitivity_table = QTableWidget()
         self.sensitivity_table.setColumnCount(4)
         self.sensitivity_table.setHorizontalHeaderLabels([
-            "Element", "Override", "Manual Slope (cps/ppb)", "Density (g/cm³)"
+            "Isotope", "Override", "Manual Slope (cps/ppb)", "Density (g/cm³)"
         ])
         self.sensitivity_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.sensitivity_table.setAlternatingRowColors(True)
@@ -832,10 +565,11 @@ class IonicCalibrationWindow(QMainWindow):
         calib_controls = QHBoxLayout()
         calib_controls.setSpacing(6)
 
-        calib_controls.addWidget(QLabel("Isotope:"))
+        calib_controls.addWidget(QLabel("Isotope"))
 
-        self.prev_isotope_btn = QPushButton("◀")
-        self.prev_isotope_btn.setFixedSize(26, 26)
+        self.prev_isotope_btn = QToolButton()
+        self.prev_isotope_btn.setAutoRaise(True)
+        self._tool_icons.append((self.prev_isotope_btn, 'fa6s.chevron-left', False))
         self.prev_isotope_btn.setToolTip("Previous isotope")
         self.prev_isotope_btn.clicked.connect(self._go_prev_isotope)
         calib_controls.addWidget(self.prev_isotope_btn)
@@ -846,29 +580,27 @@ class IonicCalibrationWindow(QMainWindow):
         self.element_isotope_combo.currentTextChanged.connect(self.display_selected_calibration)
         calib_controls.addWidget(self.element_isotope_combo)
 
-        self.next_isotope_btn = QPushButton("▶")
-        self.next_isotope_btn.setFixedSize(26, 26)
+        self.next_isotope_btn = QToolButton()
+        self.next_isotope_btn.setAutoRaise(True)
+        self._tool_icons.append((self.next_isotope_btn, 'fa6s.chevron-right', False))
         self.next_isotope_btn.setToolTip("Next isotope")
         self.next_isotope_btn.clicked.connect(self._go_next_isotope)
         calib_controls.addWidget(self.next_isotope_btn)
 
-        sep1 = QFrame()
-        sep1.setFrameShape(QFrame.Shape.VLine)
-        sep1.setFrameShadow(QFrame.Shadow.Sunken)
-        calib_controls.addWidget(sep1)
+        calib_controls.addWidget(self._separator())
 
-        calib_controls.addWidget(QLabel("Method:"))
+        calib_controls.addWidget(QLabel("Method"))
         self.calibration_method_combo = QComboBox()
         self.calibration_method_combo.addItems(['Force through zero', 'Simple linear', 'Weighted', 'Manual'])
         self.calibration_method_combo.setMinimumWidth(130)
         self.calibration_method_combo.currentTextChanged.connect(self.update_calibration_display)
         calib_controls.addWidget(self.calibration_method_combo)
 
-        self.manual_slope_label = QLabel("Slope:")
+        self.manual_slope_label = QLabel("Slope")
         calib_controls.addWidget(self.manual_slope_label)
 
         self.manual_slope_input = QDoubleSpinBox()
-        self.manual_slope_input.setRange(0.0, 1e15)
+        self.manual_slope_input.setRange(1e-4, 1e15)
         self.manual_slope_input.setDecimals(4)
         self.manual_slope_input.setValue(10.0)
         self.manual_slope_input.setSuffix(" cps/ppb")
@@ -888,12 +620,9 @@ class IonicCalibrationWindow(QMainWindow):
 
         self._set_manual_slope_controls_visible(False)
 
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.Shape.VLine)
-        sep2.setFrameShadow(QFrame.Shadow.Sunken)
-        calib_controls.addWidget(sep2)
+        calib_controls.addWidget(self._separator())
 
-        calib_controls.addWidget(QLabel("Apply to All:"))
+        calib_controls.addWidget(QLabel("Apply to all"))
         self.global_method_combo = QComboBox()
         self.global_method_combo.addItems([
             'Auto (Best R²)',
@@ -912,10 +641,7 @@ class IonicCalibrationWindow(QMainWindow):
         apply_global_btn.setToolTip("Apply selected method to all isotopes")
         calib_controls.addWidget(apply_global_btn)
 
-        sep3 = QFrame()
-        sep3.setFrameShape(QFrame.Shape.VLine)
-        sep3.setFrameShadow(QFrame.Shadow.Sunken)
-        calib_controls.addWidget(sep3)
+        calib_controls.addWidget(self._separator())
 
         self.include_all_btn = QPushButton("Include all")
         self.include_all_btn.setToolTip("Clear all exclusions for the current isotope.")
@@ -923,7 +649,7 @@ class IonicCalibrationWindow(QMainWindow):
         calib_controls.addWidget(self.include_all_btn)
 
         self.exclusion_status_label = QLabel("")
-        self.exclusion_status_label.setStyleSheet("color: #888;")
+        self.exclusion_status_label.setObjectName("fbHint")
         calib_controls.addWidget(self.exclusion_status_label)
 
         calib_controls.addStretch()
@@ -1036,218 +762,318 @@ class IonicCalibrationWindow(QMainWindow):
         current = self.tab_widget.currentIndex()
         self.tab_widget.setCurrentIndex((current - 1) % self.tab_widget.count())
 
+    MIN_MANUAL_SLOPE = 1e-6
+
+    def _density_for(self, element, data=None):
+        """Density of *element* from the periodic table, else the record's."""
+        element_data = None
+        if self.periodic_table:
+            element_data = next(
+                (e for e in self.periodic_table.get_elements() if e['symbol'] == element), None)
+        if element_data:
+            return element_data['density']
+        return (data or {}).get('density', 'N/A')
+
+    def _seed_slope(self, isotope_key):
+        """Starting slope for a new manual value: the Simple-linear fit when
+        there is one, else the global manual slope.
+        """
+        data = self.calibration_results.get(isotope_key, {})
+        slope = float(data.get('simple', {}).get('slope', 0.0) or 0.0)
+        if slope > 0:
+            return slope
+        return max(self.global_manual_slope_input.value(), self.MIN_MANUAL_SLOPE)
+
+    def _manual_record(self, isotope_key, slope):
+        """
+        Build the calibration record for a manual slope.
+
+        The line goes through the origin, so the intercept and BEC are 0.
+        LOD and LOQ are derived from the noise of the lowest included
+        standard, exactly as for the fitted methods. R² is NaN: a slope typed
+        by hand is not a fit, and reporting 1.0 would present it as a perfect
+        one. Without calibration data yet, LOD and LOQ are NaN as well.
+
+        Args:
+            isotope_key: Isotope identifier ("Element-mass.xxxx").
+            slope: Manual sensitivity in cps per concentration unit (> 0).
+
+        Returns:
+            dict with slope, intercept, r_squared, y_fit, density, lod, loq, bec.
+        """
+        element = isotope_key.split('-')[0]
+        data = self.calibration_results.get(isotope_key, {})
+        x = np.asarray(data.get('x', []), dtype=float)
+        y_std = np.asarray(data.get('y_std', []), dtype=float)
+        folders = data.get('folders', [])
+
+        if len(x) and len(y_std) == len(x):
+            excluded = self.excluded_points.get(isotope_key, set())
+            included = [i for i, f in enumerate(folders) if f not in excluded] if folders else list(range(len(x)))
+            if not included:
+                included = list(range(len(x)))
+            inc_x = x[included]
+            sigma_blank = float(y_std[included][int(np.argmin(inc_x))])
+            fom = compute_figures_of_merit(slope, 0.0, sigma_blank)
+        else:
+            fom = {'lod': float('nan'), 'loq': float('nan'), 'bec': 0.0}
+
+        return {
+            'slope': float(slope),
+            'intercept': 0.0,
+            'r_squared': float('nan'),
+            'y_fit': (slope * x).tolist() if len(x) else [],
+            'density': self._density_for(element, data),
+            **fom,
+        }
+
+    def apply_manual_slope(self, isotope_key, slope, refresh=True):
+        """
+        Make *slope* the manual calibration of one isotope.
+
+        This is the single path every manual slope goes through, whether it
+        comes from the Manual Sensitivity tab, the inline slope box on the
+        Calibration Results tab, "Apply to all → Manual" or a reloaded
+        session, so the stored line, LOD, LOQ and BEC always belong to the
+        slope shown.
+
+        Args:
+            isotope_key: Isotope identifier ("Element-mass.xxxx").
+            slope: Sensitivity in cps per concentration unit; must be > 0.
+            refresh: Redraw the tables and the plot afterwards.
+
+        Returns:
+            True when applied, False when the slope was rejected.
+        """
+        if not np.isfinite(slope) or slope <= 0:
+            self.statusBar.showMessage("Manual slope must be positive.", 3000)
+            return False
+        record = self._manual_record(isotope_key, slope)
+        self.sensitivity_overrides[isotope_key] = record.copy()
+        if isotope_key in self.calibration_results:
+            self.calibration_results[isotope_key]['manual'] = record
+        self.isotope_method_preferences[isotope_key] = 'Manual'
+        self.data_modified = True
+        if hasattr(self, 'save_action'):
+            self.save_action.setEnabled(True)
+        if refresh:
+            self._refresh_after_manual_change(isotope_key)
+        return True
+
+    def clear_manual_slope(self, isotope_key, refresh=True):
+        """Remove the manual calibration of one isotope and fall back to the
+        best fitted method.
+        """
+        self.sensitivity_overrides.pop(isotope_key, None)
+        data = self.calibration_results.get(isotope_key)
+        if data is not None:
+            data.pop('manual', None)
+            if self.isotope_method_preferences.get(isotope_key) == 'Manual':
+                self.isotope_method_preferences[isotope_key] = self._best_fit_display(data)
+        elif self.isotope_method_preferences.get(isotope_key) == 'Manual':
+            self.isotope_method_preferences.pop(isotope_key, None)
+        self.data_modified = True
+        if refresh:
+            self._refresh_after_manual_change(isotope_key)
+
+    @staticmethod
+    def _best_fit_display(data):
+        """Display name of the fitted method with the highest R²."""
+        r_squared_values = {
+            'zero': data.get('zero', {}).get('r_squared', 0),
+            'simple': data.get('simple', {}).get('r_squared', 0),
+            'weighted': data.get('weighted', {}).get('r_squared', 0),
+        }
+        best = max(r_squared_values, key=r_squared_values.get)
+        return {'zero': 'Force through zero', 'simple': 'Simple linear', 'weighted': 'Weighted'}[best]
+
+    def _refresh_after_manual_change(self, isotope_key):
+        """Bring the sensitivity row, results table and plot up to date."""
+        self._sync_sensitivity_row(isotope_key)
+        if self.calibration_results:
+            self.update_results_table()
+            if self.element_isotope_combo.currentText():
+                self.display_selected_calibration(self.element_isotope_combo.currentText())
+
+    def _sensitivity_row(self, isotope_key):
+        """Row of *isotope_key* in the sensitivity table, or -1."""
+        for row in range(self.sensitivity_table.rowCount()):
+            item = self.sensitivity_table.item(row, 0)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == isotope_key:
+                return row
+        return -1
+
+    def _sync_sensitivity_row(self, isotope_key):
+        """Show the stored override state and slope in the isotope's row."""
+        row = self._sensitivity_row(isotope_key)
+        if row < 0:
+            return
+        checkbox = self.sensitivity_table.cellWidget(row, 1)
+        spinbox = self.sensitivity_table.cellWidget(row, 2)
+        override = self.sensitivity_overrides.get(isotope_key)
+        if checkbox is not None:
+            checkbox.blockSignals(True)
+            checkbox.setChecked(override is not None)
+            checkbox.blockSignals(False)
+        if spinbox is not None:
+            spinbox.blockSignals(True)
+            spinbox.setValue(override['slope'] if override else self._seed_slope(isotope_key))
+            spinbox.setEnabled(override is not None)
+            spinbox.blockSignals(False)
+
     def update_sensitivity_table(self):
         """
-        Update the sensitivity table with all selected elements.
-        
-        Populates table rows for each selected isotope with override checkbox,
-        manual slope spinbox, and density information from periodic table.
+        Rebuild the sensitivity table, one row per selected isotope.
+
+        Each row has an Override checkbox and the manual slope. A row without
+        an override shows the slope it would start from (the Simple-linear
+        fit, when calculated), greyed out until Override is ticked.
         """
         self.sensitivity_table.setRowCount(0)
-        
+
         if not self.selected_isotopes:
             return
-            
+
+        unit = self.unit_combo.currentText() if hasattr(self, 'unit_combo') else 'ppb'
+        self.sensitivity_table.setHorizontalHeaderLabels([
+            "Isotope", "Override", f"Manual Slope (cps/{unit})", "Density (g/cm³)"
+        ])
+
         isotope_items = []
         for element, isotopes in self.selected_isotopes.items():
             for isotope in isotopes:
                 element_key = f"{element}-{isotope:.4f}"
                 label = self.get_isotope_label(element, isotope)
                 isotope_items.append((label, element_key, isotope, element))
-        
+
         isotope_items.sort(key=lambda x: x[2])
-        
+
         for label, element_key, isotope, element in isotope_items:
             row = self.sensitivity_table.rowCount()
             self.sensitivity_table.insertRow(row)
-            
+
             element_item = QTableWidgetItem(label)
+            element_item.setData(Qt.ItemDataRole.UserRole, element_key)
             element_item.setFlags(element_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.sensitivity_table.setItem(row, 0, element_item)
-            
+
+            override = self.sensitivity_overrides.get(element_key)
+
             override_checkbox = QCheckBox()
-            override_enabled = element_key in self.sensitivity_overrides
-            override_checkbox.setChecked(override_enabled)
-            override_checkbox.stateChanged.connect(lambda state, ek=element_key: self.on_override_changed(ek, state))
+            override_checkbox.setChecked(override is not None)
+            override_checkbox.setToolTip("Use the manual slope for this isotope instead of a fitted one")
+            override_checkbox.toggled.connect(
+                lambda checked, ek=element_key: self.on_override_changed(ek, checked))
             self.sensitivity_table.setCellWidget(row, 1, override_checkbox)
-            
+
             slope_spinbox = QDoubleSpinBox()
-            slope_spinbox.setRange(0.0, 1e15)
+            slope_spinbox.setRange(self.MIN_MANUAL_SLOPE, 1e15)
             slope_spinbox.setDecimals(6)
-            
-            if element_key in self.sensitivity_overrides:
-                slope_spinbox.setValue(self.sensitivity_overrides[element_key]['slope'])
-            else:
-                slope_spinbox.setValue(10.0)
-            
-            slope_spinbox.setSuffix(" cps/ppb")
-            slope_spinbox.setEnabled(override_enabled)
+            slope_spinbox.setGroupSeparatorShown(True)
+            slope_spinbox.setKeyboardTracking(False)
+            slope_spinbox.setValue(override['slope'] if override else self._seed_slope(element_key))
+            slope_spinbox.setSuffix(f" cps/{unit}")
+            slope_spinbox.setEnabled(override is not None)
             slope_spinbox.valueChanged.connect(lambda value, ek=element_key: self.on_slope_changed(ek, value))
             self.sensitivity_table.setCellWidget(row, 2, slope_spinbox)
-            
-            density_value = "N/A"
-            if self.periodic_table:
-                element_data = next((e for e in self.periodic_table.get_elements() if e['symbol'] == element), None)
-                if element_data:
-                    density_value = f"{element_data['density']:.4f}" if isinstance(element_data['density'], (int, float)) else str(element_data['density'])
-            
+
+            density = self._density_for(element)
+            density_value = f"{density:.4f}" if isinstance(density, (int, float)) else str(density)
             density_item = QTableWidgetItem(density_value)
             density_item.setFlags(density_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.sensitivity_table.setItem(row, 3, density_item)
 
-    def on_override_changed(self, element_key, state):
+    def on_override_changed(self, element_key, checked):
         """
-        Handle override checkbox state changes.
-        
+        Turn the manual slope of one isotope on or off.
+
+        Ticking Override starts the manual slope at the isotope's
+        Simple-linear fit (the global manual slope before any calculation);
+        unticking returns the isotope to the best fitted method.
+
         Args:
-            element_key: Element identifier string (format: "Element-mass.xxxx")
-            state: Qt.Checked or Qt.Unchecked state
+            element_key: Isotope identifier ("Element-mass.xxxx").
+            checked: New state of the Override checkbox.
         """
-        if state == Qt.Checked:
-            if element_key not in self.sensitivity_overrides:
-                for row in range(self.sensitivity_table.rowCount()):
-                    element_item = self.sensitivity_table.item(row, 0)
-                    if element_item:
-                        for element, isotopes in self.selected_isotopes.items():
-                            for isotope in isotopes:
-                                test_key = f"{element}-{isotope:.4f}"
-                                if (test_key == element_key and 
-                                    self.get_isotope_label(element, isotope) == element_item.text()):
-                                    
-                                    slope_spinbox = self.sensitivity_table.cellWidget(row, 2)
-                                    if slope_spinbox:
-                                        slope_value = slope_spinbox.value()
-                                        
-                                        element_data = next((e for e in self.periodic_table.get_elements() if e['symbol'] == element), None)
-                                        density = element_data['density'] if element_data else 'N/A'
-                                        
-                                        self.sensitivity_overrides[element_key] = {
-                                            'slope': slope_value,
-                                            'intercept': 0.0,
-                                            'r_squared': 1.0,
-                                            'lod': 0.0,
-                                            'loq': 0.0,
-                                            'bec': 0.0,
-                                            'density': density
-                                        }
-                                        break
-                        break
-            
-            for row in range(self.sensitivity_table.rowCount()):
-                element_item = self.sensitivity_table.item(row, 0)
-                if element_item:
-                    for element, isotopes in self.selected_isotopes.items():
-                        for isotope in isotopes:
-                            test_key = f"{element}-{isotope:.4f}"
-                            if (test_key == element_key and 
-                                self.get_isotope_label(element, isotope) == element_item.text()):
-                                slope_spinbox = self.sensitivity_table.cellWidget(row, 2)
-                                if slope_spinbox:
-                                    slope_spinbox.setEnabled(True)
-                                break
-        else:
+        if isinstance(checked, int) and not isinstance(checked, bool):
+            checked = Qt.CheckState(checked) == Qt.CheckState.Checked
+        if checked:
             if element_key in self.sensitivity_overrides:
-                del self.sensitivity_overrides[element_key]
-            
-            for row in range(self.sensitivity_table.rowCount()):
-                element_item = self.sensitivity_table.item(row, 0)
-                if element_item:
-                    for element, isotopes in self.selected_isotopes.items():
-                        for isotope in isotopes:
-                            test_key = f"{element}-{isotope:.4f}"
-                            if (test_key == element_key and 
-                                self.get_isotope_label(element, isotope) == element_item.text()):
-                                slope_spinbox = self.sensitivity_table.cellWidget(row, 2)
-                                if slope_spinbox:
-                                    slope_spinbox.setEnabled(False)
-                                break
-        
-        _state_str = 'enabled' if state == Qt.Checked else 'disabled'
+                slope = float(self.sensitivity_overrides[element_key]['slope'])
+            else:
+                slope = self._seed_slope(element_key)
+            if not self.apply_manual_slope(element_key, slope):
+                self._sync_sensitivity_row(element_key)
+        else:
+            self.clear_manual_slope(element_key)
+
+        _state_str = 'enabled' if checked else 'disabled'
         ual = _ual()
         if ual:
             ual.log_action('PARAMETER_CHANGE',
                            f'Manual override {_state_str}: {element_key}',
                            {'element': element_key, 'override': _state_str})
-        self.update_calibration_with_overrides()
-        self.data_modified = True
 
     def on_slope_changed(self, element_key, value):
         """
-        Handle manual slope value changes.
-        
+        Apply an edited manual slope from the sensitivity table.
+
         Args:
-            element_key: Element identifier string
-            value: New slope value in cps/ppb
+            element_key: Isotope identifier.
+            value: New slope in cps per concentration unit.
         """
         if element_key in self.sensitivity_overrides:
-            self.sensitivity_overrides[element_key]['slope'] = value
-            
-            self.update_calibration_with_overrides()
-            self.data_modified = True
+            self.apply_manual_slope(element_key, value)
+
+    def _set_global_slope(self, keys):
+        """Give every isotope in *keys* the global manual slope."""
+        global_slope = self.global_manual_slope_input.value()
+        for key in keys:
+            self.apply_manual_slope(key, global_slope, refresh=False)
+            self._sync_sensitivity_row(key)
+        if self.calibration_results:
+            self.update_results_table()
+            if self.element_isotope_combo.currentText():
+                self.display_selected_calibration(self.element_isotope_combo.currentText())
+        return global_slope
+
+    def _all_isotope_keys(self):
+        return [f"{element}-{isotope:.4f}"
+                for element, isotopes in self.selected_isotopes.items() for isotope in isotopes]
 
     def apply_global_slope_to_all(self):
-        """Apply global slope value to all elements in the sensitivity table."""
-        global_slope = self.global_manual_slope_input.value()
-        
-        for row in range(self.sensitivity_table.rowCount()):
-            slope_spinbox = self.sensitivity_table.cellWidget(row, 2)
-            if slope_spinbox:
-                slope_spinbox.setValue(global_slope)
-        
-        self.statusBar.showMessage(f"Applied slope {global_slope:.2e} to all elements", 3000)
+        """Override every isotope with the global manual slope."""
+        keys = self._all_isotope_keys()
+        slope = self._set_global_slope(keys)
+        self.statusBar.showMessage(f"Manual slope {slope:.4g} applied to {len(keys)} isotopes", 3000)
 
     def apply_global_slope_to_checked(self):
-        """Apply global slope value only to elements with Override checkbox enabled."""
-        global_slope = self.global_manual_slope_input.value()
-        updated_count = 0
-        
-        for row in range(self.sensitivity_table.rowCount()):
-            override_checkbox = self.sensitivity_table.cellWidget(row, 1)
-            if override_checkbox and override_checkbox.isChecked():
-                slope_spinbox = self.sensitivity_table.cellWidget(row, 2)
-                if slope_spinbox:
-                    slope_spinbox.setValue(global_slope)
-                    updated_count += 1
-        
-        self.statusBar.showMessage(f"Applied slope {global_slope:.2e} to {updated_count} checked elements", 3000)
+        """Give the global manual slope to the isotopes already overridden."""
+        keys = [k for k in self._all_isotope_keys() if k in self.sensitivity_overrides]
+        slope = self._set_global_slope(keys)
+        self.statusBar.showMessage(f"Manual slope {slope:.4g} applied to {len(keys)} overridden isotopes", 3000)
 
     def update_calibration_with_overrides(self):
         """
-        Update calibration results with manual sensitivity overrides.
-        
-        Adds or updates manual method data in calibration results for elements
-        with sensitivity overrides, and removes manual data for elements that
-        no longer have overrides.
+        Rebuild the manual records against the current calibration data.
+
+        Called after every (re)calculation: each override keeps its slope,
+        and its line, LOD, LOQ and BEC are recomputed from the new standards.
         """
         if not self.calibration_results:
             return
-            
-        for element_key, override_data in self.sensitivity_overrides.items():
+
+        for element_key, override_data in list(self.sensitivity_overrides.items()):
             if element_key in self.calibration_results:
-                self.calibration_results[element_key]['manual'] = override_data.copy()
-                
-                self.isotope_method_preferences[element_key] = 'Manual'
-        
-        for element_key in list(self.calibration_results.keys()):
-            if (element_key not in self.sensitivity_overrides and 
-                'manual' in self.calibration_results[element_key]):
-                del self.calibration_results[element_key]['manual']
-                
-                if self.isotope_method_preferences.get(element_key) == 'Manual':
-                    data = self.calibration_results[element_key]
-                    r_squared_values = {
-                        'zero': data.get('zero', {}).get('r_squared', 0),
-                        'simple': data.get('simple', {}).get('r_squared', 0),
-                        'weighted': data.get('weighted', {}).get('r_squared', 0)
-                    }
-                    best_method = max(r_squared_values, key=r_squared_values.get)
-                    best_method_display = {
-                        'zero': 'Force through zero',
-                        'simple': 'Simple linear',
-                        'weighted': 'Weighted'
-                    }[best_method]
-                    self.isotope_method_preferences[element_key] = best_method_display
-        
+                self.apply_manual_slope(element_key, float(override_data['slope']), refresh=False)
+
+        for element_key, data in self.calibration_results.items():
+            if element_key not in self.sensitivity_overrides and 'manual' in data:
+                self.clear_manual_slope(element_key, refresh=False)
+
+        for element_key in self._all_isotope_keys():
+            self._sync_sensitivity_row(element_key)
+
         self.update_results_table()
         if self.element_isotope_combo.currentText():
             self.display_selected_calibration(self.element_isotope_combo.currentText())
@@ -1361,38 +1187,240 @@ class IonicCalibrationWindow(QMainWindow):
                             'isotope_count': len(self.calibration_results)})
         self.statusBar.showMessage(f"Applied {global_method} to all isotopes", 3000)
 
+    def _abundance_of(self, element, mass):
+        """Natural abundance (%) of an isotope from the periodic table, or None."""
+        element_data = next((e for e in self.periodic_table.get_elements()
+                             if e['symbol'] == element), None)
+        if not element_data:
+            return None
+        iso = next((i for i in element_data.get('isotopes', [])
+                    if isinstance(i, dict) and abs(i.get('mass', 0) - float(mass)) < 0.001), None)
+        return iso.get('abundance') if iso else None
+
+    def _method_record(self, key, data):
+        """The calibration record of the method in use for *key*."""
+        method_map = {'Force through zero': 'zero', 'Simple linear': 'simple',
+                      'Weighted': 'weighted', 'Manual': 'manual'}
+        method = method_map.get(self.isotope_method_preferences.get(key, ''), 'simple')
+        return method, data.get(method) or data.get('simple', {})
+
+    def compute_checks(self):
+        """
+        Run every calibration check on the current results.
+
+        Returns:
+            list of dicts, one per isotope, with the check results and a
+            ``warnings`` count.
+        """
+        history = self._history()
+        rows, abundance_inputs = [], {}
+        for key, data in sorted(self.calibration_results.items(),
+                                key=lambda kv: float(kv[0].split('-')[1])):
+            element, mass = key.split('-')
+            excluded = self.excluded_points.get(key, set())
+            folders = data.get('folders', [])
+            x = np.asarray(data.get('x', []), float)
+            y = np.asarray(data.get('y', []), float)
+            y_std = np.asarray(data.get('y_std', []), float)
+            keep = np.array([f not in excluded for f in folders], bool) if len(folders) == len(x) else np.ones(len(x), bool)
+            xi, yi, si = x[keep], y[keep], (y_std[keep] if len(y_std) == len(x) else None)
+            method, record = self._method_record(key, data)
+            slope = float(record.get('slope', float('nan')))
+            if method == 'manual':
+                unc = {'se': float('nan'), 'ci95': float('nan')}
+            else:
+                unc = sensitivity_checks.slope_uncertainty(xi, yi, si, method)
+            abundance = self._abundance_of(element, float(mass))
+            abundance_inputs[key] = (element, slope, abundance)
+            rows.append({
+                'key': key,
+                'label': self.get_isotope_label(element, float(mass)),
+                'method': method,
+                'slope': slope,
+                'ci95': unc['ci95'],
+                'linearity': sensitivity_checks.linearity_check(xi, yi),
+                'drift': self._drift_check(data, keep),
+                'blank': sensitivity_checks.blank_source(xi),
+                'history': history.compare(key, slope),
+            })
+        abundance = sensitivity_checks.abundance_check(abundance_inputs)
+        for row in rows:
+            row['abundance'] = abundance.get(row['key'])
+            row['warnings'] = sum(
+                1 for k in ('linearity', 'drift', 'history', 'abundance')
+                if row[k] and row[k]['flag']) + (1 if row['blank'] and not row['blank']['is_blank'] else 0)
+        return rows
+
+    @staticmethod
+    def _drift_check(data, keep):
+        """Repeated-standard drift on the uncorrected signals; not flagged
+        when drift correction was applied to this isotope.
+        """
+        y = np.asarray(data.get('y_raw', data.get('y', [])), float)
+        x = np.asarray(data.get('x', []), float)
+        if len(y) != len(x) or len(keep) != len(x):
+            return None
+        drift = sensitivity_checks.repeat_standard_drift(x[keep], y[keep])
+        if drift and data.get('drift_factors') is not None:
+            drift['corrected'] = True
+            drift['flag'] = False
+        return drift
+
+    def _history(self):
+        if getattr(self, '_sensitivity_history', None) is None:
+            self._sensitivity_history = sensitivity_checks.SensitivityHistory()
+        return self._sensitivity_history
+
+    def run_checks(self, record_history=False):
+        """
+        Run the checks, show the warning count on the Checks button and,
+        after a calculation, add today's slopes to the sensitivity history.
+        """
+        if not self.calibration_results:
+            return []
+        rows = self.compute_checks()
+        if record_history:
+            self._history().record({r['key']: r['slope'] for r in rows if r['method'] != 'manual'})
+        warnings = sum(r['warnings'] for r in rows)
+        self._check_rows = rows
+        self.checks_action.setText(f"Checks ({warnings})" if warnings else "Checks")
+        if warnings:
+            self.statusBar.showMessage(
+                f"Calibration complete — {warnings} check warning(s); open Checks for details", 8000)
+        return rows
+
+    def show_checks(self):
+        """Open the Checks window: one row per isotope, warnings highlighted."""
+        if not self.calibration_results:
+            QMessageBox.information(self, "Checks", "Calculate the calibration first.")
+            return
+        rows = self.run_checks()
+        p = theme.palette
+        unit = self.unit_combo.currentText()
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Calibration Checks")
+        dialog.resize(1280, 560)
+        dialog.setStyleSheet(base_stylesheet(p))
+        layout = QVBoxLayout(dialog)
+        hint = QLabel(
+            f"Flags: top standard more than {sensitivity_checks.LINEARITY_LIMIT_PCT:g}% below the line of the others · "
+            f"isotope more than {sensitivity_checks.ABUNDANCE_LIMIT_PCT:g}% off its element's abundance scaling "
+            "(oxide or isobaric overlap if high) · "
+            f"repeated standard changed more than {sensitivity_checks.DRIFT_LIMIT_PCT:g}% during the run · "
+            "no 0-concentration blank for the LOD noise · "
+            f"slope changed more than {sensitivity_checks.HISTORY_LIMIT_PCT:g}% since the last day saved.")
+        hint.setObjectName("helpInfo")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        headers = ["Isotope", "Method", f"Slope ± 95% CI (cps/{unit})", "vs abundance",
+                   "Top standard", "Repeated standards", "LOD noise from", "vs last day"]
+        table = QTableWidget(len(rows), len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        warn_bg = QBrush(QColor(p.warning_bg))
+
+        def cell(r, c, text, flag=False, tip=""):
+            item = QTableWidgetItem(("⚠ " if flag else "") + text)
+            if flag:
+                item.setBackground(warn_bg)
+            if tip:
+                item.setToolTip(tip)
+            table.setItem(r, c, item)
+
+        names = {'zero': 'Force through zero', 'simple': 'Simple linear',
+                 'weighted': 'Weighted', 'manual': 'Manual'}
+        for r, row in enumerate(rows):
+            cell(r, 0, row['label'])
+            cell(r, 1, names.get(row['method'], row['method']))
+            slope_txt = f"{row['slope']:.4g}"
+            if np.isfinite(row['ci95']):
+                rel = row['ci95'] / row['slope'] * 100 if row['slope'] else float('nan')
+                slope_txt += f" ± {row['ci95']:.2g} ({rel:.1f}%)"
+            cell(r, 2, slope_txt)
+            a = row['abundance']
+            cell(r, 3, f"{a['deviation_pct']:+.1f}%" if a else "—", bool(a and a['flag']),
+                 "Slope per % abundance relative to the median of this element's isotopes")
+            lin = row['linearity']
+            cell(r, 4, (f"{lin['top_deviation_pct']:+.1f}% at {lin['top_x']:g} {unit}; "
+                        f"slope {lin['slope_change_pct']:+.1f}% with it") if lin else "—",
+                 bool(lin and lin['flag']),
+                 "Top standard vs the line of the other standards; consider excluding it if flagged")
+            d = row['drift']
+            cell(r, 5, (f"{d['max_drift_pct']:+.1f}% at {d['at_x']:g} {unit} ({d['repeats']}×)"
+                        + (" · corrected" if d.get('corrected') else "")) if d else "none repeated",
+                 bool(d and d['flag']), "First to last measurement of a standard run more than once")
+            b = row['blank']
+            cell(r, 6, ("blank (0)" if b['is_blank'] else f"lowest standard ({b['x']:g} {unit})") if b else "—",
+                 bool(b and not b['is_blank']),
+                 "Include a 0-concentration standard so LOD and LOQ use the true blank noise")
+            h = row['history']
+            cell(r, 7, f"{h['change_pct']:+.1f}% vs {h['day']}" if h else "no earlier day",
+                 bool(h and h['flag']), "Slope compared with the latest earlier day in the history")
+
+        table.resizeColumnsToContents()
+        table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(table)
+        close = QPushButton("Close")
+        close.setObjectName("fbPrimary")
+        close.clicked.connect(dialog.accept)
+        row_layout = QHBoxLayout()
+        row_layout.addStretch()
+        row_layout.addWidget(close)
+        layout.addLayout(row_layout)
+        dialog.exec()
+
+    def _fit_with_drift(self, x, y, y_std, included_mask, density):
+        """
+        Run the three fits, first correcting the standards for drift when
+        "Drift correction" is on and a standard was measured more than once.
+
+        Signals and their standard deviations are divided by the factor of
+        :func:`sensitivity_checks.drift_factors` (acquisition order = order
+        of the samples in the data table). The uncorrected values are kept
+        as ``y_raw`` / ``y_std_raw`` and the factors as ``drift_factors``.
+        """
+        factors = None
+        if getattr(self, 'drift_action', None) is not None and self.drift_action.isChecked():
+            factors = sensitivity_checks.drift_factors(x, y, included_mask)
+        if factors is None:
+            return run_all_fits_on_subset(x, y, y_std, included_mask, density)
+        result = run_all_fits_on_subset(x, y / factors, y_std / factors, included_mask, density)
+        if result is not None:
+            result['y_raw'] = np.asarray(y, float).tolist()
+            result['y_std_raw'] = np.asarray(y_std, float).tolist()
+            result['drift_factors'] = factors.tolist()
+        return result
+
+    def _on_drift_toggled(self, checked):
+        """Refit with or without drift correction when the toggle changes."""
+        ual = _ual()
+        if ual:
+            ual.log_action('PARAMETER_CHANGE', f'Drift correction {"on" if checked else "off"}')
+        if self.calibration_results:
+            self.calculate_calibration()
+
     def apply_manual_to_all_isotopes(self):
         """
-        Apply manual method to all isotopes by enabling overrides.
-        
-        Creates sensitivity overrides for all selected isotopes using global manual
-        slope value and element densities from periodic table.
+        Switch every selected isotope to a manual slope.
+
+        Isotopes that already have one keep it; the others start from their
+        own Simple-linear fit (the global manual slope when not calculated),
+        so nothing jumps to an arbitrary value.
         """
-        for element, isotopes in self.selected_isotopes.items():
-            for isotope in isotopes:
-                element_key = f"{element}-{isotope:.4f}"
-                
-                if element_key not in self.sensitivity_overrides:
-                    element_data = next((e for e in self.periodic_table.get_elements() if e['symbol'] == element), None)
-                    density = element_data['density'] if element_data else 'N/A'
-                    
-                    slope_value = self.global_manual_slope_input.value()
-                    
-                    self.sensitivity_overrides[element_key] = {
-                        'slope': slope_value,
-                        'intercept': 0.0,
-                        'r_squared': 1.0,
-                        'lod': 0.0,
-                        'loq': 0.0,
-                        'bec': 0.0,
-                        'density': density
-                    }
-                
-                self.isotope_method_preferences[element_key] = 'Manual'
-        
+        for key in self._all_isotope_keys():
+            if key in self.sensitivity_overrides:
+                self.isotope_method_preferences[key] = 'Manual'
+            else:
+                self.apply_manual_slope(key, self._seed_slope(key), refresh=False)
+
         self.update_sensitivity_table()
-        
-        self.update_calibration_with_overrides()
+        if self.calibration_results:
+            self.update_results_table()
+            if self.element_isotope_combo.currentText():
+                self.display_selected_calibration(self.element_isotope_combo.currentText())
 
     def apply_auto_method_selection(self):
         """
@@ -1447,43 +1475,81 @@ class IonicCalibrationWindow(QMainWindow):
 
     def auto_fill_concentrations(self):
         """
-        Automatically fill concentration values based on sample names.
-        
-        Uses pattern matching to extract concentration values from sample names
-        and fills empty or -1 cells in the concentration table.
+        Fill concentrations from the sample names.
+
+        The concentration (or 0 for a blank) is read from each sample name.
+        When the name also names elements that are selected, for example
+        ``Fe_Ce_10ppb``, ``140Ce 5 ppb``, a preset standard such as
+        ``71A_2ppb``, or a list loaded in the periodic table under its file
+        name (``68B-A.txt`` for ``68B-A_1ppb``), only the columns of those elements
+        (every selected isotope of each) get the concentration and the other
+        empty cells get -1, so they are left out of the calibration. A
+        recognised preset standard always restricts the fill to its own
+        elements; a name naming no element fills every column, as for an
+        unnamed multi-element mix. Cells that already hold a value are kept.
         """
         self.ignore_item_changed = True
         filled_count = 0
-        
+        matched_samples = 0
+        elements = self.periodic_table.get_elements() if self.periodic_table else []
+        selected = set(self.selected_isotopes)
+        standards = named_element_lists()
+
+        column_elements = {}
+        for col in range(1, self.table.columnCount()):
+            header = self.table.horizontalHeaderItem(col)
+            key = header.data(Qt.ItemDataRole.UserRole) if header else None
+            if key:
+                column_elements[col] = str(key).split('-')[0]
+
         try:
             for row in range(self.table.rowCount()):
                 file_item = self.table.item(row, 0)
-                if file_item:
-                    sample_name = file_item.text()
-                    concentration = self.extract_concentration_from_sample_name(sample_name)
-                    
-                    if concentration != "-1":
-                        for col in range(1, self.table.columnCount()):
-                            current_item = self.table.item(row, col)
-                            if not current_item or current_item.text() in ["-1", ""]:
-                                self.table.setItem(row, col, QTableWidgetItem(concentration))
-                                filled_count += 1
+                if not file_item:
+                    continue
+                sample_name = file_item.text()
+                concentration = self.extract_concentration_from_sample_name(sample_name)
+                if concentration == "-1":
+                    continue
+
+                in_standard = None
+                if float(concentration) != 0:
+                    named = elements_in_sample_name(sample_name, elements, standards) & selected
+                    if named or standards_in_sample_name(sample_name, standards)[0]:
+                        in_standard = named
+                        matched_samples += 1
+
+                for col in range(1, self.table.columnCount()):
+                    current_item = self.table.item(row, col)
+                    if current_item and current_item.text() not in ("-1", ""):
+                        continue
+                    element = column_elements.get(col)
+                    if in_standard is None or element in in_standard:
+                        value = concentration
+                    else:
+                        value = "-1"
+                    if current_item is None or current_item.text() != value:
+                        self.table.setItem(row, col, QTableWidgetItem(value))
+                        if value != "-1":
+                            filled_count += 1
         finally:
             self.ignore_item_changed = False
             if filled_count > 0:
                 self.data_modified = True
                 self.save_action.setEnabled(True)
-        
+
         ual = _ual()
         if ual:
             ual.log_action('DATA_OP',
                            f'Auto-fill concentrations: {filled_count} cells filled',
-                           {'filled': filled_count})
+                           {'filled': filled_count, 'element_matched_samples': matched_samples})
         if filled_count > 0:
-            self.statusBar.showMessage(f"Auto-filled {filled_count} concentration values", 5000)
+            detail = (f" ({matched_samples} sample(s) filled only for the elements in their name)"
+                      if matched_samples else "")
+            self.statusBar.showMessage(f"Auto-filled {filled_count} concentration values{detail}", 6000)
         else:
             self.statusBar.showMessage("No concentration patterns detected in sample names", 3000)
-        
+
     def filter_results_table(self):
         """
         Filter the results table based on the selected option.
@@ -1572,7 +1638,7 @@ class IonicCalibrationWindow(QMainWindow):
             slope_item = QTableWidgetItem(f"{method_data.get('slope', 0):.2e} cps/{unit}")
             intercept_item = QTableWidgetItem(f"{method_data.get('intercept', 0):.2e} cps")
             bec_item = QTableWidgetItem(f"{method_data.get('bec', 0):.2e} {unit}")
-            r_squared_item = QTableWidgetItem(f"{method_data.get('r_squared', 0):.4f}")
+            r_squared_item = QTableWidgetItem(_r2_text(method_data.get('r_squared', 0), 4))
             density_item = QTableWidgetItem(
                 f"{data.get('density', 'N/A'):.4f}" if isinstance(data.get('density'), (int, float)) else str(data.get('density', 'N/A'))
             )
@@ -1599,7 +1665,7 @@ class IonicCalibrationWindow(QMainWindow):
                 tooltip_text = f"Auto-selected based on highest R² ({method_data.get('r_squared', 0):.4f})"
             else:
                 background_color = status["selected"]
-                tooltip_text = f"Manually selected (R² = {method_data.get('r_squared', 0):.4f})"
+                tooltip_text = f"Manually selected (R² = {_r2_text(method_data.get('r_squared', 0), 4)})"
             
             method_item.setBackground(QBrush(background_color))
             method_item.setForeground(QBrush(status["text"]))
@@ -2066,6 +2132,7 @@ class IonicCalibrationWindow(QMainWindow):
                 "concentration_unit": self.unit_combo.currentText(),
                 "calibration_results": self.calibration_results,
                 "sensitivity_overrides": self.sensitivity_overrides,
+                "drift_correction": self.drift_action.isChecked(),
                 "table_data": self.get_table_data(),
                 "isotope_method_preferences": self.isotope_method_preferences
             }
@@ -2129,6 +2196,9 @@ class IonicCalibrationWindow(QMainWindow):
             self.calibration_results = session_data["calibration_results"]
             self.sensitivity_overrides = session_data.get("sensitivity_overrides", {})
             self.isotope_method_preferences = session_data.get("isotope_method_preferences", {})
+            self.drift_action.blockSignals(True)
+            self.drift_action.setChecked(bool(session_data.get("drift_correction", False)))
+            self.drift_action.blockSignals(False)
 
             self.excluded_points = {}
             for k, rec in (self.calibration_results or {}).items():
@@ -2145,6 +2215,11 @@ class IonicCalibrationWindow(QMainWindow):
                 self.summary_stats_5sec = summary_stats
             
             self.update_element_isotope_combo()
+            for key, override in list(self.sensitivity_overrides.items()):
+                record = self._manual_record(key, float(override.get('slope', 0.0)))
+                self.sensitivity_overrides[key] = record.copy()
+                if key in (self.calibration_results or {}):
+                    self.calibration_results[key]['manual'] = record
             self.update_sensitivity_table()  
             self.update_plot_isotope_combo()
             self.update_sample_combo()
@@ -2821,6 +2896,10 @@ class IonicCalibrationWindow(QMainWindow):
 
         progress.setValue(100)
         self.statusBar.showMessage("Calibration complete", 3000)
+        try:
+            self.run_checks(record_history=True)
+        except Exception:
+            _itk_log.exception("Calibration checks failed")
         
         self.tab_widget.setCurrentIndex(2)
 
@@ -2935,60 +3014,9 @@ class IonicCalibrationWindow(QMainWindow):
                 if (selected_method == 'Manual'
                         and internal_key not in self.sensitivity_overrides
                         and internal_key in self.calibration_results):
-                    import numpy as np
-                    data = self.calibration_results[internal_key]
-                    seed_slope = float(
-                        data.get('simple', {}).get('slope', 10.0))
-                    if seed_slope <= 0:
-                        seed_slope = 10.0
-
-                    element_sym = internal_key.split('-')[0]
-                    element_data = next(
-                        (e for e in self.periodic_table.get_elements()
-                         if e['symbol'] == element_sym),
-                        None
-                    )
-                    density = (element_data['density']
-                               if element_data
-                               else data.get('density', 'N/A'))
-
-                    x = np.asarray(data.get('x', []), dtype=float)
-                    y_std = np.asarray(data.get('y_std', []), dtype=float)
-                    y_fit_list = (seed_slope * x).tolist() if len(x) else []
-
-                    if len(x) and len(y_std) == len(x):
-                        excluded = self.excluded_points.get(
-                            internal_key, set())
-                        folders = data.get('folders', [])
-                        included = [i for i, f in enumerate(folders)
-                                    if f not in excluded]
-                        if included:
-                            inc_x = x[included]
-                            inc_std = y_std[included]
-                            sigma_blank = float(
-                                inc_std[int(np.argmin(inc_x))])
-                        else:
-                            sigma_blank = float(
-                                y_std[int(np.argmin(x))])
-                    else:
-                        sigma_blank = 0.0
-
-                    fom = compute_figures_of_merit(
-                        seed_slope, 0.0, sigma_blank)
-
-                    manual_record = {
-                        'slope':     seed_slope,
-                        'intercept': 0.0,
-                        'r_squared': 1.0,
-                        'y_fit':     y_fit_list,
-                        'density':   density,
-                        **fom,
-                    }
-                    self.sensitivity_overrides[internal_key] = \
-                        manual_record.copy()
-                    self.calibration_results[internal_key]['manual'] = \
-                        manual_record
-                    self.update_sensitivity_table()
+                    self.apply_manual_slope(
+                        internal_key, self._seed_slope(internal_key), refresh=False)
+                    self._sync_sensitivity_row(internal_key)
 
                 self.method_preference_changed.emit(self.isotope_method_preferences)
 
@@ -3174,7 +3202,7 @@ class IonicCalibrationWindow(QMainWindow):
                     self.results_table.setItem(row, 2, QTableWidgetItem(f"{method_data.get('slope', 0):.2e} cps/{unit}"))
                     self.results_table.setItem(row, 3, QTableWidgetItem(f"{method_data.get('intercept', 0):.2e} cps"))
                     self.results_table.setItem(row, 4, QTableWidgetItem(f"{method_data.get('bec', 0):.2e} {unit}"))
-                    self.results_table.setItem(row, 5, QTableWidgetItem(f"{method_data.get('r_squared', 0):.4f}"))
+                    self.results_table.setItem(row, 5, QTableWidgetItem(_r2_text(method_data.get('r_squared', 0), 4)))
                     self.results_table.setItem(row, 6, QTableWidgetItem(
                         f"{data.get('density', 'N/A'):.4f}" if isinstance(data.get('density'), (int, float)) else str(data.get('density', 'N/A'))
                     ))
@@ -3229,7 +3257,7 @@ class IonicCalibrationWindow(QMainWindow):
         self.results_table.setItem(0, 2, QTableWidgetItem(f"{method_data.get('slope', 0):.6e} cps/{unit}"))
         self.results_table.setItem(0, 3, QTableWidgetItem(f"{method_data.get('intercept', 0):.6e} cps"))
         self.results_table.setItem(0, 4, QTableWidgetItem(f"{method_data.get('bec', 0):.6e} {unit}"))
-        self.results_table.setItem(0, 5, QTableWidgetItem(f"{method_data.get('r_squared', 0):.6f}"))
+        self.results_table.setItem(0, 5, QTableWidgetItem(_r2_text(method_data.get('r_squared', 0), 6)))
         self.results_table.setItem(0, 6, QTableWidgetItem(f"{data.get('density', 'N/A'):.4f}" if isinstance(data.get('density'), (int, float)) else str(data.get('density', 'N/A'))))
         self.results_table.setItem(0, 7, QTableWidgetItem(f"{method_data.get('lod', 0):.6e} {unit}"))
         self.results_table.setItem(0, 8, QTableWidgetItem(f"{method_data.get('loq', 0):.6e} {unit}"))
@@ -3276,8 +3304,8 @@ class IonicCalibrationWindow(QMainWindow):
             return False
 
         x     = np.asarray(data.get('x', []),     dtype=float)
-        y     = np.asarray(data.get('y', []),     dtype=float)
-        y_std = np.asarray(data.get('y_std', []), dtype=float)
+        y     = np.asarray(data.get('y_raw', data.get('y', [])),     dtype=float)
+        y_std = np.asarray(data.get('y_std_raw', data.get('y_std', [])), dtype=float)
         folders = data.get('folders', [])
 
         if len(x) == 0 or not folders:
@@ -3289,8 +3317,7 @@ class IonicCalibrationWindow(QMainWindow):
 
         density = data.get('density', 'N/A')
 
-        new_result = run_all_fits_on_subset(
-            x, y, y_std, included_mask, density)
+        new_result = self._fit_with_drift(x, y, y_std, included_mask, density)
         if new_result is None:
             return False
 
@@ -3454,12 +3481,8 @@ class IonicCalibrationWindow(QMainWindow):
         self.on_manual_slope_changed()
 
     def on_manual_slope_changed(self):
-        """Apply the inline manual slope to the current isotope.
-
-        Computes y_fit = slope · x (intercept ≡ 0 for a manual slope),
-        re-derives LOD / LOQ / BEC from the stored y_std, stores the
-        result in both calibration_results[key]['manual'] and
-        sensitivity_overrides[key], and redraws the plot + results table.
+        """Apply the inline manual slope to the isotope shown on the
+        Calibration Results tab, then redraw the plot and the tables.
         """
         if not hasattr(self, 'calibration_method_combo'):
             return
@@ -3473,71 +3496,11 @@ class IonicCalibrationWindow(QMainWindow):
         if not isotope_key or isotope_key not in self.calibration_results:
             return
 
-        slope = float(self.manual_slope_input.value())
-        if slope <= 0:
-            self.statusBar.showMessage(
-                "Manual slope must be positive.", 3000)
-            return
-
-        import numpy as np
-        data = self.calibration_results[isotope_key]
-        x = np.asarray(data.get('x', []), dtype=float)
-        y_std = np.asarray(data.get('y_std', []), dtype=float)
-        folders = data.get('folders', [])
-
-        if len(x) == 0:
-            return
-
-        y_fit = (slope * x).tolist()
-
-        excluded = self.excluded_points.get(isotope_key, set())
-        included = [i for i, f in enumerate(folders) if f not in excluded]
-        if included and len(y_std) == len(x):
-            inc_x = x[included]
-            inc_std = y_std[included]
-            sigma_blank = float(inc_std[int(np.argmin(inc_x))])
-        elif len(y_std) > 0:
-            sigma_blank = float(np.min(y_std))
-        else:
-            sigma_blank = 0.0
-
-        fom = compute_figures_of_merit(slope, 0.0, sigma_blank)
-
-        element = isotope_key.split('-')[0]
-        element_data = next(
-            (e for e in self.periodic_table.get_elements()
-             if e['symbol'] == element),
-            None
-        )
-        density = (element_data['density']
-                   if element_data else data.get('density', 'N/A'))
-
-        manual_record = {
-            'slope':     slope,
-            'intercept': 0.0,
-            'r_squared': 1.0,
-            'y_fit':     y_fit,
-            'density':   density,
-            **fom,
-        }
-
-        self.calibration_results[isotope_key]['manual'] = manual_record
-        self.sensitivity_overrides[isotope_key] = manual_record.copy()
-        self.isotope_method_preferences[isotope_key] = 'Manual'
-        self.data_modified = True
-        if hasattr(self, 'save_action'):
-            self.save_action.setEnabled(True)
-
-
-        if hasattr(self, 'sensitivity_table'):
-            try:
-                self.update_sensitivity_table()
-            except Exception:
-                _itk_log.exception("Handled exception in on_manual_slope_changed")
-
-        element, mass = isotope_key.split('-')
-        self.display_calibration(element, float(mass))
-        self.update_results_table()
+        if self.apply_manual_slope(isotope_key, float(self.manual_slope_input.value()), refresh=False):
+            self._sync_sensitivity_row(isotope_key)
+            element, mass = isotope_key.split('-')
+            self.display_calibration(element, float(mass))
+            self.update_results_table()
 
     # ------------------------------------------------------------------ #
     # Isotope navigation (Ctrl+Left / Ctrl+Right)
@@ -3717,7 +3680,7 @@ class IonicCalibrationWindow(QMainWindow):
                     included_mask = np.array(
                         [f not in excluded_folders for f in folders_list])
 
-                    isotope_result = run_all_fits_on_subset(
+                    isotope_result = self._fit_with_drift(
                         x, y, y_std, included_mask, density)
                     if isotope_result is None:
         
@@ -3744,7 +3707,7 @@ class IonicCalibrationWindow(QMainWindow):
         dialog.setMinimumWidth(500)
         dialog.setMinimumHeight(400)
 
-        dialog.setStyleSheet(_build_ionic_qss(theme.palette))
+        dialog.setStyleSheet(base_stylesheet(theme.palette))
         layout = QVBoxLayout(dialog)
         
         instruction = QLabel("Choose your data source type:")

@@ -18,6 +18,7 @@ from loading.data_thread import DataProcessThread
 
 
 from calibration_methods.te_common import (
+    section_stylesheet,
     DETECTION_METHODS, DEFAULT_DETECTION_PARAMS,
     export_table_to_csv, populate_detection_row,
     read_detection_row, apply_global_method, plot_detection_results,
@@ -171,39 +172,7 @@ class NumberMethodWidget(QMainWindow):
         """Re-apply the themed stylesheet and refresh dynamic labels."""
         p = theme.palette
 
-        section_qss = f"""
-            QWidget#collapsibleHeader {{
-                background-color: {p.accent}18;
-                border-radius: 6px;
-                border-left: 3px solid {p.accent};
-            }}
-            QWidget#collapsibleHeader:hover {{
-                background-color: {p.accent}28;
-            }}
-            QLabel#collapsibleArrow {{
-                color: {p.accent};
-                font-size: 10px;
-                font-weight: bold;
-            }}
-            QLabel#collapsibleTitle {{
-                color: {p.text_primary};
-                font-weight: 700;
-                font-size: 13px;
-                letter-spacing: 0.3px;
-            }}
-            QLabel#collapsibleStatus {{
-                color: {p.accent};
-                font-size: 11px;
-            }}
-            QLabel#panelHeader {{
-                color: {p.text_primary};
-                font-weight: 700;
-                font-size: 12px;
-                padding-bottom: 4px;
-                border-bottom: 1px solid {p.accent}40;
-            }}
-        """
-        self.setStyleSheet(base_stylesheet(p) + section_qss)
+        self.setStyleSheet(base_stylesheet(p) + section_stylesheet(p))
         for attr in ("plot_widget",):
             w = getattr(self, attr, None)
             if w is not None:
@@ -408,6 +377,7 @@ class NumberMethodWidget(QMainWindow):
         layout.addWidget(self.detection_params_table)
 
         self.detect_button = QPushButton("Detect Particles for All Samples")
+        self.detect_button.setObjectName("fbPrimary")
         self.detect_button.clicked.connect(self.detect_particles_all_samples)
         self.detect_button.setMinimumHeight(40)
         self.detect_button.setEnabled(False)
@@ -526,6 +496,7 @@ class NumberMethodWidget(QMainWindow):
         auto_fill_btn = QPushButton("Auto-fill from Detection")
         auto_fill_btn.clicked.connect(self.auto_fill_calibration_data)
         calc_btn = QPushButton("Calculate Transport Rates")
+        calc_btn.setObjectName("fbPrimary")
         calc_btn.clicked.connect(self.calculate_transport_rates)
         calc_btn.setMinimumHeight(36)
         btn_row.addWidget(auto_fill_btn)
