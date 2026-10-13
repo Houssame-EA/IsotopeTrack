@@ -19,6 +19,11 @@ Reusable dialogs, tables, and UI widgets.
 
 **1** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **9** methods
 
+### [`frozen_column.py`](frozen-column.md)
+Keep the first columns of a table in place while it scrolls sideways.
+
+**2** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **11** methods
+
 ### [`interference_database.py`](interference-database.md)
 ICP-MS Interference Database for spICP-ToF-MS
 
@@ -37,7 +42,7 @@ Isobaric Correction dialog — calculator-style equation editor.
 ### [`periodic_table_widget.py`](periodic-table-widget.md)
 
 
-**4** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **59** methods
+**4** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **59** methods
 
 ### [`help_dialogs.py`](help-dialogs.md)
 

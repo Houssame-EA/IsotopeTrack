@@ -81,3 +81,4 @@ The saved setting can be ``'light'``, ``'dark'``, or ``'system'``
 | `export_dialog_qss` | `(p: Palette) → str` | Styling for pyqtgraph's plot-export dialogs (item picker and Save As). |
 | `tier_colors` | `(p: Palette) → dict` | Returns a dict mapping tier name -> QColor-compatible hex string. |
 | `html_table_css` | `(p: Palette) → str` | CSS block for HTML tables rendered inside QLabel/QTextEdit via RichText. |
+| `app_qss` | `(p: Palette) → str` | The shared IsotopeTrack window stylesheet, in the Figure Builder's look. |

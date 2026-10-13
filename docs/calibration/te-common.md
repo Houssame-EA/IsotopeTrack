@@ -28,9 +28,11 @@ Custom delegate that restricts table-cell editing to numeric values.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `base_stylesheet` | `(p) → str` | Full base stylesheet for calibration/TE windows, built from a |
-| `preview_styles` | `(p) → dict` | Return the four preview-label stylesheet strings tinted for the |
-| `return_button_style` | `(p) → str` | Stylesheet for the 'Back to Main' button.  In light mode it keeps |
+| `base_stylesheet` | `(p) → str` | Stylesheet for the calibration and transport-rate windows. |
+| `section_stylesheet` | `(p) → str` | Rules for the collapsible sections and panel headers of the TE windows. |
+| `preview_styles` | `(p) → dict` | Stylesheets for the result-preview label, keyed 'default', 'error', |
+| `return_button_style` | `(p) → str` | Stylesheet for the 'Back to Main' button of the calibration windows. |
+| `return_button_icon_color` | `(p) → str` | Colour of the house icon on the 'Back to Main' button. |
 | `show_data_source_dialog` | `(parent=None)` | Show the "Select Data Source" popup and return the user's choice. |
 | `snr_to_color` | `(ratio, palette=None)` | Map a signal-to-noise ratio to a QColor for table row highlighting. |
 | `create_scrollable_container` | `(parent_layout=None, spacing=15)` | Build a QScrollArea wrapping a container QWidget with a QVBoxLayout. |
@@ -52,3 +54,5 @@ Custom delegate that restricts table-cell editing to numeric values.
 | `compute_figures_of_merit` | `(slope, intercept, sigma_blank)` | Compute analytical figures of merit from regression results. |
 | `run_all_fits_on_subset` | `(x, y, y_std, included_mask, density)` | Run the three calibration fits on the subset of points selected by |
 | `compute_outlier_indices` | `(y, y_fit, included_mask, z_threshold=1.5)` | Flag included points whose standardized residual exceeds ``z_threshold``. |
+| `standards_in_sample_name` | `(sample_name, presets)` | Named multi-element standards (preset lists) found in a sample name. |
+| `elements_in_sample_name` | `(sample_name, elements, presets=None)` | Elements named in a calibration sample name. |

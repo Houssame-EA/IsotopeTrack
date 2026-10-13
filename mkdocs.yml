@@ -127,6 +127,7 @@ nav:
     - "TE_number.py": calibration/te-number.md
     - "calibration_registry.py": calibration/calibration-registry.md
     - "ionic_CAL.py": calibration/ionic-cal.md
+    - "sensitivity_checks.py": calibration/sensitivity-checks.md
     - "te_common.py": calibration/te-common.md
 - Canvas & Shared:
     - Overview: canvas_shared/index.md
@@ -194,6 +195,7 @@ nav:
     - "batch_parameters.py": widgets_ui/batch-parameters.md
     - "calibration_info.py": widgets_ui/calibration-info.md
     - "drag_table.py": widgets_ui/drag-table.md
+    - "frozen_column.py": widgets_ui/frozen-column.md
     - "interference_database.py": widgets_ui/interference-database.md
     - "isobaric_correction_dialog.py": widgets_ui/isobaric-correction-dialog.md
     - "numeric_table.py": widgets_ui/numeric-table.md
