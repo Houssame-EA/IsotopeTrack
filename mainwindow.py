@@ -17,7 +17,7 @@ from PySide6.QtGui import QGuiApplication
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtGui import QColor, QBrush, QAction, QActionGroup, QKeySequence
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QWidget, QFrame
 import tools.dilution_utils
 import utils.dilution
 import utils.signal_stats
@@ -39,6 +39,7 @@ from save_export.project_manager import ProjectManager
 from widget.canvas_widgets import CanvasResultsDialog
 from loading.SIA_manager import SingleIonDistributionManager
 import qtawesome as qta
+from widget.theme_switch import ThemeSwitch
 from tools.signal_selector_dialog import SignalSelectorDialog
 import utils.isobaric_correction as isobaric
 from tools.logging_utils import logging_manager, log_user_action, set_current_window
@@ -58,6 +59,8 @@ from tools.theme import (
     theme_toggle_button_qss,
     sidebar_toggle_button_qss,
     primary_button_qss,
+    secondary_action_button_qss,
+    view_switch_qss,
     progress_bar_qss,
     groupbox_qss,
     summary_label_qss,
@@ -1229,12 +1232,10 @@ class MainWindow(QMainWindow):
         for item, icon_name in getattr(self, '_menu_icon_items', []):
             item.setIcon(qta.icon(icon_name, color=p.text_primary))
 
-        # --- Theme toggle button (sun / moon) ------------------------------
+        # --- Theme switch (sliding sun / moon) -----------------------------
         if hasattr(self, 'theme_toggle_button'):
-            icon_name = 'fa6s.sun' if theme.is_dark else 'fa6s.moon'
-            self.theme_toggle_button.setIcon(qta.icon(icon_name, color=p.accent))
-            self.theme_toggle_button.setIconSize(QSize(18, 18))
-            self.theme_toggle_button.setStyleSheet(theme_toggle_button_qss(p))
+            self.theme_toggle_button.set_palette(p)
+            self.theme_toggle_button.set_dark(theme.is_dark)
             self.theme_toggle_button.setToolTip(
                 "Switch to light mode" if theme.is_dark else "Switch to dark mode"
             )
@@ -1248,18 +1249,8 @@ class MainWindow(QMainWindow):
             self.info_button.setStyleSheet(info_button_qss(p))
 
         if hasattr(self, '_view_btn_time') and hasattr(self, '_view_btn_mz'):
-            _toggle_qss = (
-                f"QPushButton{{"
-                f"background:{p.bg_tertiary};color:{p.text_primary};"
-                f"border:1px solid {p.border};border-radius:4px;"
-                f"padding:3px 14px;font-weight:500;}}"
-                f"QPushButton:hover{{background:{p.bg_hover};"
-                f"border-color:{p.accent};}}"
-                f"QPushButton:checked{{background:{p.accent};"
-                f"color:{p.text_inverse};border:none;font-weight:600;}}"
-            )
-            self._view_btn_time.setStyleSheet(_toggle_qss)
-            self._view_btn_mz.setStyleSheet(_toggle_qss)
+            if hasattr(self, '_view_switch'):
+                self._view_switch.setStyleSheet(view_switch_qss(p))
             if hasattr(self, '_mz_pg_widget'):
                 self._mz_pg_widget.setBackground(p.plot_bg)
                 if getattr(self, '_current_plot_mode', 'time') == 'mz':
@@ -1275,9 +1266,15 @@ class MainWindow(QMainWindow):
             self.parameters_table.setStyleSheet(parameters_table_qss(p))
 
         primary_style = primary_button_qss(p)
+        secondary_style = secondary_action_button_qss(p)
+        main_action = getattr(self, 'detect_button', None)
         for btn, icon_name in getattr(self, '_primary_buttons', []):
-            btn.setStyleSheet(primary_style)
-            btn.setIcon(qta.icon(icon_name, color=p.text_inverse))
+            if btn is main_action:
+                btn.setStyleSheet(primary_style)
+                btn.setIcon(qta.icon(icon_name, color=p.text_inverse))
+            else:
+                btn.setStyleSheet(secondary_style)
+                btn.setIcon(qta.icon(icon_name, color=p.text_primary))
 
         if hasattr(self, 'summary_label'):
             self.summary_label.setStyleSheet(summary_label_qss(p))
@@ -1383,17 +1380,23 @@ class MainWindow(QMainWindow):
                          0,
                          Qt.AlignmentFlag.AlignVCenter)
 
+        self._view_switch = QFrame()
+        self._view_switch.setObjectName("viewSwitch")
+        self._view_switch.setFixedHeight(30)
+        view_switch_layout = QHBoxLayout(self._view_switch)
+        view_switch_layout.setContentsMargins(2, 2, 2, 2)
+        view_switch_layout.setSpacing(2)
         self._view_btn_time = QPushButton("Time")
         self._view_btn_mz = QPushButton("m/z")
         for btn in (self._view_btn_time, self._view_btn_mz):
             btn.setCheckable(True)
-            btn.setFixedHeight(28)
+            btn.setFixedHeight(24)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            view_switch_layout.addWidget(btn)
         self._view_btn_time.setChecked(True)
         self._view_btn_time.clicked.connect(lambda: self.switch_plot_view('time'))
         self._view_btn_mz.clicked.connect(lambda: self.switch_plot_view('mz'))
-        header.addWidget(self._view_btn_time)
-        header.addWidget(self._view_btn_mz)
+        header.addWidget(self._view_switch, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.info_button = QPushButton()
         self.info_button.setIcon(qta.icon('fa6s.circle-info', color=theme.palette.accent))
@@ -1403,12 +1406,12 @@ class MainWindow(QMainWindow):
         self.info_button.clicked.connect(self.toggle_info)
         header.addWidget(self.info_button)
 
-        self.theme_toggle_button = QPushButton()
-        self.theme_toggle_button.setFixedSize(28, 28)
-        self.theme_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.theme_toggle_button = ThemeSwitch()
+        self.theme_toggle_button.set_palette(theme.palette)
+        self.theme_toggle_button.set_dark(theme.is_dark)
         self.theme_toggle_button.setToolTip("Toggle light / dark mode")
         self.theme_toggle_button.clicked.connect(theme.toggle)
-        header.addWidget(self.theme_toggle_button)
+        header.addWidget(self.theme_toggle_button, 0, Qt.AlignmentFlag.AlignVCenter)
 
         wrapper_layout.addLayout(header)
 

@@ -5297,7 +5297,30 @@ class CanvasResultsDialog(QDialog):
                            {'dialog': 'CanvasResultsDialog'})
 
     def _apply_chrome_theme(self):
-        self.setStyleSheet(_canvas_chrome_style())
+        """Re-style the dialog chrome and its header controls for the current theme.
+
+        The header buttons and title carry their own stylesheets, so they are
+        re-applied here too; otherwise they keep the colours of the theme
+        that was active when the window opened.
+        """
+        try:
+            self.setStyleSheet(_canvas_chrome_style())
+            for btn in getattr(self, '_tool_buttons', []):
+                btn.setStyleSheet(self._tool_btn_style())
+            logo = getattr(self, '_logo', None)
+            if logo is not None:
+                logo.setStyleSheet(self._logo_style())
+            sep = getattr(self, '_header_sep', None)
+            if sep is not None:
+                sep.setStyleSheet(f"background: {_app_theme.palette.border}; margin: 8px 12px;")
+        except RuntimeError:
+            pass
+
+    @staticmethod
+    def _logo_style():
+        return (f"color: {_app_theme.palette.text_primary};"
+                f" font-size: 16px; font-weight: 700;"
+                f" font-family: '{DS.FONT_FAMILY}';")
 
     def _build(self):                          
         root = QVBoxLayout(self)
@@ -5312,11 +5335,8 @@ class CanvasResultsDialog(QDialog):
         hl.setContentsMargins(16, 0, 16, 0)
     
         logo = QLabel("◆  Workflow Builder")
-        logo.setStyleSheet(
-            f"color: {_app_theme.palette.text_primary};"
-            f" font-size: 16px; font-weight: 700;"
-            f" font-family: '{DS.FONT_FAMILY}';"
-        )
+        self._logo = logo
+        logo.setStyleSheet(self._logo_style())
         hl.addWidget(logo)
         hl.addStretch()
     
@@ -5352,8 +5372,10 @@ class CanvasResultsDialog(QDialog):
     
         sep = QFrame()
         sep.setFixedWidth(1)
-        sep.setStyleSheet(f"background: {DS.BORDER}; margin: 8px 12px;")
+        self._header_sep = sep
+        sep.setStyleSheet(f"background: {_app_theme.palette.border}; margin: 8px 12px;")
         hl.addWidget(sep)
+        self._tool_buttons = [zm, zp, fit]
     
   
         self._insights_btn = None  
