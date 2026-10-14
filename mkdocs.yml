@@ -105,6 +105,7 @@ nav:
     - Overview: loading/index.md
     - "SIA_manager.py": loading/sia-manager.md
     - "data_thread.py": loading/data-thread.md
+    - "sia_stats.py": loading/sia-stats.md
     - "tofwerk_loading.py": loading/tofwerk-loading.md
     - "vitesse_loading.py": loading/vitesse-loading.md
 - Project & I/O:
@@ -200,6 +201,7 @@ nav:
     - "isobaric_correction_dialog.py": widgets_ui/isobaric-correction-dialog.md
     - "numeric_table.py": widgets_ui/numeric-table.md
     - "periodic_table_widget.py": widgets_ui/periodic-table-widget.md
+    - "theme_switch.py": widgets_ui/theme-switch.md
     - "help_dialogs.py": widgets_ui/help-dialogs.md
     - "tutorial.py": widgets_ui/tutorial.md
     - "element_picker.py": widgets_ui/element-picker.md
@@ -227,6 +229,8 @@ nav:
     - "particle_classifier_expr.py": tools_utilities/particle-classifier-expr.md
     - "particle_classifier_node.py": tools_utilities/particle-classifier-node.md
     - "particle_classifier_relabel.py": tools_utilities/particle-classifier-relabel.md
+    - "particle_classifier_rules.py": tools_utilities/particle-classifier-rules.md
+    - "particle_classifier_simple_dialog.py": tools_utilities/particle-classifier-simple-dialog.md
     - "particle_filter.py": tools_utilities/particle-filter.md
     - "periodic_table_info.py": tools_utilities/periodic-table-info.md
     - "render_settings.py": tools_utilities/render-settings.md

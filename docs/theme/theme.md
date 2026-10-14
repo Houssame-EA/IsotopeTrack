@@ -66,6 +66,8 @@ The saved setting can be ``'light'``, ``'dark'``, or ``'system'``
 | `theme_toggle_button_qss` | `(p: Palette) → str` |  |
 | `sidebar_toggle_button_qss` | `(p: Palette) → str` |  |
 | `primary_button_qss` | `(p: Palette) → str` | Used by batch_edit_button, show_all_signals_button, detect_button. |
+| `secondary_action_button_qss` | `(p: Palette) → str` | Neutral action button, as in the Figure Builder: the one main action |
+| `view_switch_qss` | `(p: Palette) → str` | Segmented two-way switch (e.g. Time \| m/z): one track, the active side |
 | `progress_bar_qss` | `(p: Palette) → str` |  |
 | `groupbox_qss` | `(p: Palette) → str` | Used by plot, control panel, summary group boxes. |
 | `summary_label_qss` | `(p: Palette) → str` |  |

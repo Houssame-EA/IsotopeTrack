@@ -44,6 +44,11 @@ Isobaric Correction dialog — calculator-style equation editor.
 
 **4** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **59** methods
 
+### [`theme_switch.py`](theme-switch.md)
+Sliding light/dark switch for window headers.
+
+**1** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **8** methods
+
 ### [`help_dialogs.py`](help-dialogs.md)
 
 

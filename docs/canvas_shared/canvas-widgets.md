@@ -489,7 +489,8 @@ AI sparkle icon.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, parent=None)` |  |
-| `_apply_chrome_theme` | `(self)` |  |
+| `_apply_chrome_theme` | `(self)` | Re-style the dialog chrome and its header controls for the current theme. |
+| `_logo_style` | `()` |  |
 | `_build` | `(self)` |  |
 | `_update_sel` | `(self, count)` |  |
 | `_tool_btn_style` | `()` |  |

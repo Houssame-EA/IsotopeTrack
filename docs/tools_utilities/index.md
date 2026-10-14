@@ -94,6 +94,16 @@ Particle relabeling logic for the Particle Classifier node (Stage 4).
 
 **0** classes &nbsp;·&nbsp; **11** functions &nbsp;·&nbsp; **0** methods
 
+### [`particle_classifier_rules.py`](particle-classifier-rules.md)
+Groups and rules for the simple Particle Classifier dialog.
+
+**1** classes &nbsp;·&nbsp; **25** functions &nbsp;·&nbsp; **12** methods
+
+### [`particle_classifier_simple_dialog.py`](particle-classifier-simple-dialog.md)
+Simple Particle Classifier dialog, in the shared application look.
+
+**1** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **82** methods
+
 ### [`particle_filter.py`](particle-filter.md)
 Particle Filter node for the Workflow Canvas.
 
