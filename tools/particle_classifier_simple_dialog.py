@@ -28,6 +28,7 @@ stays one click away.
 from __future__ import annotations
 
 import copy as _copy
+import html as _html
 from functools import partial
 
 from PySide6.QtCore import Qt, QTimer
@@ -113,6 +114,7 @@ class SimpleClassifierDialog(QDialog):
 
     _COUNT_DEBOUNCE_MS = 200
     _LABEL_WIDTH = 110
+    _RECIPE_LABEL_WIDTH = 250
 
     def __init__(self, parent, upstreams, definitions=None, groups=None,
                  overlap_mode='double_count', unmatched_mode='unclassified',
@@ -165,6 +167,7 @@ class SimpleClassifierDialog(QDialog):
     def _style(self):
         """Shared application sheet plus the cards, rows and isotope chips."""
         p = _app_theme.palette
+        have_fg = '#9fd0ff' if p.name == 'dark' else p.accent_pressed
         return app_qss(p) + f"""
         QFrame#fbCard, QFrame#fbToolbar {{
             background: {p.bg_secondary};
@@ -194,7 +197,7 @@ class SimpleClassifierDialog(QDialog):
             font-family: "Menlo", "Consolas", monospace;
             font-weight: 700;
         }}
-        QPushButton#chipHave {{ background: {p.accent_soft}; color: {p.accent_pressed}; }}
+        QPushButton#chipHave {{ background: {p.accent_soft}; color: {have_fg}; }}
         QPushButton#chipNot {{ background: rgba(231, 76, 60, 0.14); color: {p.danger}; }}
         QPushButton#chipAny {{
             border: 1px solid transparent;
@@ -259,6 +262,9 @@ class SimpleClassifierDialog(QDialog):
     def _restyle(self, *_a):
         try:
             self.setStyleSheet(self._style())
+            for lbl, name, syntax in getattr(self, '_recipe_labels', []):
+                lbl.setText(self._recipe_label_html(name, syntax))
+            self._update_groups_strip()
         except RuntimeError:
             pass
 
@@ -290,6 +296,33 @@ class SimpleClassifierDialog(QDialog):
         lbl.setObjectName('rowLabel')
         lbl.setFixedWidth(self._LABEL_WIDTH)
         return lbl
+
+    def _recipe_label(self, name, syntax):
+        """Row name with its text syntax in parentheses, e.g. ``Must have (+60Ni)``.
+
+        Args:
+            name (str): Row name.
+            syntax (str): Example in the simple text syntax.
+
+        Returns:
+            QLabel: Label sized to the widest recipe row.
+        """
+        lbl = QLabel(self._recipe_label_html(name, syntax))
+        lbl.setObjectName('rowLabel')
+        lbl.setTextFormat(Qt.RichText)
+        lbl.setFixedWidth(self._RECIPE_LABEL_WIDTH)
+        lbl.setToolTip(f"In the text box: {syntax}")
+        if not hasattr(self, '_recipe_labels'):
+            self._recipe_labels = []
+        self._recipe_labels.append((lbl, name, syntax))
+        return lbl
+
+    @staticmethod
+    def _recipe_label_html(name, syntax):
+        """Rich text for a recipe row name with its syntax in a muted colour."""
+        p = _app_theme.palette
+        return (f'{name} <span style="color:{p.text_muted}; font-weight:400;">'
+                f'({_html.escape(syntax)})</span>')
 
     @staticmethod
     def _section_label(text):
@@ -451,28 +484,28 @@ class SimpleClassifierDialog(QDialog):
         rv.setSpacing(12)
         have = QHBoxLayout()
         have.setSpacing(8)
-        have.addWidget(self._row_label("Must have"))
+        have.addWidget(self._recipe_label("Must have", "+60Ni"))
         self._have_row = QHBoxLayout()
         self._have_row.setSpacing(6)
         have.addLayout(self._have_row, 1)
         rv.addLayout(have)
         any_of = QHBoxLayout()
         any_of.setSpacing(8)
-        any_of.addWidget(self._row_label("At least one of"))
+        any_of.addWidget(self._recipe_label("At least one of", "+60Ni or +52Cr"))
         self._any_row = QHBoxLayout()
         self._any_row.setSpacing(6)
         any_of.addLayout(self._any_row, 1)
         rv.addLayout(any_of)
         one_of = QHBoxLayout()
         one_of.setSpacing(8)
-        one_of.addWidget(self._row_label("Exactly one of"))
+        one_of.addWidget(self._recipe_label("Exactly one of", "oneof(+Ag, +Cu)"))
         self._one_row = QHBoxLayout()
         self._one_row.setSpacing(6)
         one_of.addLayout(self._one_row, 1)
         rv.addLayout(one_of)
         not_have = QHBoxLayout()
         not_have.setSpacing(8)
-        not_have.addWidget(self._row_label("Must not have"))
+        not_have.addWidget(self._recipe_label("Must not have", "−56Fe"))
         self._not_row = QHBoxLayout()
         self._not_row.setSpacing(6)
         not_have.addLayout(self._not_row, 1)
@@ -540,9 +573,12 @@ class SimpleClassifierDialog(QDialog):
 
         result = QFrame()
         result.setObjectName('fbPreview')
-        rh = QHBoxLayout(result)
-        rh.setContentsMargins(14, 10, 14, 10)
+        rv_res = QVBoxLayout(result)
+        rv_res.setContentsMargins(14, 10, 14, 10)
+        rv_res.setSpacing(8)
+        rh = QHBoxLayout()
         rh.setSpacing(10)
+        rv_res.addLayout(rh)
         self._count_lbl = QLabel("–")
         self._count_lbl.setObjectName('countBig')
         rh.addWidget(self._count_lbl)
@@ -556,6 +592,12 @@ class SimpleClassifierDialog(QDialog):
         self._btn_mode = QPushButton("Edit as text")
         self._btn_mode.clicked.connect(self._toggle_text_mode)
         rh.addWidget(self._btn_mode)
+        self._groups_strip = QLabel()
+        self._groups_strip.setObjectName('groupsStrip')
+        self._groups_strip.setTextFormat(Qt.RichText)
+        self._groups_strip.setWordWrap(True)
+        self._groups_strip.setToolTip("Particles per group in this sample")
+        rv_res.addWidget(self._groups_strip)
         v.addWidget(result)
 
         self._editor_widgets = [
@@ -807,10 +849,9 @@ class SimpleClassifierDialog(QDialog):
             w.setEnabled(enabled)
         if group is None:
             self._name_edit.setText("")
-            self._clear_layout(self._have_row)
-            self._clear_layout(self._any_row)
-            self._clear_layout(self._one_row)
-            self._clear_layout(self._not_row)
+            for row in (self._have_row, self._any_row, self._one_row, self._not_row):
+                self._clear_layout(row)
+                row.addStretch(1)
             self._clear_layout(self._rule_tabs_row)
             self._expr_edit.setText("")
             self._text_box.hide()
@@ -876,6 +917,7 @@ class SimpleClassifierDialog(QDialog):
                                ('must_not', self._not_row, 'chipNot')):
             self._clear_layout(row)
             if rule is None:
+                row.addStretch(1)
                 continue
             sign = {'must': '+', 'any': '~', 'one': '\u2460', 'must_not': _MINUS}[kind]
             for iso in rule.get(kind) or []:
@@ -1112,6 +1154,7 @@ class SimpleClassifierDialog(QDialog):
                 if g.get('name') == name:
                     g['color'] = color
         self._refresh_group_list()
+        self._update_groups_strip()
 
     def _add_group(self):
         groups = self._groups()
@@ -1328,7 +1371,37 @@ class SimpleClassifierDialog(QDialog):
         self._update_count_labels()
         self._refresh_combos()
 
+    def _update_groups_strip(self):
+        """Show every group of this sample with its colour and count, then Unclassified."""
+        strip = getattr(self, '_groups_strip', None)
+        if strip is None:
+            return
+        groups = self._groups()
+        if self._sample is None or not groups:
+            strip.setText("")
+            strip.setVisible(False)
+            return
+        p = _app_theme.palette
+        current = self._current_group()
+        parts = []
+        for group in groups:
+            name = (group.get('name') or '').strip() or "(unnamed)"
+            count = self._counts.get((group.get('name') or '').strip(), 0)
+            weight = 700 if group is current else 400
+            parts.append(
+                f'<span style="color:{group.get("color") or "#BDBDBD"}; font-size:14px;">■</span>'
+                f'&nbsp;<span style="color:{p.text_primary}; font-weight:{weight};">'
+                f'{_html.escape(name)}</span>'
+                f'&nbsp;<span style="color:{p.text_secondary};">{count:,}</span>')
+        parts.append(
+            f'<span style="color:{self._unclassified_color}; font-size:14px;">■</span>'
+            f'&nbsp;<span style="color:{p.text_muted};">Unclassified</span>'
+            f'&nbsp;<span style="color:{p.text_secondary};">{self._unmatched:,}</span>')
+        strip.setText('&nbsp;&nbsp;&nbsp;&nbsp;'.join(parts))
+        strip.setVisible(True)
+
     def _update_count_labels(self):
+        self._update_groups_strip()
         if self._sample is None:
             self._unclassified_lbl.setText("")
         else:
