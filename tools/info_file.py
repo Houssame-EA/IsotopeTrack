@@ -69,7 +69,7 @@ def info_palette() -> InfoPalette:
         )
     return InfoPalette(
         bg             = "#f4f5f7",
-        surface        = "#ffffff",
+        surface        = "#f6f8fb",
         border         = "#dde1e7",
         header_bg      = "#1c2b3a",
         header_divider = "#253649",

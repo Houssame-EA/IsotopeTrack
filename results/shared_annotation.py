@@ -1157,7 +1157,7 @@ class _CustomColorButton(QToolButton):
         self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet(
             f"QToolButton {{ "
-            f"  background: white; "
+            f"  background: #f6f8fb; "
             f"  border: 1px dashed rgba(0,0,0,0.35); "
             f"  border-radius: {size // 2}px; "
             f"  color: rgba(0,0,0,0.55); "
@@ -1219,7 +1219,7 @@ class FloatingInspector(QFrame):
                 font-size: 12px; padding: 3px 6px; min-height: 22px;
                 border: 1px solid rgba(0,0,0,0.15);
                 border-radius: 4px;
-                background: white;
+                background: #f6f8fb;
             }
             QLineEdit:focus, QDoubleSpinBox:focus,
             QSpinBox:focus, QComboBox:focus {

@@ -6,11 +6,11 @@ IsotopeTrack.
 from contextlib import contextmanager
 
 from PySide6.QtCore import (Qt, QAbstractTableModel, QModelIndex, QRect,
-                             QEvent, Signal)
-from PySide6.QtGui import QBrush, QColor, QPalette
+                             QRectF, QEvent, Signal)
+from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDoubleSpinBox,
-    QHeaderView, QHBoxLayout, QSpinBox, QStyle, QStyleOptionButton,
+    QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox,
+    QHeaderView, QHBoxLayout, QSpinBox, QStyle,
     QStyledItemDelegate, QTableView, QWidget,
 )
 
@@ -208,12 +208,12 @@ class ParametersModel(QAbstractTableModel):
             return
         d = self._rows[row]
         if bg is not None:
-            if isinstance(bg, QBrush) and not bg.color().isValid():
+            if isinstance(bg, QBrush) and (bg.style() == Qt.NoBrush or not bg.color().isValid()):
                 d.pop('_bg_color', None)
             else:
                 d['_bg_color'] = bg
         if fg is not None:
-            if isinstance(fg, QBrush) and not fg.color().isValid():
+            if isinstance(fg, QBrush) and (fg.style() == Qt.NoBrush or not fg.color().isValid()):
                 d.pop('_fg_color', None)
             else:
                 d['_fg_color'] = fg
@@ -301,38 +301,52 @@ def _apply_edit(d, col, value):
 # Delegate
 # ==============================================================================
 class ParametersDelegate(QStyledItemDelegate):
+    """Paints the parameters table with the application palette.
+
+    Row backgrounds, text and the check boxes are drawn here from
+    :mod:`tools.theme` rather than by the platform style, so the table
+    reads the same on every platform and in light and dark mode.
+    """
 
     def paint(self, painter, option, index):
+        from tools.theme import theme
+        p = theme.palette
         col = index.column()
         self.initStyleOption(option, index)
-
-        style = QApplication.style()
-        style.drawPrimitive(QStyle.PE_PanelItemViewItem, option, painter,
-                            option.widget)
-
         rect = option.rect
         d = index.data(Qt.UserRole) or {}
+        selected = bool(option.state & QStyle.State_Selected)
+
+        painter.save()
+        if selected:
+            painter.fillRect(rect, QColor(p.accent_soft))
+        else:
+            bg = index.data(Qt.BackgroundRole)
+            if isinstance(bg, QBrush) and bg.style() == Qt.NoBrush:
+                bg = None
+            if bg:
+                painter.fillRect(rect, bg if isinstance(bg, QBrush) else QBrush(QColor(bg)))
+            else:
+                alt = index.row() % 2 == 1
+                painter.fillRect(rect, QColor(p.bg_tertiary if alt else p.bg_secondary))
+        painter.restore()
 
         if col in (COL_INCLUDE, COL_ITERATIVE):
             checked = index.data(Qt.CheckStateRole) == Qt.Checked
             self._paint_check(painter, rect, checked, option)
         else:
             text = index.data(Qt.DisplayRole) or ''
-            pal = option.widget.palette() if option.widget else option.palette
 
             painter.save()
-            if option.state & QStyle.State_Selected:
-                painter.setPen(pal.highlightedText().color())
+            fg = None if selected else index.data(Qt.ForegroundRole)
+            if isinstance(fg, QBrush) and fg.style() == Qt.NoBrush:
+                fg = None
+            if fg:
+                painter.setPen(fg.color() if isinstance(fg, QBrush) else QColor(fg))
+            elif _is_cell_disabled(d, col):
+                painter.setPen(QColor(p.text_muted))
             else:
-                fg = index.data(Qt.ForegroundRole)
-                if fg:
-                    painter.setPen(
-                        fg.color() if isinstance(fg, QBrush) else QColor(fg))
-                elif _is_cell_disabled(d, col):
-                    painter.setPen(pal.color(
-                        QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text))
-                else:
-                    painter.setPen(pal.text().color())
+                painter.setPen(QColor(p.text_primary))
 
             painter.drawText(
                 rect.adjusted(4, 0, -4, 0),
@@ -343,15 +357,40 @@ class ParametersDelegate(QStyledItemDelegate):
 
     @staticmethod
     def _paint_check(painter, rect, checked, option):
-        opt = QStyleOptionButton()
-        ind_w = QApplication.style().pixelMetric(QStyle.PM_IndicatorWidth)
-        ind_h = QApplication.style().pixelMetric(QStyle.PM_IndicatorHeight)
-        x = rect.x() + (rect.width()  - ind_w) // 2
-        y = rect.y() + (rect.height() - ind_h) // 2
-        opt.rect  = QRect(x, y, ind_w, ind_h)
-        opt.state = (QStyle.State_Enabled |
-                     (QStyle.State_On if checked else QStyle.State_Off))
-        QApplication.style().drawControl(QStyle.CE_CheckBox, opt, painter)
+        """Draw a rounded check box centred in the cell.
+
+        Args:
+            painter (QPainter): Active painter.
+            rect (QRect): Cell rectangle.
+            checked (bool): Whether the box is ticked.
+            option (QStyleOptionViewItem): Paint options of the cell.
+        """
+        from tools.theme import theme
+        p = theme.palette
+        size = 16
+        box = QRectF(rect.x() + (rect.width() - size) / 2,
+                     rect.y() + (rect.height() - size) / 2, size, size)
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        if checked:
+            painter.setPen(QPen(QColor(p.accent), 1))
+            painter.setBrush(QColor(p.accent))
+        else:
+            painter.setPen(QPen(QColor(p.text_muted), 1))
+            painter.setBrush(QColor(p.bg_secondary))
+        painter.drawRoundedRect(box.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
+        if checked:
+            tick = QPainterPath()
+            tick.moveTo(box.x() + size * 0.25, box.y() + size * 0.52)
+            tick.lineTo(box.x() + size * 0.43, box.y() + size * 0.70)
+            tick.lineTo(box.x() + size * 0.76, box.y() + size * 0.33)
+            pen = QPen(QColor('#ffffff'), 2)
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(tick)
+        painter.restore()
 
     def editorEvent(self, event, model, option, index):
         col = index.column()

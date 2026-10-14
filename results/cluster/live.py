@@ -294,7 +294,8 @@ def _theme_vars():
             "warn": "#d97706", "bad": "#dc2626", "dark": False,
         }
     return {
-        "bg": pal.bg_secondary, "bg2": pal.bg_tertiary, "panel": pal.bg_secondary,
+        "bg": pal.plot_bg if pal.name == "light" else pal.bg_secondary,
+        "bg2": pal.bg_tertiary, "panel": pal.bg_secondary,
         "chip": pal.bg_tertiary, "stroke": pal.border_subtle, "stroke2": pal.border,
         "text": pal.text_primary, "muted": pal.text_muted, "muted2": pal.text_secondary,
         "accent": pal.accent, "accent2": pal.accent_hover, "good": pal.success,

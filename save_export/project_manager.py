@@ -531,6 +531,9 @@ Terminal=false
             mw.sigma_spinbox.blockSignals(True)
             mw.sigma_spinbox.setValue(mw._global_sigma)
             mw.sigma_spinbox.blockSignals(False)
+            sia_manager = getattr(mw, 'sia_manager', None)
+            if sia_manager is not None and hasattr(sia_manager, '_refresh_source_label'):
+                sia_manager._refresh_source_label()
         sigma_mode = getattr(mw, '_sigma_mode', 'global')
         if hasattr(mw, 'sigma_global_radio') and hasattr(mw, 'sigma_per_isotope_radio'):
 

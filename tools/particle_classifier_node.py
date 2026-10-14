@@ -596,14 +596,14 @@ class ParticleClassifierNode(QObject):
         Returns:
             bool: True when the dialog was accepted.
         """
-        from tools.particle_classifier_dialog import ParticleClassifierDialog
+        from tools.particle_classifier_simple_dialog import SimpleClassifierDialog
         # Show the dialog the same effective samples get_output_data emits:
         # every input sample appears distinctly (repeated names disambiguated
         # with " (N)" — see _combined_upstream_dict), so the definitions the
         # user writes target the same sample names the relabel pass will use.
         combined = self._combined_upstream_dict()
         snapshots = [combined] if combined else []
-        dlg = ParticleClassifierDialog(
+        dlg = SimpleClassifierDialog(
             parent_window, snapshots, self.definitions, self.groups,
             self.overlap_mode, self.unmatched_mode, self.unclassified_color,
             self.selected_sources, self.group_pooling_policies,
