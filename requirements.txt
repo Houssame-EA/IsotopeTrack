@@ -38,6 +38,7 @@ urllib3==2.6.3
 certifi==2026.2.25
 charset-normalizer==3.4.5
 idna==3.11
+sentry-sdk==2.72.0
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 python-dateutil==2.9.0.post0

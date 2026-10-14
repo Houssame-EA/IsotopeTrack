@@ -116,6 +116,9 @@ if __name__ == "__main__":
 
     install_dialog_chrome(app)
 
+    from tools.crash_reporting import start_crash_reporting, shutdown_crash_reporting
+    start_crash_reporting()
+
     app.setWindowIcon(QIcon(resource_path("images/isotrack_icon.ico")))
 
     coordinator = SplashCoordinator(main_window_class=MainWindow, cli_parser=cli_parser)
@@ -143,6 +146,7 @@ if __name__ == "__main__":
     except Exception:
         _itk_log.debug("No loky executor to shut down")
 
+    shutdown_crash_reporting()
     logging.shutdown()
     if sys.stdout is not None:
         sys.stdout.flush()
