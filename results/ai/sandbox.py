@@ -38,7 +38,7 @@ from results.ai.figures import (
 
 _itk_log = logging.getLogger("IsotopeTrack.results.ai.sandbox")
 
-CODE_EXEC_TIMEOUT = 45
+CODE_EXEC_TIMEOUT = None
 MAX_STDOUT_CHARS = 20000
 MAX_TABLE_ROWS = 2000
 
@@ -396,6 +396,18 @@ def build_namespace(ds, collector, tables, findings):
         """Column name of a quantity for an element, e.g. ``col('mass', 'Fe')``."""
         return ds.column(quantity, element)
 
+    def signal(sample, element, t0=None, t1=None):
+        """Raw trace of one element in one run: a DataFrame of ``time_s`` and ``counts``."""
+        if ds.acquisition is None:
+            raise RuntimeError("The raw signal is not available for this data")
+        return ds.acquisition.signal(sample, element, t0, t1)
+
+    def sample_summary():
+        """Per-sample results, one row per run and element (particles/mL, ug/L, background, limits)."""
+        if ds.acquisition is None:
+            raise RuntimeError("Per-sample results are not available for this data")
+        return ds.acquisition.summary()
+
     plt = PyplotShim(collector)
     ns = {
         '__builtins__': SAFE_BUILTINS,
@@ -408,6 +420,7 @@ def build_namespace(ds, collector, tables, findings):
         'show_table': show_table, 'record_finding': record_finding,
         'lod': lod, 'col': col, 'element': ds.resolve_element,
         'new_figure': collector.new_figure, 'plt': plt,
+        'signal': signal, 'sample_summary': sample_summary,
     }
     ns.update(FIGURE_NAMESPACE)
     for name, fn in analysis.FUNCTIONS.items():
@@ -450,10 +463,14 @@ def _finish_figures(collector, result):
 def execute(code, ds, timeout=CODE_EXEC_TIMEOUT, stop_event=None):
     """Run generated code against a dataset.
 
+    The code runs until it finishes or *stop_event* is set, as the Stop
+    button does; there is no time limit unless *timeout* is given.
+
     Args:
         code (str): Python written by the model.
         ds (Dataset): The dataset it works on.
-        timeout (float): Seconds before the run is abandoned.
+        timeout (float): Seconds before the run is abandoned, ``None`` for no
+            limit.
         stop_event (threading.Event): Set it from another thread to stop the
             code at its next line, as the Stop button does.
 
@@ -506,8 +523,8 @@ def execute(code, ds, timeout=CODE_EXEC_TIMEOUT, stop_event=None):
 
     worker = threading.Thread(target=run, daemon=True)
     worker.start()
-    deadline = time.monotonic() + timeout
-    while worker.is_alive() and not stop.is_set() and time.monotonic() < deadline:
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while worker.is_alive() and not stop.is_set() and (deadline is None or time.monotonic() < deadline):
         worker.join(timeout=0.05)
     if worker.is_alive() or stop.is_set():
         stopped_by_user = stop.is_set()

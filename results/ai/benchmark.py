@@ -85,6 +85,7 @@ LOD_MASS_FG = {'48Ti': 0.12, '56Fe': 0.15, '140Ce': 0.02, '139La': 0.02,
 QUALITY_WARNINGS = ('is empty', 'overlap', 'has no x-axis label', 'has no y-axis label')
 MAX_FIX_ATTEMPTS = 3
 MAX_FIGURE_FIXES = 1
+EXEC_TIMEOUT_S = 300
 CATEGORIES = ['count', 'stats', 'reasoning', 'figure', 'custom', 'table', 'edit', 'explore']
 
 DATASETS = {
@@ -1435,7 +1436,7 @@ def _chat_turn(messages, system, ds, model, num_ctx, out, results):
         prose = CODE_RE.sub('', reply).strip()
         if not codes:
             return prose
-        batch = [execute(c, ds) for c in codes]
+        batch = [execute(c, ds, EXEC_TIMEOUT_S) for c in codes]
         out.attempts += 1
         errors = [r.error for r in batch if r.error]
         results.extend(r for r in batch if not r.error)
@@ -1587,7 +1588,7 @@ def _ask_explore(question, ds, model, num_ctx):
                                     "Write one line naming the hypothesis, then ONE ```python block — "
                                     "or EXPLORATION DONE."})
                 continue
-            res = execute(m.group(1).strip(), ds)
+            res = execute(m.group(1).strip(), ds, EXEC_TIMEOUT_S)
             out.attempts += 1
             st.ledger.add(res.findings, st.turn)
             st.failures = st.failures + 1 if res.error else 0

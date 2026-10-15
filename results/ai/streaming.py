@@ -426,7 +426,8 @@ class CodeWorker(QThread):
         Args:
             code (str): Python written by the model.
             dataset (Dataset): The data it works on.
-            timeout (float): Seconds allowed, the sandbox default when ``None``.
+            timeout (float): Seconds allowed, ``None`` to run until the code
+                finishes or Stop is pressed.
         """
         super().__init__()
         self.code = code
@@ -440,9 +441,9 @@ class CodeWorker(QThread):
 
     def run(self):
         """Execute the code and hand back the result."""
-        from results.ai.sandbox import CODE_EXEC_TIMEOUT, ExecResult, execute
+        from results.ai.sandbox import ExecResult, execute
         try:
-            res = execute(self.code, self.dataset, self.timeout or CODE_EXEC_TIMEOUT, stop_event=self._stop)
+            res = execute(self.code, self.dataset, self.timeout, stop_event=self._stop)
         except Exception as e:
             _itk_log.exception("Sandbox run failed")
             res = ExecResult(error=f"{type(e).__name__}: {e}")
