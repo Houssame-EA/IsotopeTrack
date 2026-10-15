@@ -192,10 +192,19 @@ def dataset_brief(ds, compact=False):
     lines.append("")
     if ds.concentrations_available():
         lines.append("Concentrations: available — per_ml_factor[sample] converts a particle count to particles/mL.")
+    elif ds.acquisition is not None:
+        lines.append("Concentrations: per_ml_factor is empty; take particles/mL from sample_summary().")
     else:
         lines.append("Concentrations: NOT available — do not report particles/mL.")
     if not lim:
         lines.append("Detection limits: not available (no calibration connected).")
+    acq = ds.acquisition
+    if acq is not None:
+        runs = acq.run_names()
+        shown = ', '.join(runs[: (6 if compact else 20)]) + (' ...' if len(runs) > (6 if compact else 20) else '')
+        lines.append(f"Raw signal and per-sample results: available for {len(runs)} runs ({shown}).")
+    else:
+        lines.append("Raw signal and per-sample results: NOT available — do not call signal() or sample_summary().")
     notes = _interference_notes(ds.elements[:20], 6 if compact else 12)
     if notes:
         lines.append("Known spectral interferences — caveat findings that depend on these masses:")
@@ -222,6 +231,21 @@ elements: labels, most frequent first (e.g. '56Fe'); samples: sample names; runs
 col('size', 'Ti') -> 'diameter_nm_48Ti' (accepts symbols and aliases); element('Fe') -> '56Fe'
 lod('Ti', 'diameter_nm', sample=None) -> calibrated detection limit, or None
 np, pd, math, stats (scipy.stats), Counter are loaded. No imports, no file access."""
+
+_ACQUISITION = """RAW SIGNAL AND PER-SAMPLE RESULTS (from the main window, same numbers as the summary export)
+sample_summary() -> DataFrame, one row per run and element. Columns:
+  sample (after pooling), run (original acquisition), element ('56Fe')
+  particles, particles_per_ml (in the measured solution), particles_per_ml_corrected (x dilution, the original sample)
+  mean_mass_fg, median_mass_fg, total_mass_fg, mean_diameter_nm (element mass of the detected particles)
+  mass_conc_ug_l (particulate element mass concentration, dilution-corrected)
+  mean_signal_counts, signal_sd_counts, signal_rsd_pct, mean_signal_ppb (whole trace: dissolved + particles)
+  background_counts, background_ppt, background_sd_ppt (dissolved / ionic background)
+  threshold_counts (detection threshold), lod_net_counts, mdl_fg, mql_fg, sdl_nm, sql_nm
+  slope_cps_per_ppb, calibration_method, transport_rate_ul_s, dwell_ms, acquisition_s, volume_ml, dilution
+  NaN means the value is not calibrated; never replace it with 0.
+signal(run, 'Fe', t0=None, t1=None) -> DataFrame time_s, counts: the raw trace of one run, one point per dwell time.
+  Pass a run name (sample_summary()['run']); a pooled sample works only when it holds one run.
+  Traces are long: plot with ax.plot(..., lw=0.5) and slice with t0/t1 to zoom in."""
 
 _OUTPUT = """SHOWING RESULTS
 show_table(dataframe_or_dict, title='...')  interactive table; pass analysis results straight in
@@ -288,8 +312,10 @@ def build_system_prompt(ds, num_ctx=8192, mode='chat', max_turns=10):
     """
     compact = int(num_ctx) < COMPACT_BELOW
     class_col = ', class' if ds is not None and len(ds) and 'class' in ds.df.columns else ''
-    parts = [_ROLE, _HOW, _DATA.replace('{class_col}', class_col), _functions_block(compact),
-             _OUTPUT, _FIGURES, _DOMAIN]
+    parts = [_ROLE, _HOW, _DATA.replace('{class_col}', class_col)]
+    if ds is not None and ds.acquisition is not None:
+        parts.append(_ACQUISITION)
+    parts += [_functions_block(compact), _OUTPUT, _FIGURES, _DOMAIN]
     if not compact:
         parts.append(_EXAMPLE)
     if mode == 'explore':

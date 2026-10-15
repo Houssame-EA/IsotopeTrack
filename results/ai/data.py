@@ -50,7 +50,7 @@ QUANTITY_ALIASES = {
 
 LIMIT_KEYS = {'counts': 'counts', 'mass_fg': 'mass', 'diameter_nm': 'd'}
 
-_HIDDEN_CONTEXT_KEYS = ('parent_window', 'particle_data')
+_HIDDEN_CONTEXT_KEYS = ('parent_window', 'particle_data', 'acquisition')
 
 
 def resolve_quantity(name):
@@ -216,6 +216,8 @@ class Dataset:
         self._df = None
         self._limits = None
         self._runs = None
+        self._acquisition = None
+        self._acquisition_done = False
         self._lock = threading.Lock()
         names = list(self.data_context.get('sample_names') or [])
         if not names and self.data_context.get('sample_name'):
@@ -379,6 +381,27 @@ class Dataset:
             if entry:
                 self._limits[label] = entry
         return self._limits
+
+    @property
+    def acquisition(self):
+        """Raw signals and per-sample results, or ``None`` when there are none.
+
+        Returns:
+            results.ai.acquisition.Acquisition | None: The source, from the
+            data context or the main window.
+        """
+        if not self._acquisition_done:
+            from results.ai.acquisition import from_dataset
+            mapping = {}
+            if len(self):
+                mapping = self.df.groupby('run', sort=False)['sample'].first().to_dict()
+            try:
+                self._acquisition = from_dataset(self.data_context, self._parent_window, mapping)
+            except Exception:
+                _itk_log.exception("Could not read the raw signals")
+                self._acquisition = None
+            self._acquisition_done = True
+        return self._acquisition
 
     def set_limits(self, limits):
         """Replace the detection limits, mainly for tests and the benchmark.
