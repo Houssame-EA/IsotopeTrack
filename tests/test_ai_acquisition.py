@@ -30,6 +30,18 @@ class _Table:
         return {'Fe': 7.874, 'Ti': 4.506}.get(symbol)
 
 
+class _Compounds:
+    """Mass fraction service stand-in: Fe is set as Fe2O3 in Lake_A only."""
+
+    def get_mass_fraction(self, element_key, sample_name=None):
+        """Return 0.699 for Fe in Lake_A and 1 otherwise."""
+        return 0.699 if element_key.startswith('Fe') and sample_name == 'Lake_A' else 1.0
+
+    def get_element_density(self, element_key, sample_name=None):
+        """Return the Fe2O3 density for Fe in Lake_A, else nothing."""
+        return 5.24 if element_key.startswith('Fe') and sample_name == 'Lake_A' else None
+
+
 class FakeWindow:
     """The main window stores the assistant reads, with known values."""
 
@@ -62,6 +74,7 @@ class FakeWindow:
             'Lake_B': {('Fe', FE): [{'total_counts': 80.0}]},
         }
         self.periodic_table_info = _Table()
+        self.mass_fraction_service = _Compounds()
 
     def get_formatted_label(self, element_key):
         """Return labels such as ``56Fe``."""
@@ -178,6 +191,63 @@ class TestSummary:
         row = _row(single.acquisition.summary(), 'Lake_A', '56Fe')
         assert math.isnan(row['particles_per_ml']) and math.isnan(row['mass_conc_ug_l'])
         assert row['particles'] == 2
+
+
+class TestCompound:
+    """Element and compound-corrected particle values side by side."""
+
+    def test_summary_has_both(self, single, window):
+        """With Fe2O3 set, particle masses are element masses / 0.699 at the oxide density."""
+        row = _row(single.acquisition.summary(), 'Lake_A', '56Fe')
+        assert row['mass_fraction'] == pytest.approx(0.699)
+        assert row['mean_mass_fg'] == pytest.approx(20.0)
+        assert row['particle_mean_mass_fg'] == pytest.approx(20.0 / 0.699)
+        assert row['particle_total_mass_fg'] == pytest.approx(40.0 / 0.699)
+        assert row['particle_mass_conc_ug_l'] == pytest.approx(row['mass_conc_ug_l'] / 0.699)
+        d = [window.mass_to_diameter(m / 0.699, 5.24) for m in (10.0, 30.0)]
+        assert row['particle_mean_diameter_nm'] == pytest.approx(np.mean(d))
+
+    def test_pure_element_values_match(self, pooled):
+        """Without a compound, particle values equal element values."""
+        row = _row(pooled.acquisition.summary(), 'Lake_B', '56Fe')
+        assert row['mass_fraction'] == 1.0
+        assert row['particle_mean_mass_fg'] == pytest.approx(row['mean_mass_fg'])
+        assert row['particle_mean_diameter_nm'] == pytest.approx(row['mean_diameter_nm'])
+
+    def test_particle_limits_follow_the_compound(self):
+        """lod() on particle mass and diameter is on the corrected scale."""
+        rho, frac = 5.24, 0.7
+        def d(m, r):
+            return ((6 * m * 1e-15) / (np.pi * r)) ** (1 / 3) * 1e7
+        ps = []
+        for i, m in enumerate((2.0, 5.0, 9.0)):
+            ps.append({'start_time': i, 'end_time': i + 0.0005, 'source_sample': 'S',
+                       'elements': {'56Fe': 10.0}, 'element_mass_fg': {'56Fe': m},
+                       'element_diameter_nm': {'56Fe': d(m, 7.874)},
+                       'particle_mass_fg': {'56Fe': m / frac},
+                       'particle_diameter_nm': {'56Fe': d(m / frac, rho)}})
+        ds = Dataset({'type': 'sample_data', 'sample_name': 'S', 'particle_data': ps})
+        ds.set_limits({'56Fe': {'mass_fg': {'S': 1.0}, 'diameter_nm': {'S': d(1.0, 7.874)}}})
+        assert ds.lod('Fe', 'mass_fg') == pytest.approx(1.0)
+        assert ds.lod('Fe', 'particle_mass_fg') == pytest.approx(1.0 / frac)
+        assert ds.lod('Fe', 'particle_diameter_nm') == pytest.approx(d(1.0 / frac, rho))
+
+    def test_particle_columns_filled_for_pure_elements(self, single):
+        """Particles without compound values get particle columns equal to the element ones."""
+        df = single.df
+        assert df['particle_mass_fg_56Fe'].iloc[0] == df['mass_fg_56Fe'].iloc[0]
+        assert single.column('particle_mass_fg', 'Fe') == 'particle_mass_fg_56Fe'
+
+    def test_prompt_defaults_to_element_mass(self, single):
+        """Element mass is the default; the particle mass is opt-in, and the setting flips it."""
+        text = build_system_prompt(single, 16384)
+        assert 'Mass first' in text
+        assert 'Use the element values by default: mass_fg_<el>' in text
+        assert "compare_samples('Ti', 'mass_fg')" in text
+        flipped = build_system_prompt(single, 16384, mass_basis='particle')
+        assert 'Use the particle (compound-corrected) values by default' in flipped
+        assert "compare_samples('Ti', 'particle_mass_fg')" in flipped
+        assert '{mq}' not in text + flipped and '{quantity_rule}' not in text + flipped
 
 
 class TestSignal:

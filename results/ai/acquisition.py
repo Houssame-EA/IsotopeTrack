@@ -35,6 +35,8 @@ SUMMARY_COLUMNS = [
     'particles', 'particles_per_ml', 'particles_per_ml_corrected',
     'mean_mass_fg', 'median_mass_fg', 'total_mass_fg', 'mean_diameter_nm',
     'mass_conc_ug_l',
+    'particle_mean_mass_fg', 'particle_median_mass_fg', 'particle_total_mass_fg',
+    'particle_mean_diameter_nm', 'particle_mass_conc_ug_l', 'mass_fraction',
     'mean_signal_counts', 'signal_sd_counts', 'signal_rsd_pct', 'mean_signal_ppb',
     'background_counts', 'background_ppt', 'background_sd_ppt',
     'threshold_counts', 'lod_net_counts', 'mdl_fg', 'mql_fg', 'sdl_nm', 'sql_nm',
@@ -361,6 +363,38 @@ class WindowAcquisition(Acquisition):
         except Exception:
             return float('nan')
 
+    def _compound(self, key, run, symbol):
+        """Return ``(mass fraction, density)`` of the compound set for an element.
+
+        A pure element has a fraction of 1 and its own density, as in the
+        main window's particle calculation.
+        """
+        service = getattr(self._w, 'mass_fraction_service', None)
+        fraction, density = 1.0, float('nan')
+        if service is not None:
+            try:
+                fraction = _num(service.get_mass_fraction(key, run))
+            except Exception:
+                fraction = 1.0
+            try:
+                density = _num(service.get_element_density(key, run))
+            except Exception:
+                density = float('nan')
+        if not fraction > 0:
+            fraction = 1.0
+        if not density > 0:
+            density = self._density(symbol)
+        return fraction, density
+
+    def _mean_diameter(self, masses, density):
+        """Mean sphere diameter in nm of *masses* at *density*, or NaN."""
+        to_diameter = getattr(self._w, 'mass_to_diameter', None)
+        if not masses.size or not density > 0 or to_diameter is None:
+            return float('nan')
+        d = np.array([to_diameter(m, density) for m in masses], dtype=float)
+        d = d[np.isfinite(d)]
+        return float(np.mean(d)) if d.size else float('nan')
+
     def _acquisition_s(self, run, key):
         """Analyzed acquisition time of a run, exclusions removed."""
         try:
@@ -389,7 +423,6 @@ class WindowAcquisition(Acquisition):
         thresholds = getattr(w, 'element_thresholds', None) or {}
         limits = getattr(w, 'element_limits', None) or {}
         peaks = getattr(w, 'sample_detected_peaks', None) or {}
-        to_diameter = getattr(w, 'mass_to_diameter', None)
         elements = self._elements()
         for run in self._runs:
             dwell_ms = _num(dwell.get(run))
@@ -414,13 +447,10 @@ class WindowAcquisition(Acquisition):
                 masses = np.array([_num(p.get('total_counts')) / factor for p in found], dtype=float) \
                     if factor > 0 else np.array([], dtype=float)
                 masses = masses[np.isfinite(masses) & (masses > 0)]
-                rho = self._density(symbol)
-                diam = float('nan')
-                if masses.size and rho > 0 and to_diameter is not None:
-                    d = np.array([to_diameter(m, rho) for m in masses], dtype=float)
-                    d = d[np.isfinite(d)]
-                    diam = float(np.mean(d)) if d.size else float('nan')
                 total = float(masses.sum()) if masses.size else (0.0 if factor > 0 else float('nan'))
+                fraction, compound_rho = self._compound(key, run, symbol)
+                pmasses = masses / fraction
+                ptotal = total / fraction
                 kept = self._analyzed(run, key, y)
                 mean = float(np.mean(kept)) if kept.size else float('nan')
                 sd = float(np.std(kept, ddof=1)) if kept.size > 1 else float('nan')
@@ -435,8 +465,14 @@ class WindowAcquisition(Acquisition):
                     'mean_mass_fg': float(np.mean(masses)) if masses.size else float('nan'),
                     'median_mass_fg': float(np.median(masses)) if masses.size else float('nan'),
                     'total_mass_fg': total,
-                    'mean_diameter_nm': diam,
+                    'mean_diameter_nm': self._mean_diameter(masses, self._density(symbol)),
                     'mass_conc_ug_l': total / volume * dilution * 1e-6 if volume > 0 else float('nan'),
+                    'particle_mean_mass_fg': float(np.mean(pmasses)) if pmasses.size else float('nan'),
+                    'particle_median_mass_fg': float(np.median(pmasses)) if pmasses.size else float('nan'),
+                    'particle_total_mass_fg': ptotal,
+                    'particle_mean_diameter_nm': self._mean_diameter(pmasses, compound_rho),
+                    'particle_mass_conc_ug_l': ptotal / volume * dilution * 1e-6 if volume > 0 else float('nan'),
+                    'mass_fraction': fraction,
                     'mean_signal_counts': mean,
                     'signal_sd_counts': sd,
                     'signal_rsd_pct': 100.0 * sd / mean if mean > 0 else float('nan'),

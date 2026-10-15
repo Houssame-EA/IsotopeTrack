@@ -131,12 +131,13 @@ def _interference_notes(elements, limit=12):
     return notes
 
 
-def dataset_brief(ds, compact=False):
+def dataset_brief(ds, compact=False, mass_basis='element'):
     """Describe the dataset for the system prompt.
 
     Args:
         ds (Dataset): The dataset.
         compact (bool): Shorter brief for small context windows.
+        mass_basis (str): Which mass and size to list, ``element`` or ``particle``.
 
     Returns:
         str: The brief.
@@ -170,17 +171,20 @@ def dataset_brief(ds, compact=False):
     els = ds.elements[: (12 if compact else 40)]
     lim = ds.limits()
     lines.append("")
-    lines.append("Elements (n, % of particles, median diameter nm, median mass fg, LOD mass fg, LOD size nm):")
+    pre = 'particle_' if mass_basis == 'particle' else ''
+    kind = 'particle values, compound-corrected' if pre else 'element values'
+    lines.append(f"Elements (n, % of particles; {kind}: median mass fg, LOD mass fg, "
+                 "median diameter nm, LOD diameter nm):")
     for el in els:
-        d = df.get(f'diameter_nm_{el}')
-        m = df.get(f'mass_fg_{el}')
+        m = df.get(f'{pre}mass_fg_{el}')
+        d = df.get(f'{pre}diameter_nm_{el}')
         cnt = int(df[f'counts_{el}'].notna().sum()) if f'counts_{el}' in df else 0
-        dmed = float(np.nanmedian(d)) if d is not None and d.notna().any() else None
         mmed = float(np.nanmedian(m)) if m is not None and m.notna().any() else None
-        lm = max((lim.get(el, {}).get('mass_fg') or {0: None}).values(), default=None, key=lambda x: x or 0)
-        ld = max((lim.get(el, {}).get('diameter_nm') or {0: None}).values(), default=None, key=lambda x: x or 0)
-        lines.append(f"  {el:<7} {cnt:>7,} {100.0 * cnt / max(n, 1):5.1f}%  d={_fmt(dmed)}  m={_fmt(mmed)}  "
-                     f"LODm={_fmt(lm)}  LODd={_fmt(ld)}")
+        dmed = float(np.nanmedian(d)) if d is not None and d.notna().any() else None
+        lm = max((lim.get(el, {}).get(f'{pre}mass_fg') or {0: None}).values(), default=None, key=lambda x: x or 0)
+        ld = max((lim.get(el, {}).get(f'{pre}diameter_nm') or {0: None}).values(), default=None, key=lambda x: x or 0)
+        lines.append(f"  {el:<7} {cnt:>7,} {100.0 * cnt / max(n, 1):5.1f}%  m={_fmt(mmed)}  LODm={_fmt(lm)}  "
+                     f"d={_fmt(dmed)}  LODd={_fmt(ld)}")
     if len(ds.elements) > len(els):
         lines.append(f"  ... {len(ds.elements) - len(els)} rarer elements: {', '.join(ds.elements[len(els):][:20])}")
     combos = df.loc[df['n_elements'] > 1, 'combo'].value_counts().head(6 if compact else 12)
@@ -226,18 +230,21 @@ df: pandas DataFrame, one row per particle. Columns:
   sample, run, t_start, t_end (s), duration_ms, n_elements, combo (e.g. '48Ti + 56Fe'), total_mass_fg{class_col}
   per element <el>: counts_<el>, mass_fg_<el>, moles_fmol_<el>, diameter_nm_<el>, mass_pct_<el>, mole_pct_<el>,
                     particle_mass_fg_<el>, particle_diameter_nm_<el> (compound-corrected)
-  NaN means the element was not detected in that particle: df['diameter_nm_48Ti'].dropna()
+  NaN means the element was not detected in that particle: df['particle_mass_fg_48Ti'].dropna()
+{quantity_rule}
 elements: labels, most frequent first (e.g. '56Fe'); samples: sample names; runs: acquisition spans
 col('size', 'Ti') -> 'diameter_nm_48Ti' (accepts symbols and aliases); element('Fe') -> '56Fe'
-lod('Ti', 'diameter_nm', sample=None) -> calibrated detection limit, or None
+lod('Ti', 'mass_fg', sample=None) -> calibrated detection limit on the same scale as that column, or None
 np, pd, math, stats (scipy.stats), Counter are loaded. No imports, no file access."""
 
 _ACQUISITION = """RAW SIGNAL AND PER-SAMPLE RESULTS (from the main window, same numbers as the summary export)
 sample_summary() -> DataFrame, one row per run and element. Columns:
   sample (after pooling), run (original acquisition), element ('56Fe')
   particles, particles_per_ml (in the measured solution), particles_per_ml_corrected (x dilution, the original sample)
-  mean_mass_fg, median_mass_fg, total_mass_fg, mean_diameter_nm (element mass of the detected particles)
-  mass_conc_ug_l (particulate element mass concentration, dilution-corrected)
+  mean_mass_fg, median_mass_fg, total_mass_fg, mean_diameter_nm, mass_conc_ug_l (element only)
+  particle_mean_mass_fg, particle_median_mass_fg, particle_total_mass_fg, particle_mean_diameter_nm,
+  particle_mass_conc_ug_l (compound-corrected), mass_fraction (1 = pure element)
+  every *_ug_l is the particulate mass concentration, dilution-corrected
   mean_signal_counts, signal_sd_counts, signal_rsd_pct, mean_signal_ppb (whole trace: dissolved + particles)
   background_counts, background_ppt, background_sd_ppt (dissolved / ionic background)
   threshold_counts (detection threshold), lod_net_counts, mdl_fg, mql_fg, sdl_nm, sql_nm
@@ -264,7 +271,7 @@ Make it look professional:
 - one message per figure; descriptive axis labels with units; a short title on the panel OR a figure title, not both on a single-panel figure
 - masses and sizes are close to log-normal: log axes and np.logspace bins unless asked otherwise
 - the same colour for the same sample in every panel, from PALETTE (colour-blind safe); at most about 8 legend entries
-- mark detection limits with ax.axvline(lod(...), ls='--', color='0.4') when relevant; annotate key numbers on the plot when it helps
+- mark detection limits with ax.axvline(lod(element, quantity), ls='--', color='0.4') using the plotted quantity; annotate key numbers on the plot when it helps
 - never call df.plot(), plt.show(), savefig or tight_layout; the layout is handled for you
 - to change a figure the user already has, rewrite its full code with the change"""
 
@@ -275,19 +282,61 @@ _DOMAIN = """SPICP-TOF-MS
 
 _EXAMPLE = """EXAMPLE
 User: is Ti bigger in some samples?
-Comparing Ti diameters across samples, with tests and a log-scale histogram.
+Comparing Ti masses across samples, with tests and a log-scale histogram.
 ```python
-res = compare_samples('Ti', 'diameter_nm')
-show_table(res, title='Ti diameter by sample')
+res = compare_samples('Ti', '{mq}')
+show_table(res, title='Ti {mname} by sample')
 fig, ax = plt.subplots(figsize=(6.5, 4))
-bins = np.logspace(1, 3, 60)
+c = col('{mq}', 'Ti')
+v = df[c].dropna()
+bins = np.logspace(np.log10(v.min()), np.log10(v.max()), 60)
 for s in samples:
-    ax.hist(df.loc[df['sample'] == s, col('size', 'Ti')].dropna(), bins=bins, histtype='step', lw=1.5, label=s)
-d = lod('Ti', 'diameter_nm')
-if d:
-    ax.axvline(d, ls='--', color='grey', label='LOD')
-ax.set_xscale('log'); ax.set_xlabel('Ti equivalent diameter (nm)'); ax.set_ylabel('Particles'); ax.legend()
+    ax.hist(df.loc[df['sample'] == s, c].dropna(), bins=bins, histtype='step', lw=1.5, label=s)
+m = lod('Ti', '{mq}')
+if m:
+    ax.axvline(m, ls='--', color='grey', label='LOD')
+ax.set_xscale('log'); ax.set_xlabel('Ti {mname} (fg)'); ax.set_ylabel('Particles'); ax.legend()
 ```"""
+
+
+MASS_BASES = ('element', 'particle')
+
+
+def quantity_rule(mass_basis='element'):
+    """The rule telling the model which mass and size to use.
+
+    Args:
+        mass_basis (str): ``element`` for the measured element mass, or
+            ``particle`` for the compound-corrected particle mass.
+
+    Returns:
+        str: The rule text.
+    """
+    if mass_basis == 'particle':
+        default, other = 'particle (compound-corrected)', 'element'
+        cols, other_cols = 'particle_mass_fg_<el> and particle_diameter_nm_<el>', 'mass_fg_<el> and diameter_nm_<el>'
+        ask = "the element mass or size ('element mass', 'only Ti', 'without the compound')"
+    else:
+        default, other = 'element', 'particle (compound-corrected)'
+        cols, other_cols = 'mass_fg_<el> and diameter_nm_<el>', 'particle_mass_fg_<el> and particle_diameter_nm_<el>'
+        ask = "the particle or compound-corrected mass or size ('particle mass', 'corrected', 'as TiO2')"
+    return (
+        "WHICH QUANTITY — follow this every time:\n"
+        "  - Mass first. Unless the user asks for size or diameter, analyse and plot mass.\n"
+        f"  - Use the {default} values by default: {cols}.\n"
+        f"  - Use the {other} values ({other_cols}) only when the user asks for {ask}.\n"
+        "    Without a compound set, both are the same.\n"
+        "  - If the user asks to switch (e.g. 'use the particle mass from now on'), keep the new choice for the\n"
+        "    rest of the conversation until they switch back.\n"
+        "  - In sample_summary() the same rule picks between the plain columns and the particle_ ones.\n"
+        "  - Say in the axis label which one you used, e.g. 'Ti mass (fg)' or 'Ti particle mass (fg)'.")
+
+
+def _example(mass_basis='element'):
+    """The worked example, using the default mass."""
+    mq = 'particle_mass_fg' if mass_basis == 'particle' else 'mass_fg'
+    mname = 'particle mass' if mass_basis == 'particle' else 'mass'
+    return _EXAMPLE.replace('{mq}', mq).replace('{mname}', mname)
 
 
 def _functions_block(compact=False):
@@ -298,7 +347,7 @@ def _functions_block(compact=False):
     return '\n'.join(lines)
 
 
-def build_system_prompt(ds, num_ctx=8192, mode='chat', max_turns=10):
+def build_system_prompt(ds, num_ctx=8192, mode='chat', max_turns=10, mass_basis='element'):
     """Assemble the system prompt.
 
     Args:
@@ -306,21 +355,22 @@ def build_system_prompt(ds, num_ctx=8192, mode='chat', max_turns=10):
         num_ctx (int): Context window; small windows get a compact prompt.
         mode (str): ``chat`` or ``explore``.
         max_turns (int): Exploration turn budget.
+        mass_basis (str): Default mass, ``element`` or ``particle``.
 
     Returns:
         str: The system prompt.
     """
     compact = int(num_ctx) < COMPACT_BELOW
     class_col = ', class' if ds is not None and len(ds) and 'class' in ds.df.columns else ''
-    parts = [_ROLE, _HOW, _DATA.replace('{class_col}', class_col)]
+    parts = [_ROLE, _HOW, _DATA.replace('{class_col}', class_col).replace('{quantity_rule}', quantity_rule(mass_basis))]
     if ds is not None and ds.acquisition is not None:
         parts.append(_ACQUISITION)
     parts += [_functions_block(compact), _OUTPUT, _FIGURES, _DOMAIN]
     if not compact:
-        parts.append(_EXAMPLE)
+        parts.append(_example(mass_basis))
     if mode == 'explore':
         parts.append(exploration_rules(max_turns))
-    parts.append(dataset_brief(ds, compact))
+    parts.append(dataset_brief(ds, compact, mass_basis))
     return '\n\n'.join(parts)
 
 

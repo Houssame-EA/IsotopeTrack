@@ -20,7 +20,7 @@ import math
 import numpy as np
 import pandas as pd
 
-from results.ai.data import QUANTITY_UNITS, resolve_quantity
+from results.ai.data import LIMIT_QUANTITIES, QUANTITY_UNITS, resolve_quantity
 
 _RNG_SEED = 7
 P_FLOOR = 1e-300
@@ -152,7 +152,7 @@ def _groups(ds, by):
     return [(k, (ds.df[by] == k).to_numpy()) for k in keys]
 
 
-def element_summary(ds, quantity='diameter_nm', by=None, elements=None):
+def element_summary(ds, quantity='mass_fg', by=None, elements=None):
     """Detection frequency and distribution of a quantity for every element.
 
     Args:
@@ -191,7 +191,7 @@ def element_summary(ds, quantity='diameter_nm', by=None, elements=None):
                 'p5': float(np.percentile(v, 5)),
                 'p95': float(np.percentile(v, 95)),
             })
-            if q in ('counts', 'mass_fg', 'diameter_nm'):
+            if q in LIMIT_QUANTITIES:
                 lod = ds.lod(el, q, gname if by == 'sample' else None)
                 row['lod'] = lod if lod else float('nan')
             rows.append(row)
@@ -199,7 +199,7 @@ def element_summary(ds, quantity='diameter_nm', by=None, elements=None):
     return _note(out, f"Quantity: {q} ({QUANTITY_UNITS.get(q, '')}).")
 
 
-def compare_samples(ds, element, quantity='diameter_nm', by='sample', groups=None):
+def compare_samples(ds, element, quantity='mass_fg', by='sample', groups=None):
     """Compare one element's distribution across samples, with tests.
 
     Args:
@@ -445,7 +445,7 @@ def coincidence_overview(ds):
     return _note(out, "Expected share = 1 - exp(-2 x rate x width), counting every particle as independent.")
 
 
-def size_distribution(ds, element, quantity='diameter_nm', by='sample'):
+def size_distribution(ds, element, quantity='mass_fg', by='sample'):
     """Shape of one element's size or mass distribution, with truncation checks.
 
     Args:
@@ -473,7 +473,7 @@ def size_distribution(ds, element, quantity='diameter_nm', by='sample'):
             continue
         gm, gsd = _geo(v)
         mode = _log_mode(v)
-        lod = ds.lod(el, q, gname if by == 'sample' else None) if q in ('counts', 'mass_fg', 'diameter_nm') else None
+        lod = ds.lod(el, q, gname if by == 'sample' else None) if q in LIMIT_QUANTITIES else None
         near = float(100.0 * np.mean(v <= 1.5 * lod)) if lod else float('nan')
         height = _height_at(v, 1.1 * lod) if lod else float('nan')
         truncated = bool(lod and ((mode == mode and mode <= 1.2 * lod) or (height == height and height >= 0.5)))
@@ -501,7 +501,8 @@ def near_detection_limit(ds, quantity='mass_fg', factor=1.5, min_count=5):
 
     Args:
         ds: The dataset.
-        quantity (str): ``counts``, ``mass_fg`` or ``diameter_nm``.
+        quantity (str): ``particle_mass_fg``, ``mass_fg``, ``particle_diameter_nm``,
+            ``diameter_nm`` or ``counts``.
         factor (float): A value within ``factor`` times the limit counts as close.
         min_count (int): Skip element and sample pairs with fewer detections.
 
@@ -677,7 +678,7 @@ def combination_enrichment(ds, by='sample', min_count=5, top=30):
     return _note(out, f"Chi-square over all combinations: chi2 = {chi2:.3g}, p = {pfloor(p_all):.3g}.")
 
 
-def long_format(ds, quantity='diameter_nm', elements=None):
+def long_format(ds, quantity='mass_fg', elements=None):
     """One row per particle and element, handy for per-element plots.
 
     Args:
@@ -791,9 +792,9 @@ FUNCTIONS = {
 }
 
 SIGNATURES = [
-    ("element_summary(quantity='diameter_nm', by=None, elements=None)",
+    ("element_summary(quantity='mass_fg', by=None, elements=None)",
      "n, % of particles, median, geo mean, p5, p95, LOD per element"),
-    ("compare_samples(element, quantity='diameter_nm', by='sample')",
+    ("compare_samples(element, quantity='mass_fg', by='sample')",
      "per-sample medians with 95% CI + Kruskal-Wallis and Mann-Whitney tests"),
     ("coincidence(element_a, element_b)",
      "is A+B real or two particles arriving together by chance?"),
@@ -801,7 +802,7 @@ SIGNATURES = [
      "every element pair vs the random coincidence rate, with a verdict"),
     ("coincidence_overview()",
      "expected vs observed share of multi-element events per run"),
-    ("size_distribution(element, quantity='diameter_nm', by='sample')",
+    ("size_distribution(element, quantity='mass_fg', by='sample')",
      "mode, geo mean/sd, LOD and whether the distribution is truncated"),
     ("near_detection_limit(quantity='mass_fg')",
      "elements whose detections crowd the detection limit"),
@@ -811,7 +812,7 @@ SIGNATURES = [
      "time bins with far more arrivals than usual (contamination, spikes)"),
     ("combination_enrichment(by='sample')",
      "element combinations over/under-represented in a sample"),
-    ("long_format(quantity='diameter_nm', elements=None)",
+    ("long_format(quantity='mass_fg', elements=None)",
      "one row per particle and element: particle, sample, run, element, value"),
     ("cluster_particles(elements=None, k=3, algorithm='K-Means', scaling='CLR')",
      "returns (summary, labels) using the Clustering node's engine"),

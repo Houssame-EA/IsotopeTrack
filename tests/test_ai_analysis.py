@@ -119,7 +119,7 @@ class TestAnalyses:
         ds = Dataset(dc)
         limits['48Ti']['diameter_nm'] = {s: 50.0 for s in truth.samples}
         ds.set_limits(limits)
-        out = A.size_distribution(ds, 'Ti')
+        out = A.size_distribution(ds, 'Ti', 'diameter_nm')
         flags = dict(zip(out['sample'], out['truncated']))
         assert flags['River_A'] and not flags['Spiked_C']
         heights = dict(zip(out['sample'], out['height_at_lod_pct']))

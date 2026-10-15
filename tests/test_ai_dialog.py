@@ -105,7 +105,7 @@ def test_failed_code_is_corrected_and_takeaway_checked(dialog):
     """A failing attempt is replaced by the fix and invented figures are flagged."""
     ScriptedWorker.script += [
         "Comparing.\n```python\nprint(df['diameter_Ti'])\n```",
-        "Fixed.\n```python\nshow_table(compare_samples('Ti'))\nfig, ax = plt.subplots()\n"
+        "Fixed.\n```python\nshow_table(compare_samples('Ti', 'diameter_nm'))\nfig, ax = plt.subplots()\n"
         "ax.hist(df[col('size','Ti')].dropna(), bins=np.logspace(1, 3, 40))\n"
         "ax.set_xscale('log'); ax.set_xlabel('Ti diameter (nm)'); ax.set_ylabel('Particles')\n```",
         "Spiked_C has the largest Ti particles (median 96.91 nm); an average of 12.5 nm is made up.",
