@@ -13,7 +13,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QApplication
 
 import results.ai.dialog as D
-from results.ai.benchmark import build_questions, reference_model, run
+from results.ai.benchmark import DATASETS, build_questions, make_variant, reference_model, run
 from results.ai.node import AIAssistantNode
 from results.ai.synthetic import make_dataset
 from results.ai.widgets import FigureBubble, InteractiveTableBubble, NoticeBubble
@@ -187,10 +187,16 @@ def test_benchmark_reference_passes_and_wrong_model_fails():
 
 
 def test_benchmark_questions_have_reference_code():
-    """Every question can be answered by its reference code."""
-    dc, truth, _ = make_dataset()
-    for q in build_questions(dc, truth):
-        assert q.reference.strip()
+    """Every question of every benchmark dataset has reference code."""
+    for name in DATASETS:
+        dc, truth, _ = make_variant(name)
+        for q in build_questions(name, dc, truth):
+            if q.kind == 'conversation':
+                assert q.steps and all(step['reference'].strip() for step in q.steps)
+            elif q.kind == 'explore':
+                assert q.steps and q.reference_answer.strip()
+            else:
+                assert q.reference.strip()
 
 
 def test_stop_interrupts_running_code_and_frees_the_window(dialog):
