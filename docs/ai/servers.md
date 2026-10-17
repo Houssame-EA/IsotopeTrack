@@ -50,7 +50,11 @@ keep Qt threads alive until they have really finished.
 | `retire_thread` | `(thread, grace=8000)` | Stop a QThread and keep it alive until it has really finished. |
 | `hf_cache_roots` | `()` | Return the Hugging Face cache directories that exist on this machine. |
 | `discover_cached_mlx_models` | `()` | Find MLX-ready models already downloaded into the local model cache. |
+| `folder_models` | `(dirs)` | MLX models kept in folders the user added, e.g. converted or fine-tuned ones. |
+| `mlx_model_dirs` | `()` | Folders the user added for MLX models, kept between sessions. |
+| `add_mlx_model_dir` | `(path)` | Remember a folder of MLX models for later sessions. |
 | `mlx_server_command` | `(model, port)` | Build the command that starts an MLX server for a model. |
-| `discover_local_models` | `(mlx_host=MLX_BASE)` | Collect every model this machine can serve without further setup. |
+| `discover_local_models` | `(mlx_host=MLX_BASE, extra_dirs=None)` | Collect every model this machine can serve without further setup. |
 | `fetch_ollama_models` | `(base_url=OLLAMA_BASE, timeout=PROBE_TIMEOUT)` | List the models installed in a running Ollama server. |
+| `fetch_ollama_details` | `(base_url=OLLAMA_BASE, timeout=PROBE_TIMEOUT)` | Size and precision of each installed Ollama model. |
 | `fetch_openai_models` | `(base_url, timeout=PROBE_TIMEOUT, api_key='')` | List models advertised by an OpenAI-compatible ``/v1/models`` endpoint. |

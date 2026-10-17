@@ -19,7 +19,7 @@ compares the model's prose against.
 
 | Name | Value |
 |------|-------|
-| `CODE_EXEC_TIMEOUT` | `45` |
+| `CODE_EXEC_TIMEOUT` | `None` |
 | `MAX_STDOUT_CHARS` | `20000` |
 | `MAX_TABLE_ROWS` | `2000` |
 | `SAFE_BUILTINS` | `{'abs': abs, 'all': all, 'any': any, 'bool': bool, 'dict'…` |
@@ -30,6 +30,7 @@ compares the model's prose against.
 | `_DROP_LINE_RE` | `re.compile('^[ \\t]*(?:plt\|fig)\\.(?:show\|savefig\|close)\…` |
 | `_ANYNUM_RE` | `re.compile('[-+]?(?:\\d[\\d,]*\\.?\\d*\|\\.\\d+)(?:[eE][-+…` |
 | `_DECIMAL_RE` | `re.compile('[-+]?(?:\\d[\\d,]*\\.\\d+\|\\.\\d+)(?:[eE][-+]…` |
+| `STATS_SHORTCUTS` | `('mannwhitneyu', 'kruskal', 'chi2_contingency', 'fisher_e…` |
 
 ## Classes
 
@@ -44,6 +45,8 @@ Attributes:
     findings (list): Findings recorded with ``record_finding``.
     error (str): Error message, empty when the code ran cleanly.
     warnings (list): Problems worth telling the model, e.g. empty panels.
+    notes (list): Things the model should know that need no fix, e.g. a
+        figure left out because nothing was drawn on it.
     numbers (list): Every number produced, for the fabrication check.
 
 | Method | Signature | Description |
@@ -65,9 +68,13 @@ Attributes:
 | `_table_from` | `(data, rows=None, title='')` | Normalise the many shapes ``show_table`` accepts into one table dict. |
 | `_numbers_in_table` | `(tbl, cap=20000)` | Numbers held by a table, raw values first so no precision is lost. |
 | `format_exec_error` | `(exc, code)` | Error text with the offending line of the generated code. |
+| `_frames_in` | `(ns, skip=('df', 'runs'))` | DataFrames the generated code created, by variable name. |
+| `error_hint` | `(exc, ns, ds)` | Advice that turns a common mistake into a one-step fix. |
 | `_bind` | `(fn, ds)` | Close an analysis function over the dataset, keeping its docstring. |
 | `build_namespace` | `(ds, collector, tables, findings)` | Assemble what generated code can see. |
 | `_has_content` | `(fig)` | Whether any panel of a figure has something drawn on it. |
+| `_axis_has_content` | `(ax)` | Whether one panel has something drawn on it; panel letters alone do not count. |
+| `_hide_empty_panels` | `(fig)` | Hide the unused panels of a grid, e.g. the sixth of a 2 x 3 grid holding five plots. |
 | `_finish_figures` | `(collector, result)` | Style, render and describe the figures, collecting any drawing errors. |
 | `execute` | `(code, ds, timeout=CODE_EXEC_TIMEOUT, stop_event=None)` | Run generated code against a dataset. |
 | `compact_table` | `(tbl, max_rows=15)` | Plain-text rendering of a result table for the model. |

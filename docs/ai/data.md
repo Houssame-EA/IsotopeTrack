@@ -20,7 +20,8 @@ Nothing here touches Qt, so it is cheap to test.
 | `QUANTITY_UNITS` | `{'counts': 'counts', 'mass_fg': 'fg', 'moles_fmol': 'fmol…` |
 | `QUANTITY_ALIASES` | `{'count': 'counts', 'signal': 'counts', 'intensity': 'cou…` |
 | `LIMIT_KEYS` | `{'counts': 'counts', 'mass_fg': 'mass', 'diameter_nm': 'd'}` |
-| `_HIDDEN_CONTEXT_KEYS` | `('parent_window', 'particle_data')` |
+| `LIMIT_QUANTITIES` | `('counts', 'mass_fg', 'diameter_nm', 'particle_mass_fg', …` |
+| `_HIDDEN_CONTEXT_KEYS` | `('parent_window', 'particle_data', 'acquisition')` |
 
 ## Classes
 
@@ -49,7 +50,9 @@ Attributes:
 | `column` | `(self, quantity, element)` | Return the column name for a quantity of an element. |
 | `runs` | `(self)` | Acquisition span of each run, the base of the coincidence estimates. |
 | `limits` | `(self)` | Calibrated detection limits, per element, quantity and sample. |
+| `acquisition` | `(self)` | Raw signals and per-sample results, or ``None`` when there are none. |
 | `set_limits` | `(self, limits)` | Replace the detection limits, mainly for tests and the benchmark. |
+| `_add_particle_limits` | `(self, limits)` | Add the compound-corrected limits next to the element ones. |
 | `lod` | `(self, element, quantity='mass_fg', sample=None)` | Detection limit of one element. |
 | `concentrations_available` | `(self)` | Whether particle number concentrations can be computed. |
 | `per_ml_factor` | `(self)` | Particles-per-mL factor of each sample, from the concentration metadata. |

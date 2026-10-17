@@ -213,6 +213,9 @@ bubbles alive when switching tabs (no rebuild needed).
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, title='New chat')` | Start an empty conversation. |
+| `_on_scrolled` | `(self, value)` | Follow new output only while the view is at the bottom. |
+| `_on_range` | `(self, _minimum, maximum)` | Keep the newest output in view as it grows, unless the user scrolled away. |
+| `scroll_to_end` | `(self, force=False)` | Show the newest message. |
 
 ### `ConversationListItem` *(extends `QFrame`)*
 

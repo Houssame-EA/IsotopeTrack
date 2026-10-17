@@ -64,6 +64,10 @@ Args:
 | `_mark_results_changed` | `(self)` | Flag that the stored results are now out of date. |
 | `create_sidebar` | `(self)` | Create sidebar with calibration and sample management tools. |
 | `create_menu_bar` | `(self)` | Create application menu bar with actions. |
+| `show_bug_report` | `(self)` | Open the anonymous Report a Bug form. |
+| `_maybe_ask_crash_consent` | `(self)` | Ask once, after the window is on screen, whether crash reports may be sent. |
+| `_on_crash_reports_toggled` | `(self, enabled)` | Store the crash report choice and mirror it in every open window. |
+| `_sync_crash_reports_actions` | `(enabled)` | Set the Help menu tick of every open window without re-triggering it. |
 | `open_new_window` | `(self)` |  |
 | `close_all_windows` | `(self)` | Close all open windows and quit application. |
 | `create_status_bar` | `(self)` | Create application status bar with progress indicator. |

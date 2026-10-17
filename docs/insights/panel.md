@@ -146,6 +146,8 @@ instantiating this directly.
 | `_find_source_node` | `(scene) → object \| None` | Find the node a newly added plot node should be wired to. |
 | `_occupied_rects` | `(scene) → list[tuple[float, float, float, float]]` | List the space every node on the canvas already takes up. |
 | `_free_position` | `(scene, preferred)` | Find a spot for a new node that no existing node is sitting on. |
+| `_item_box` | `(scene, item) → tuple[float, float, float, float]` | The ``(left, top, right, bottom)`` of a node item, by the scene's own rule when it has one. |
+| `_place_branch` | `(scene, nodes, source=None) → None` | Put a freshly added branch on the first free row beside its source. |
 | `_raw_pool_for` | `(scene, parent_window) → dict` | Every loaded particle by sample, as the engine reads it. |
 | `_isotope_entries` | `(parent_window, scene, labels) → list[dict]` | Resolve element labels into the isotope records a selector expects. |
 | `isotope_markup` | `(text: str) → str` | Write isotope labels in text with a superscript mass number. |

@@ -9,6 +9,7 @@ Colours, font sizes and markdown rendering shared by the AI chat widgets.
 | Name | Value |
 |------|-------|
 | `UI_PREFS` | `{'font_size': 14, 'chart_dpi': 100, 'show_timestamps': Fa…` |
+| `_ARROW_PATH` | `None` |
 | `CODE_RE` | `re.compile('```(?:python\|py)?[ \\t]*\\n(.*?)```', re.DOTALL)` |
 | `THINK_RE` | `re.compile('<think>.*?</think>', re.DOTALL)` |
 | `OPEN_THINK_RE` | `re.compile('<think>.*\\Z', re.DOTALL)` |
@@ -37,8 +38,10 @@ below are the chat window's names for palette entries.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `fs` | `(delta=0)` | Return the chat font size plus *delta*, clamped to a readable range. |
+| `_arrow_image` | `()` | Path of a small grey chevron used as the drop-down arrow, drawn once. |
 | `style_combo_popup` | `(combo)` | Make a combo box drop-down readable inside themed dialogs. |
 | `style_model_list` | `(widget)` | Style an always-visible model list so rows stay readable and clickable. |
+| `cut_after_code` | `(text)` | Drop what a reply says after its last code block. |
 | `strip_thinking` | `(text)` | Remove reasoning blocks, including one still being streamed. |
 | `_escape` | `(text)` | Escape HTML special characters. |
 | `inline_markdown` | `(t, ibg='#F3F4F6')` | Render bold, italic and inline code inside one line of markdown. |

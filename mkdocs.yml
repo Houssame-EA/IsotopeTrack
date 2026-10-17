@@ -174,13 +174,16 @@ nav:
     - "tools.py": cluster/tools.md
 - AI Assistant:
     - Overview: ai/index.md
+    - "acquisition.py": ai/acquisition.md
     - "analysis.py": ai/analysis.md
     - "attachments.py": ai/attachments.md
     - "benchmark.py": ai/benchmark.md
+    - "crust.py": ai/crust.md
     - "data.py": ai/data.md
     - "dialog.py": ai/dialog.md
     - "exploration.py": ai/exploration.md
     - "figures.py": ai/figures.md
+    - "memory.py": ai/memory.md
     - "node.py": ai/node.md
     - "prompts.py": ai/prompts.md
     - "report.py": ai/report.md
@@ -190,11 +193,13 @@ nav:
     - "streaming.py": ai/streaming.md
     - "synthetic.py": ai/synthetic.md
     - "theme.py": ai/theme.md
+    - "training.py": ai/training.md
     - "widgets.py": ai/widgets.md
 - Widgets & UI:
     - Overview: widgets_ui/index.md
     - "batch_parameters.py": widgets_ui/batch-parameters.md
     - "calibration_info.py": widgets_ui/calibration-info.md
+    - "canvas_layout.py": widgets_ui/canvas-layout.md
     - "drag_table.py": widgets_ui/drag-table.md
     - "frozen_column.py": widgets_ui/frozen-column.md
     - "interference_database.py": widgets_ui/interference-database.md
@@ -211,6 +216,8 @@ nav:
     - "signal_selector_dialog.py": widgets_ui/signal-selector-dialog.md
 - Tools & Utilities:
     - Overview: tools_utilities/index.md
+    - "bug_report_dialog.py": tools_utilities/bug-report-dialog.md
+    - "crash_reporting.py": tools_utilities/crash-reporting.md
     - "dilution_utils.py": tools_utilities/dilution-utils.md
     - "equations_reference.py": tools_utilities/equations-reference.md
     - "guide_content.py": tools_utilities/guide-content.md

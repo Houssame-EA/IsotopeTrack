@@ -14,6 +14,11 @@ Reusable dialogs, tables, and UI widgets.
 
 **1** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **33** methods
 
+### [`canvas_layout.py`](canvas-layout.md)
+Automatic layout of the Workflow Builder canvas.
+
+**0** classes &nbsp;·&nbsp; **8** functions &nbsp;·&nbsp; **0** methods
+
 ### [`drag_table.py`](drag-table.md)
 
 

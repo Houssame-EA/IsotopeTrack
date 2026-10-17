@@ -21,16 +21,42 @@ cannot see the picture, so it can notice and fix a wrong or empty figure.
 |------|-------|
 | `PALETTE` | `['#0072B2', '#E69F00', '#009E73', '#D55E00', '#CC79A7', '…` |
 | `FONT_SIZE` | `10` |
-| `STYLE` | `{'figure.facecolor': 'white', 'axes.facecolor': 'white', …` |
+| `BASE_STYLE` | `{'figure.facecolor': 'white', 'axes.facecolor': 'white', …` |
+| `LAB_INK` | `'#0b0b0b'` |
+| `LAB_INK2` | `'#52514e'` |
+| `LAB_GRID` | `'#e3e2de'` |
+| `LAB_INFLUENT` | `'#2a78d6'` |
+| `LAB_EFFLUENT` | `'#eb6834'` |
+| `LAB_FONTS` | `_installed_fonts(['Times New Roman', 'Times', 'Nimbus Rom…` |
+| `LAB_STYLE` | `{'font.family': list(LAB_FONTS), 'font.serif': list(LAB_F…` |
+| `STYLE` | `{**BASE_STYLE, **LAB_STYLE}` |
 | `DEFAULT_SIZE` | `(6.4, 4.2)` |
-| `MAX_FIGURES` | `6` |
+| `MAX_FIGURES` | `12` |
+| `PANEL_LABEL_GID` | `'itk_panel_label'` |
 | `MAX_SIZE_IN` | `16.0` |
 | `NAMESPACE` | `{'LogNorm': LogNorm, 'Normalize': Normalize, 'SymLogNorm'…` |
-| `_INK` | `{'#000000', '#111111', '#1f1f1f', '#222222', '#333333', '…` |
+| `_INK` | `{'#000000', '#0b0b0b', '#111111', '#1f1f1f', '#222222', '…` |
 | `_PAPER` | `{'#ffffff', '#fefefe', '#fafafa'}` |
 | `DARK_PREVIEW` | `{'paper': '#252526', 'ink': '#d4d4d4', 'soft': '#9d9d9d'}` |
+| `_SHARE_WORDS` | `('cumulative', 'ecdf', 'cdf', 'fraction', 'probability', …` |
 
 ## Classes
+
+### `_RcShim` *(extends `dict`)*
+
+Stand-in for ``plt.rcParams``: a change applies at once and stays with this answer's figures.
+
+Tick labels are drawn after the code has finished, so a change made
+only to matplotlib's settings would be lost there; the collector keeps
+it and every figure is drawn and saved with it.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, collector)` | Bind to a collector. |
+| `__setitem__` | `(self, key, value)` | Apply one setting, refusing names matplotlib does not know. |
+| `update` | `(self, *args, **kwargs)` | Apply several settings. |
+| `__getitem__` | `(self, key)` | Return the setting in force. |
+| `get` | `(self, key, default=None)` | Return the setting in force, or *default*. |
 
 ### `FigureLimitError` *(extends `RuntimeError`)*
 
@@ -43,6 +69,7 @@ Creates and keeps the figures one piece of generated code draws.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self)` | Start with no figures. |
+| `set_rc` | `(self, key, value)` | Keep a style change the code made, for every figure of this answer. |
 | `new_figure` | `(self, nrows=1, ncols=1, size=None, title=None, sharex=False, sharey=F` | Create a figure with a grid of axes. |
 | `_make` | `(self, size)` | Create one empty figure, enforcing the count and size limits. |
 | `current_figure` | `(self)` | The figure pyplot-style calls draw on, created when there is none. |
@@ -85,7 +112,9 @@ available; the user saves from the chat.
 | `gcf` | `(self)` | Return the current figure. |
 | `gca` | `(self)` | Return the current axes. |
 | `sca` | `(self, ax)` | Make *ax* the current axes. |
+| `rc` | `(self, group, **kwargs)` | Change a group of style settings, like ``matplotlib.pyplot.rc('font', family='Arial')``. |
 | `get_cmap` | `(self, name=None, lut=None)` | Return a colormap by name. |
+| `colorbar` | `(self, mappable=None, ax=None, **kw)` | Add a colour bar to the current figure, like ``matplotlib.pyplot.colorbar``. |
 | `savefig` | `(self, *args, **kwargs)` | Refuse: figures are saved from the chat window. |
 | `suptitle` | `(self, text, **kw)` | Set the current figure's title. |
 | `colorbar` | `(self, mappable=None, ax=None, **kw)` | Add a colour bar for *mappable*, or for the last image or scatter drawn. |
@@ -98,12 +127,21 @@ available; the user saves from the chat.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `_marks_groups` | `(name)` | Wrap an Axes plotting method so the axis that holds the group names is recorded. |
+| `_installed_fonts` | `(candidates)` | The candidate font families that are installed, in order. |
+| `label_panels` | `(axes, labels=None, size=None)` | Put panel letters (a), (b), ... at the top left of each panel. |
+| `lognormal_hist` | `(ax, values, bins=None, color=None, label=None, fit=True, alpha=0.45, ` | Draw a filled log-binned histogram with its fitted log-normal curve. |
+| `lab_colors` | `(samples)` | The lab's colour for each sample: influent blue, effluent orange, others from the palette. |
+| `axes_title` | `(ax)` | A panel's title wherever it sits: the lab style puts titles on the left. |
+| `figure_rc` | `(fig)` | The style a figure is drawn and saved with: the lab style plus any change the user asked for. |
 | `style_figure` | `(fig)` | Apply the house tick style and layout so they survive redrawing outside the sandbox. |
 | `_hex` | `(color)` | A colour as lower-case hex, or ``None`` when it cannot be read. |
 | `_dark_swaps` | `(fig)` | Recolour a figure's paper and ink for a dark preview. |
 | `render_png` | `(fig, dpi=100, dark=False)` | Draw a figure off screen and return PNG bytes. |
 | `_span` | `(lo, hi)` | Decades covered between two positive limits, or 0. |
+| `_is_share_axis` | `(lo, hi, label)` | Whether an axis shows a share or a cumulative fraction, which stays linear. |
+| `_shares_labelled_x` | `(ax, panels)` | Whether *ax* shares its x axis with a panel that has an x label, as a twin y axis does. |
 | `_shares_labelled_y` | `(ax, panels)` | Whether *ax* shares its y axis with a panel that has a y label. |
-| `_categorical` | `(ax)` | Whether the x tick labels are names rather than numbers. |
+| `_categorical` | `(ax, which='x')` | Whether the tick labels of one axis are names rather than numbers. |
 | `_text_overlaps` | `(fig)` | Pairs of visible titles and labels that are drawn on top of each other. |
 | `describe_figure` | `(fig, index=1)` | Describe what a figure shows, for a model that cannot see it. |

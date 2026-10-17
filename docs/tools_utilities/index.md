@@ -4,6 +4,16 @@ Support utilities: logging, materials database, filters, updates.
 
 ---
 
+### [`bug_report_dialog.py`](bug-report-dialog.md)
+tools/bug_report_dialog.py
+
+**4** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **11** methods
+
+### [`crash_reporting.py`](crash-reporting.md)
+tools/crash_reporting.py
+
+**0** classes &nbsp;·&nbsp; **18** functions &nbsp;·&nbsp; **0** methods
+
 ### [`dilution_utils.py`](dilution-utils.md)
 Dilution factor UI: the per-sample editor dialog and the one-time prompt.
 
