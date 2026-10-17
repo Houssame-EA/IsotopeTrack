@@ -16,11 +16,12 @@ from __future__ import annotations
 
 import itertools
 import math
+import re
 
 import numpy as np
 import pandas as pd
 
-from results.ai.data import QUANTITY_UNITS, resolve_quantity
+from results.ai.data import LIMIT_QUANTITIES, QUANTITY_UNITS, resolve_quantity
 
 _RNG_SEED = 7
 P_FLOOR = 1e-300
@@ -142,6 +143,19 @@ def _height_at(v, x):
     return float(kde([np.log10(x)])[0] / peak) if peak > 0 else float('nan')
 
 
+def element_symbol(label):
+    """The element symbol of an isotope label: '56Fe' -> 'Fe', '238U' -> 'U', 'Fe' -> 'Fe'.
+
+    Args:
+        label (str): Isotope label, column name part or symbol.
+
+    Returns:
+        str: The symbol, or the label unchanged when it holds no letters.
+    """
+    m = re.search(r'[A-Z][a-z]?', str(label))
+    return m.group(0) if m else str(label)
+
+
 def _groups(ds, by):
     """Group keys for *by*, which is ``sample``, ``run``, ``class`` or ``None``."""
     if by in (None, '', 'all'):
@@ -152,7 +166,24 @@ def _groups(ds, by):
     return [(k, (ds.df[by] == k).to_numpy()) for k in keys]
 
 
-def element_summary(ds, quantity='diameter_nm', by=None, elements=None):
+def _element_list(ds, elements):
+    """Resolve an element list, accepting a single name as well as a list.
+
+    Args:
+        ds: The dataset.
+        elements (str | list | None): ``'Fe'``, ``['Ce', 'La']`` or ``None``.
+
+    Returns:
+        list: Resolved labels, empty when *elements* is empty.
+    """
+    if not elements:
+        return []
+    if isinstance(elements, str):
+        elements = [elements]
+    return [ds.resolve_element(e) for e in elements]
+
+
+def element_summary(ds, quantity='mass_fg', by=None, elements=None):
     """Detection frequency and distribution of a quantity for every element.
 
     Args:
@@ -167,7 +198,7 @@ def element_summary(ds, quantity='diameter_nm', by=None, elements=None):
         when calibrated, the detection limit ``lod``.
     """
     q = resolve_quantity(quantity)
-    els = [ds.resolve_element(e) for e in elements] if elements else ds.elements
+    els = _element_list(ds, elements) or ds.elements
     rows = []
     for gname, mask in _groups(ds, by):
         total = int(mask.sum())
@@ -191,7 +222,7 @@ def element_summary(ds, quantity='diameter_nm', by=None, elements=None):
                 'p5': float(np.percentile(v, 5)),
                 'p95': float(np.percentile(v, 95)),
             })
-            if q in ('counts', 'mass_fg', 'diameter_nm'):
+            if q in LIMIT_QUANTITIES:
                 lod = ds.lod(el, q, gname if by == 'sample' else None)
                 row['lod'] = lod if lod else float('nan')
             rows.append(row)
@@ -199,7 +230,7 @@ def element_summary(ds, quantity='diameter_nm', by=None, elements=None):
     return _note(out, f"Quantity: {q} ({QUANTITY_UNITS.get(q, '')}).")
 
 
-def compare_samples(ds, element, quantity='diameter_nm', by='sample', groups=None):
+def compare_samples(ds, element, quantity='mass_fg', by='sample', groups=None):
     """Compare one element's distribution across samples, with tests.
 
     Args:
@@ -334,7 +365,7 @@ def coincidence(ds, element_a, element_b):
     return out
 
 
-def co_occurrence(ds, elements=None, min_count=10, top=25):
+def co_occurrence(ds, elements=None, min_count=10, top=25, same_element=False):
     """Which element pairs share particles more, or less, than chance allows.
 
     In spICP-ToF-MS almost every event is one particle, so the right
@@ -348,6 +379,8 @@ def co_occurrence(ds, elements=None, min_count=10, top=25):
         elements (list): Elements to pair, all by default.
         min_count (int): Ignore elements detected fewer times than this.
         top (int): Keep this many pairs, most significant first.
+        same_element (bool): Also pair isotopes of one element, which always
+            share particles; use :func:`isotope_ratio` for those.
 
     Returns:
         pandas.DataFrame: ``a``, ``b``, ``n_a``, ``n_b``, ``n_both``,
@@ -356,7 +389,10 @@ def co_occurrence(ds, elements=None, min_count=10, top=25):
         a plain ``verdict``.
     """
     from scipy import stats
-    els = [ds.resolve_element(e) for e in elements] if elements else ds.elements
+    if isinstance(min_count, str):
+        elements = ([elements] if isinstance(elements, str) else list(elements or [])) + [min_count]
+        min_count = 10
+    els = _element_list(ds, elements) or ds.elements
     df = ds.df
     present = {}
     for el in els:
@@ -369,7 +405,11 @@ def co_occurrence(ds, elements=None, min_count=10, top=25):
     runs = ds.runs().set_index('run')
     run_masks = {r: (df['run'] == r).to_numpy() for r in runs.index}
     rows = []
+    skipped = 0
     for a, b in itertools.combinations(present, 2):
+        if not same_element and element_symbol(a) == element_symbol(b):
+            skipped += 1
+            continue
         ma, mb = present[a], present[b]
         na, nb, nab = int(ma.sum()), int(mb.sum()), int((ma & mb).sum())
         chance = 0.0
@@ -409,7 +449,10 @@ def co_occurrence(ds, elements=None, min_count=10, top=25):
 
     out['verdict'] = out.apply(verdict, axis=1)
     out = out.sort_values(['p_adj', 'n_both'], ascending=[True, False]).head(int(top)).reset_index(drop=True)
-    return _note(out, "Poisson test of shared events against the random coincidence rate, Holm-adjusted.")
+    _note(out, "Poisson test of shared events against the random coincidence rate, Holm-adjusted.")
+    if skipped:
+        _note(out, f"{skipped} pair(s) of isotopes of one element left out; see isotope_ratio.")
+    return out
 
 
 def coincidence_overview(ds):
@@ -445,7 +488,7 @@ def coincidence_overview(ds):
     return _note(out, "Expected share = 1 - exp(-2 x rate x width), counting every particle as independent.")
 
 
-def size_distribution(ds, element, quantity='diameter_nm', by='sample'):
+def size_distribution(ds, element, quantity='mass_fg', by='sample'):
     """Shape of one element's size or mass distribution, with truncation checks.
 
     Args:
@@ -473,7 +516,7 @@ def size_distribution(ds, element, quantity='diameter_nm', by='sample'):
             continue
         gm, gsd = _geo(v)
         mode = _log_mode(v)
-        lod = ds.lod(el, q, gname if by == 'sample' else None) if q in ('counts', 'mass_fg', 'diameter_nm') else None
+        lod = ds.lod(el, q, gname if by == 'sample' else None) if q in LIMIT_QUANTITIES else None
         near = float(100.0 * np.mean(v <= 1.5 * lod)) if lod else float('nan')
         height = _height_at(v, 1.1 * lod) if lod else float('nan')
         truncated = bool(lod and ((mode == mode and mode <= 1.2 * lod) or (height == height and height >= 0.5)))
@@ -501,7 +544,8 @@ def near_detection_limit(ds, quantity='mass_fg', factor=1.5, min_count=5):
 
     Args:
         ds: The dataset.
-        quantity (str): ``counts``, ``mass_fg`` or ``diameter_nm``.
+        quantity (str): ``particle_mass_fg``, ``mass_fg``, ``particle_diameter_nm``,
+            ``diameter_nm`` or ``counts``.
         factor (float): A value within ``factor`` times the limit counts as close.
         min_count (int): Skip element and sample pairs with fewer detections.
 
@@ -677,7 +721,249 @@ def combination_enrichment(ds, by='sample', min_count=5, top=30):
     return _note(out, f"Chi-square over all combinations: chi2 = {chi2:.3g}, p = {pfloor(p_all):.3g}.")
 
 
-def long_format(ds, quantity='diameter_nm', elements=None):
+def _vs_rest(samples):
+    """Holm-adjusted Mann-Whitney p of each group against the rest, and a Kruskal-Wallis note.
+
+    Args:
+        samples (list): One array of values per group.
+
+    Returns:
+        tuple: ``(p_vs_rest list, note text)``.
+    """
+    from scipy import stats
+    raw = []
+    for i, v in enumerate(samples):
+        rest = np.concatenate([s for j, s in enumerate(samples) if j != i]) if len(samples) > 1 else np.array([])
+        if v.size >= 3 and rest.size >= 3:
+            raw.append(pfloor(stats.mannwhitneyu(v, rest, alternative='two-sided').pvalue))
+        else:
+            raw.append(float('nan'))
+    usable = [s for s in samples if s.size >= 3]
+    note = ''
+    if len(usable) >= 2:
+        h = stats.kruskal(*usable)
+        note = f"Kruskal-Wallis across {len(usable)} groups: H = {h.statistic:.3g}, p = {pfloor(h.pvalue):.3g}."
+    return holm(raw) if raw else [], note
+
+
+def simple_ratio(value, max_term=4, tolerance=0.08):
+    """The small whole-number ratio closest to *value*, e.g. ``"2:1"``, or ``""``.
+
+    Args:
+        value (float): A ratio.
+        max_term (int): Largest term to consider.
+        tolerance (float): Relative distance accepted.
+
+    Returns:
+        str: The ratio, or an empty string when none is close.
+    """
+    from fractions import Fraction
+    if not value or not np.isfinite(value) or value <= 0:
+        return ''
+    flip = value < 1
+    v = 1.0 / value if flip else value
+    if v > max_term:
+        return ''
+    frac = Fraction(v).limit_denominator(max_term)
+    if frac.numerator == 0 or frac.numerator > max_term or abs(float(frac) - v) / v > tolerance:
+        return ''
+    a, b = frac.numerator, frac.denominator
+    return f"{b}:{a}" if flip else f"{a}:{b}"
+
+
+def _both(ds, quantity, a, b):
+    """Rows holding both elements, with the two columns of *quantity*."""
+    ca, cb = ds.column(quantity, a), ds.column(quantity, b)
+    va, vb = ds.df[ca], ds.df[cb]
+    mask = (va > 0) & (vb > 0) & np.isfinite(va) & np.isfinite(vb)
+    return mask.to_numpy(), va.to_numpy(), vb.to_numpy()
+
+
+def molar_ratio(ds, element_a, element_b, by='sample', min_n=10):
+    """Molar ratio a/b in particles holding both elements, per group.
+
+    A tight ratio (small ``log10_iqr``) points to one compound or alloy of
+    fixed stoichiometry; a ratio that differs between samples points to
+    different materials.
+
+    Args:
+        ds: The dataset.
+        element_a (str): Numerator element.
+        element_b (str): Denominator element.
+        by (str): ``sample``, ``run``, ``class`` or ``None``.
+        min_n (int): Groups with fewer particles are listed but not tested.
+
+    Returns:
+        pandas.DataFrame: Per group ``n``, ``median_ratio``, ``q25``, ``q75``,
+        ``log10_iqr`` (spread; below about 0.15 is a fixed stoichiometry),
+        ``simple_ratio`` (e.g. ``2:1`` when the median is close to one) and
+        ``p_vs_rest``. The Kruskal-Wallis test across groups is in the note.
+    """
+    a, b = ds.resolve_element(element_a), ds.resolve_element(element_b)
+    both, va, vb = _both(ds, 'moles_fmol', a, b)
+    rows, samples = [], []
+    for gname, gmask in _groups(ds, by):
+        m = both & gmask
+        r = va[m] / vb[m]
+        q25, med, q75 = (np.percentile(r, [25, 50, 75]) if r.size else (np.nan,) * 3)
+        rows.append({by or 'group': gname, 'n': int(r.size), 'median_ratio': float(med),
+                     'q25': float(q25), 'q75': float(q75),
+                     'log10_iqr': float(np.log10(q75 / q25)) if r.size >= 2 and q25 > 0 else float('nan'),
+                     'simple_ratio': simple_ratio(float(med)) if r.size >= min_n else ''})
+        samples.append(np.log10(r) if r.size >= min_n else np.array([]))
+    out = pd.DataFrame(rows)
+    p, note = _vs_rest(samples)
+    if len(out):
+        out['p_vs_rest'] = p
+    _note(out, f"Molar ratio {a}/{b} in particles holding both (moles_fmol).")
+    return _note(out, note) if note else out
+
+
+def isotope_ratio(ds, numerator, denominator, by='sample', min_n=10):
+    """Isotope ratio of two isotopes of one element, per group, against natural abundance.
+
+    Uses the detected counts. Each particle's ratio is compared with the
+    natural ratio and the spread counting statistics allow
+    (``sqrt(R (1 + R) / counts_den)``); about 5 % of particles fall outside
+    two standard deviations by chance.
+
+    Args:
+        ds: The dataset.
+        numerator (str): Isotope label, e.g. ``'206Pb'``.
+        denominator (str): Isotope label, e.g. ``'207Pb'``.
+        by (str): ``sample``, ``run``, ``class`` or ``None``.
+        min_n (int): Groups with fewer particles are listed but not tested.
+
+    Returns:
+        pandas.DataFrame: Per group ``n``, ``ratio`` (summed counts),
+        ``median_particle_ratio``, ``natural``, ``deviation_pct`` (of the
+        summed ratio from natural), ``pct_outside_2sd`` and ``p_vs_rest``.
+    """
+    num, den = ds.resolve_element(numerator), ds.resolve_element(denominator)
+    if num == den:
+        raise ValueError("Give two different isotopes of one element, e.g. isotope_ratio('206Pb', '207Pb').")
+    try:
+        from results.figure_builder.core.isotopes import natural_ratio
+        natural = natural_ratio(num, den)
+    except Exception:
+        natural = None
+    both, cn, cd = _both(ds, 'counts', num, den)
+    rows, samples = [], []
+    for gname, gmask in _groups(ds, by):
+        m = both & gmask
+        n_c, d_c = cn[m], cd[m]
+        r = n_c / d_c
+        row = {by or 'group': gname, 'n': int(r.size),
+               'ratio': float(n_c.sum() / d_c.sum()) if r.size else float('nan'),
+               'median_particle_ratio': float(np.median(r)) if r.size else float('nan'),
+               'natural': float(natural) if natural else float('nan')}
+        if natural and r.size:
+            sigma = np.sqrt(natural * (1 + natural) / np.maximum(d_c, 1.0))
+            row['deviation_pct'] = 100.0 * (row['ratio'] / natural - 1.0)
+            row['pct_outside_2sd'] = 100.0 * float(np.mean(np.abs(r - natural) > 2 * sigma))
+        else:
+            row['deviation_pct'] = float('nan')
+            row['pct_outside_2sd'] = float('nan')
+        rows.append(row)
+        samples.append(np.log10(r) if r.size >= min_n else np.array([]))
+    out = pd.DataFrame(rows)
+    p, note = _vs_rest(samples)
+    if len(out):
+        out['p_vs_rest'] = p
+    nat = f"natural {num}/{den} = {natural:.4g}" if natural else "natural ratio unknown"
+    _note(out, f"Isotope ratio {num}/{den} from counts; {nat}; about 5 % of particles fall outside 2 SD by chance.")
+    return _note(out, note) if note else out
+
+
+def element_correlation(ds, element_a, element_b, quantity='mass_fg', by='sample', min_n=10):
+    """How two elements scale together inside particles, per group.
+
+    Fits ``log10(b) = slope * log10(a) + intercept`` on particles holding
+    both. A slope near 1 means a constant ratio at every size; groups with
+    different slopes or intercepts hold different materials.
+
+    Args:
+        ds: The dataset.
+        element_a (str): Element on the x axis.
+        element_b (str): Element on the y axis.
+        quantity (str): Quantity to use.
+        by (str): ``sample``, ``run``, ``class`` or ``None``.
+        min_n (int): Groups with fewer particles are listed without a fit.
+
+    Returns:
+        pandas.DataFrame: Per group ``n``, ``spearman_rho``, ``p``,
+        ``slope``, ``slope_low``, ``slope_high`` (95 % interval),
+        ``intercept`` and ``ratio_at_median`` (b/a at the median a).
+    """
+    from scipy import stats
+    q = resolve_quantity(quantity)
+    a, b = ds.resolve_element(element_a), ds.resolve_element(element_b)
+    both, va, vb = _both(ds, q, a, b)
+    rows = []
+    for gname, gmask in _groups(ds, by):
+        m = both & gmask
+        x, y = np.log10(va[m]), np.log10(vb[m])
+        row = {by or 'group': gname, 'n': int(x.size)}
+        if x.size >= max(min_n, 3) and np.ptp(x) > 0:
+            rho = stats.spearmanr(x, y)
+            fit = stats.linregress(x, y)
+            t = stats.t.ppf(0.975, x.size - 2)
+            xm = float(np.median(x))
+            row.update(spearman_rho=float(rho.statistic), p=pfloor(rho.pvalue), slope=float(fit.slope),
+                       slope_low=float(fit.slope - t * fit.stderr), slope_high=float(fit.slope + t * fit.stderr),
+                       intercept=float(fit.intercept),
+                       ratio_at_median=float(10 ** (fit.slope * xm + fit.intercept) / 10 ** xm))
+        rows.append(row)
+    out = pd.DataFrame(rows)
+    return _note(out, f"log10({b}) against log10({a}), {q} ({QUANTITY_UNITS.get(q, '')}); "
+                      "slope 1 = constant ratio at every size.")
+
+
+def crust_ratio(ds, element_a, element_b, by='sample', min_n=10):
+    """Mass ratio a/b against the upper continental crust, per group.
+
+    Two readings are given: the median ratio in particles holding both
+    elements, and the bulk ratio of all detected particle mass of a over
+    that of b. The enrichment factor is the ratio divided by the crustal
+    ratio; values well above or below 1 (beyond about x3) point away from
+    crust-like (geogenic) material. The bulk ratio only counts detected
+    particles, so dissolved metal and particles below the detection limit
+    are not in it.
+
+    Args:
+        ds: The dataset.
+        element_a (str): Numerator element.
+        element_b (str): Denominator element.
+        by (str): ``sample``, ``run``, ``class`` or ``None``.
+        min_n (int): Groups with fewer shared particles get no particle ratio.
+
+    Returns:
+        pandas.DataFrame: Per group ``n_both``, ``particle_ratio``,
+        ``ef_particles``, ``bulk_ratio``, ``ef_bulk`` and ``crust_ratio``.
+    """
+    from results.ai.crust import REFERENCE, crust_mass_ratio
+    a, b = ds.resolve_element(element_a), ds.resolve_element(element_b)
+    crust = crust_mass_ratio(element_symbol(a), element_symbol(b))
+    if crust is None:
+        raise ValueError(f"No crustal value for {element_symbol(a)} or {element_symbol(b)} in {REFERENCE}.")
+    both, va, vb = _both(ds, 'mass_fg', a, b)
+    rows = []
+    for gname, gmask in _groups(ds, by):
+        m = both & gmask
+        r = va[m] / vb[m]
+        pr = float(np.median(r)) if r.size >= min_n else float('nan')
+        sa = float(np.nansum(np.where(gmask & (va > 0), va, 0.0)))
+        sb = float(np.nansum(np.where(gmask & (vb > 0), vb, 0.0)))
+        bulk = sa / sb if sb > 0 else float('nan')
+        rows.append({by or 'group': gname, 'n_both': int(r.size), 'particle_ratio': pr,
+                     'ef_particles': pr / crust, 'bulk_ratio': bulk, 'ef_bulk': bulk / crust,
+                     'crust_ratio': crust})
+    out = pd.DataFrame(rows)
+    return _note(out, f"Mass ratio {a}/{b} against {REFERENCE}: crust {element_symbol(a)}/{element_symbol(b)} = "
+                      f"{crust:.3g}. EF = ratio / crust; bulk counts detected particles only.")
+
+
+def long_format(ds, quantity='mass_fg', elements=None):
     """One row per particle and element, handy for per-element plots.
 
     Args:
@@ -689,7 +975,7 @@ def long_format(ds, quantity='diameter_nm', elements=None):
         pandas.DataFrame: ``particle``, ``sample``, ``run``, ``element`` and ``value``.
     """
     q = resolve_quantity(quantity)
-    els = [ds.resolve_element(e) for e in elements] if elements else ds.elements
+    els = _element_list(ds, elements) or ds.elements
     parts = []
     for el in els:
         col = f'{q}_{el}'
@@ -737,7 +1023,7 @@ def cluster_particles(ds, elements=None, k=3, algorithm='K-Means', scaling='CLR'
         names = ', '.join(a for a in ALGO_PARAM_SPECS if a != 'SOM')
         raise ValueError(f"Unknown algorithm '{algorithm}'. Use one of: {names}")
     q = resolve_quantity(quantity)
-    els = [ds.resolve_element(e) for e in elements] if elements else ds.elements[:10]
+    els = _element_list(ds, elements) or ds.elements[:10]
     cols = [f'{q}_{e}' for e in els if f'{q}_{e}' in ds.df.columns]
     if len(cols) < 2:
         raise ValueError("Clustering needs at least two elements with values.")
@@ -786,35 +1072,67 @@ FUNCTIONS = {
     'find_outliers': find_outliers,
     'time_bursts': time_bursts,
     'combination_enrichment': combination_enrichment,
+    'molar_ratio': molar_ratio,
+    'isotope_ratio': isotope_ratio,
+    'element_correlation': element_correlation,
+    'crust_ratio': crust_ratio,
     'long_format': long_format,
     'cluster_particles': cluster_particles,
 }
 
 SIGNATURES = [
-    ("element_summary(quantity='diameter_nm', by=None, elements=None)",
-     "n, % of particles, median, geo mean, p5, p95, LOD per element"),
-    ("compare_samples(element, quantity='diameter_nm', by='sample')",
-     "per-sample medians with 95% CI + Kruskal-Wallis and Mann-Whitney tests"),
+    ("element_summary(quantity='mass_fg', by=None, elements=None)",
+     "every element (elements=['Ti'] for some): n, % of particles, median, geo mean, p5, p95, LOD"
+     " -> element, [by], n, pct_of_particles, median, geo_mean, p5, p95, lod"),
+    ("compare_samples(element, quantity='mass_fg', by='sample')",
+     "per-sample medians with 95% CI + Kruskal-Wallis and Mann-Whitney tests; detection_rate_pct is the"
+     " % of that sample's particles that contain the element (not the share below the LOD)"
+     " -> sample, n, detection_rate_pct, median, median_ci_low, median_ci_high, geo_mean, geo_sd, p95, p_vs_rest"),
     ("coincidence(element_a, element_b)",
-     "is A+B real or two particles arriving together by chance?"),
+     "is A+B real or two particles arriving together by chance? (last row = all runs)"
+     " -> run, n_a, n_b, observed_both, expected_by_chance, ratio, p, span_s"),
     ("co_occurrence(elements=None, min_count=10)",
-     "every element pair vs the random coincidence rate, with a verdict"),
+     "every element pair vs the random coincidence rate, with a verdict"
+     " -> a, b, n_a, n_b, n_both, expected_by_chance, ratio, pct_of_a, pct_of_b, p, p_adj, verdict"),
     ("coincidence_overview()",
-     "expected vs observed share of multi-element events per run"),
-    ("size_distribution(element, quantity='diameter_nm', by='sample')",
-     "mode, geo mean/sd, LOD and whether the distribution is truncated"),
+     "expected vs observed share of multi-element events per run"
+     " -> run, n, rate_per_s, median_width_ms, expected_coincident_pct, observed_multi_element_pct"),
+    ("size_distribution(element, quantity='mass_fg', by='sample')",
+     "mode, geo mean/sd, LOD and whether the distribution is truncated"
+     " -> element, sample, n, mode, geo_mean, geo_sd, median, p5, p95, lod, pct_within_1.5x_lod,"
+     " height_at_lod_pct, truncated; report truncation only where truncated is 'yes' (few particles is not"
+     " truncation)"),
     ("near_detection_limit(quantity='mass_fg')",
-     "elements whose detections crowd the detection limit"),
+     "elements whose detections crowd the detection limit"
+     " -> element, sample, n, lod, median_over_lod, pct_near_lod"),
     ("find_outliers(quantity='mass_fg', element=None, threshold=5)",
-     "particles far outside the usual range (robust log z-score)"),
+     "particles far outside the usual range (robust log z-score)"
+     " -> particle (row of df), sample, element, value, robust_z, combo"),
     ("time_bursts(element=None)",
-     "time bins with far more arrivals than usual (contamination, spikes)"),
+     "time bins with far more arrivals than usual (contamination, spikes)"
+     " -> run, t_from, t_to, count, expected, ratio, p   (per run, not per sample); to draw it, plot particles"
+     " per time bin for the run (np.histogram of t_start) and shade each burst with ax.axvspan(t_from, t_to)"),
     ("combination_enrichment(by='sample')",
-     "element combinations over/under-represented in a sample"),
-    ("long_format(quantity='diameter_nm', elements=None)",
-     "one row per particle and element: particle, sample, run, element, value"),
+     "element combinations over/under-represented in a sample"
+     " -> combo, sample, observed, expected, ratio, residual, p, p_adj"),
+    ("molar_ratio(element_a, element_b, by='sample')",
+     "molar ratio a/b in particles holding both; tight ratio = fixed stoichiometry, different medians ="
+     " different materials -> sample, n, median_ratio, q25, q75, log10_iqr, simple_ratio, p_vs_rest"),
+    ("isotope_ratio(numerator, denominator, by='sample')",
+     "two isotopes of one element (e.g. '206Pb', '207Pb') against natural abundance"
+     " -> sample, n, ratio, median_particle_ratio, natural, deviation_pct, pct_outside_2sd, p_vs_rest"),
+    ("element_correlation(element_a, element_b, quantity='mass_fg', by='sample')",
+     "log-log fit of b against a in particles holding both; slope 1 = constant ratio; different slopes"
+     " = different materials -> sample, n, spearman_rho, p, slope, slope_low, slope_high, intercept,"
+     " ratio_at_median"),
+    ("crust_ratio(element_a, element_b, by='sample')",
+     "mass ratio a/b against the upper continental crust (Rudnick & Gao); EF far from 1 = not crust-like"
+     " -> sample, n_both, particle_ratio, ef_particles, bulk_ratio, ef_bulk, crust_ratio"),
+    ("long_format(quantity='mass_fg', elements=None)",
+     "one row per particle and element -> particle, sample, run, element, value"),
     ("cluster_particles(elements=None, k=3, algorithm='K-Means', scaling='CLR')",
-     "returns (summary, labels) using the Clustering node's engine"),
+     "returns (summary, labels) using the Clustering node's engine; labels align with df rows"
+     " -> summary: cluster, n, pct, top_elements, share_<el>"),
     ("lod(element, quantity='mass_fg', sample=None)",
      "calibrated detection limit, None when unknown"),
 ]

@@ -50,7 +50,9 @@ QUANTITY_ALIASES = {
 
 LIMIT_KEYS = {'counts': 'counts', 'mass_fg': 'mass', 'diameter_nm': 'd'}
 
-_HIDDEN_CONTEXT_KEYS = ('parent_window', 'particle_data')
+LIMIT_QUANTITIES = ('counts', 'mass_fg', 'diameter_nm', 'particle_mass_fg', 'particle_diameter_nm')
+
+_HIDDEN_CONTEXT_KEYS = ('parent_window', 'particle_data', 'acquisition')
 
 
 def resolve_quantity(name):
@@ -100,7 +102,10 @@ def particle_frame(particles, default_sample='Sample'):
         ``combo`` (detected elements joined with ``" + "``), totals, an
         optional ``class`` from the Particle Classifier, and one column per
         quantity and element, e.g. ``mass_fg_56Fe``. An element that was not
-        detected in a particle is NaN, never zero.
+        detected in a particle is NaN, never zero. Particles without a
+        compound correction get ``particle_mass_fg_<el>`` and
+        ``particle_diameter_nm_<el>`` equal to the element values, as the
+        main window does for a pure element.
 
     Args:
         particles (list): Particle dictionaries from the canvas.
@@ -174,6 +179,11 @@ def particle_frame(particles, default_sample='Sample'):
     cols['combo'] = combos
     if any_class:
         cols['class'] = np.where(pd.isna(classes), 'Unclassified', classes)
+    for q in ('mass_fg', 'diameter_nm'):
+        element_store, particle_store = per_q[q], per_q[f'particle_{q}']
+        for el, arr in element_store.items():
+            if el not in particle_store:
+                particle_store[el] = arr.copy()
     for q in QUANTITIES:
         store = per_q[q]
         for el in order:
@@ -216,6 +226,8 @@ class Dataset:
         self._df = None
         self._limits = None
         self._runs = None
+        self._acquisition = None
+        self._acquisition_done = False
         self._lock = threading.Lock()
         names = list(self.data_context.get('sample_names') or [])
         if not names and self.data_context.get('sample_name'):
@@ -310,6 +322,8 @@ class Dataset:
         q = resolve_quantity(quantity)
         el = self.resolve_element(element)
         name = f'{q}_{el}'
+        if name not in self.df.columns and q.startswith('particle_'):
+            name = f"{q[len('particle_'):]}_{el}"
         if name not in self.df.columns:
             raise KeyError(f"No {q} values for {el} in this data")
         return name
@@ -378,7 +392,29 @@ class Dataset:
                 entry[q] = by_sample
             if entry:
                 self._limits[label] = entry
+        self._add_particle_limits(self._limits)
         return self._limits
+
+    @property
+    def acquisition(self):
+        """Raw signals and per-sample results, or ``None`` when there are none.
+
+        Returns:
+            results.ai.acquisition.Acquisition | None: The source, from the
+            data context or the main window.
+        """
+        if not self._acquisition_done:
+            from results.ai.acquisition import from_dataset
+            mapping = {}
+            if len(self):
+                mapping = self.df.groupby('run', sort=False)['sample'].first().to_dict()
+            try:
+                self._acquisition = from_dataset(self.data_context, self._parent_window, mapping)
+            except Exception:
+                _itk_log.exception("Could not read the raw signals")
+                self._acquisition = None
+            self._acquisition_done = True
+        return self._acquisition
 
     def set_limits(self, limits):
         """Replace the detection limits, mainly for tests and the benchmark.
@@ -386,7 +422,53 @@ class Dataset:
         Args:
             limits (dict): Same shape as :meth:`limits` returns.
         """
-        self._limits = dict(limits or {})
+        self._limits = {k: dict(v) for k, v in (limits or {}).items()}
+        self._add_particle_limits(self._limits)
+
+    def _add_particle_limits(self, limits):
+        """Add the compound-corrected limits next to the element ones.
+
+        A compound scales every particle's element mass by the same factor,
+        ``particle_mass = element_mass / mass_fraction``, and its diameter
+        follows ``d = k * m^(1/3)`` for one density. Both factors are read
+        from the particles of each sample, so the limit lands on the same
+        scale as ``particle_mass_fg_<el>`` and ``particle_diameter_nm_<el>``.
+
+        Args:
+            limits (dict): Limits to complete in place.
+        """
+        if not len(self):
+            return
+        df = self.df
+        for el, entry in limits.items():
+            masses = entry.get('mass_fg') or {}
+            if not masses or 'particle_mass_fg' in entry:
+                continue
+            m_col, pm_col, pd_col = f'mass_fg_{el}', f'particle_mass_fg_{el}', f'particle_diameter_nm_{el}'
+            if m_col not in df.columns:
+                continue
+            p_mass, p_diam = {}, {}
+            for sample, lod in masses.items():
+                rows = df[df['sample'] == sample]
+                ratio = 1.0
+                if pm_col in df.columns:
+                    r = (rows[pm_col] / rows[m_col]).to_numpy(dtype=float)
+                    r = r[np.isfinite(r) & (r > 0)]
+                    if r.size:
+                        ratio = float(np.median(r))
+                p_mass[sample] = float(lod) * ratio
+                if pd_col in df.columns and pm_col in df.columns:
+                    k = (rows[pd_col] / np.cbrt(rows[pm_col])).to_numpy(dtype=float)
+                    k = k[np.isfinite(k) & (k > 0)]
+                    if k.size:
+                        p_diam[sample] = float(np.median(k)) * float(np.cbrt(p_mass[sample]))
+                        continue
+                d = (entry.get('diameter_nm') or {}).get(sample)
+                if d and abs(ratio - 1.0) < 1e-9:
+                    p_diam[sample] = float(d)
+            entry['particle_mass_fg'] = p_mass
+            if p_diam:
+                entry['particle_diameter_nm'] = p_diam
 
     def lod(self, element, quantity='mass_fg', sample=None):
         """Detection limit of one element.

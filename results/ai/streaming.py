@@ -250,6 +250,7 @@ class StreamWorker(QThread):
                 "num_ctx": self.cfg.get('num_ctx', 8192),
                 "num_predict": int(self.cfg.get('max_reply_tokens', 4096)),
             },
+            "think": bool(self.cfg.get('thinking', False)),
         }
         return f"{host}/api/chat", payload, {}
 
@@ -278,7 +279,9 @@ class StreamWorker(QThread):
         elif not model and ids:
             model = ids[0]
         url = host if host.endswith('/v1') else f"{host}/v1"
-        return f"{url}/chat/completions", self._openai_payload(model), {}
+        payload = self._openai_payload(model)
+        payload['chat_template_kwargs'] = {"enable_thinking": bool(self.cfg.get('thinking', False))}
+        return f"{url}/chat/completions", payload, {}
 
     def _custom_request(self):
         """URL, payload and headers for a user-configured OpenAI-compatible API."""
@@ -318,6 +321,19 @@ class StreamWorker(QThread):
                 raise StreamCancelled()
             self._stream.open()
             status = self._stream.status
+            if status != 200 and 'think' in payload:
+                detail = self._stream.read_error()
+                if 'think' in (detail or '').lower():
+                    self._stream.close()
+                    payload = {k: v for k, v in payload.items() if k != 'think'}
+                    self._stream = CancellableStream(url, payload, headers)
+                    if self.cancelled:
+                        raise StreamCancelled()
+                    self._stream.open()
+                    status = self._stream.status
+                else:
+                    self.error_occurred.emit(f"HTTP {status}" + (f": {detail}" if detail else ''))
+                    return
             if status != 200:
                 detail = self._stream.read_error()
                 if self.backend == 'mlx' and status == 404:
@@ -426,7 +442,8 @@ class CodeWorker(QThread):
         Args:
             code (str): Python written by the model.
             dataset (Dataset): The data it works on.
-            timeout (float): Seconds allowed, the sandbox default when ``None``.
+            timeout (float): Seconds allowed, ``None`` to run until the code
+                finishes or Stop is pressed.
         """
         super().__init__()
         self.code = code
@@ -440,9 +457,9 @@ class CodeWorker(QThread):
 
     def run(self):
         """Execute the code and hand back the result."""
-        from results.ai.sandbox import CODE_EXEC_TIMEOUT, ExecResult, execute
+        from results.ai.sandbox import ExecResult, execute
         try:
-            res = execute(self.code, self.dataset, self.timeout or CODE_EXEC_TIMEOUT, stop_event=self._stop)
+            res = execute(self.code, self.dataset, self.timeout, stop_event=self._stop)
         except Exception as e:
             _itk_log.exception("Sandbox run failed")
             res = ExecResult(error=f"{type(e).__name__}: {e}")

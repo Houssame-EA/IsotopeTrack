@@ -7,6 +7,7 @@ import time
 import uuid
 
 import numpy as np
+import shiboken6
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QPixmap
 from PySide6.QtWidgets import (
@@ -1124,7 +1125,7 @@ class FigureBubble(QFrame):
     def _save(self):
         """Save the figure at its original size and publication resolution."""
         import matplotlib
-        from results.ai.figures import STYLE
+        from results.ai.figures import figure_rc
         safe = re.sub(r'[^\w\- ]+', '', self._title).strip().replace(' ', '_') or 'figure'
         path, chosen = QFileDialog.getSaveFileName(
             self, "Save figure", f"{safe}.png",
@@ -1136,7 +1137,7 @@ class FigureBubble(QFrame):
             ext = {'SVG': '.svg', 'PDF': '.pdf', 'TIFF': '.tiff'}.get(chosen.split(' ')[0].rstrip(','), '.png')
             path += ext
         try:
-            with matplotlib.rc_context(STYLE):
+            with matplotlib.rc_context(figure_rc(self._fig)):
                 self._fig.savefig(path, dpi=300, bbox_inches='tight', facecolor='white')
         except Exception as e:
             _itk_log.exception("Saving the figure failed")
@@ -1374,6 +1375,40 @@ class Conversation:
         self.cl.setSpacing(6)
         self.cl.addStretch()
         self.scroll.setWidget(self.cw)
+        self.follow = True
+        bar = self.scroll.verticalScrollBar()
+        bar.valueChanged.connect(self._on_scrolled)
+        bar.rangeChanged.connect(self._on_range)
+
+    FOLLOW_MARGIN = 48
+
+    def _on_scrolled(self, value):
+        """Follow new output only while the view is at the bottom.
+
+        Scrolling up to read an earlier answer stops the view from jumping
+        back down while the model writes; scrolling back to the bottom
+        resumes following.
+        """
+        bar = self.scroll.verticalScrollBar()
+        self.follow = value >= bar.maximum() - self.FOLLOW_MARGIN
+
+    def _on_range(self, _minimum, maximum):
+        """Keep the newest output in view as it grows, unless the user scrolled away."""
+        if self.follow:
+            self.scroll.verticalScrollBar().setValue(maximum)
+
+    def scroll_to_end(self, force=False):
+        """Show the newest message.
+
+        Args:
+            force (bool): Scroll even if the user is reading higher up, as
+                after sending a new message.
+        """
+        if force:
+            self.follow = True
+        if self.follow and shiboken6.isValid(self.scroll):
+            bar = self.scroll.verticalScrollBar()
+            bar.setValue(bar.maximum())
 
 
 class ConversationListItem(QFrame):

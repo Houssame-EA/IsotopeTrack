@@ -31,14 +31,15 @@ import numpy as np
 import pandas as pd
 
 from results.ai import analysis
+from results.ai.analysis import element_symbol
 from results.ai.figures import (
-    NAMESPACE as FIGURE_NAMESPACE, STYLE, FigureCollector, PyplotShim, describe_figure,
-    render_png, style_figure,
+    NAMESPACE as FIGURE_NAMESPACE, PANEL_LABEL_GID, STYLE, FigureCollector, PyplotShim, axes_title,
+    describe_figure, lab_colors, render_png, style_figure,
 )
 
 _itk_log = logging.getLogger("IsotopeTrack.results.ai.sandbox")
 
-CODE_EXEC_TIMEOUT = 45
+CODE_EXEC_TIMEOUT = None
 MAX_STDOUT_CHARS = 20000
 MAX_TABLE_ROWS = 2000
 
@@ -66,7 +67,7 @@ _BLOCKED_NAMES = frozenset({
 _BLOCKED_ATTRS = frozenset({
     'save', 'savez', 'savez_compressed', 'load', 'loadtxt', 'savetxt', 'genfromtxt',
     'fromfile', 'tofile', 'memmap', 'fromregex', 'DataSource', 'open', 'system', 'popen',
-    'remove', 'unlink', 'rename', 'rmdir', 'makedirs', 'mkdir', 'write_text', 'write_bytes',
+    'unlink', 'rmdir', 'makedirs', 'mkdir', 'write_text', 'write_bytes',
     'read_text', 'read_bytes', 'savefig', 'imsave', 'imread', 'eval', 'os', 'sys',
     'subprocess', 'shutil', 'builtins', 'importlib', 'ctypes', 'socket', 'pathlib', 'pickle',
     'marshal', 'codecs', 'glob', 'gi_frame', 'gi_code', 'cr_frame', 'ag_frame', 'f_back',
@@ -316,6 +317,8 @@ class ExecResult:
         findings (list): Findings recorded with ``record_finding``.
         error (str): Error message, empty when the code ran cleanly.
         warnings (list): Problems worth telling the model, e.g. empty panels.
+        notes (list): Things the model should know that need no fix, e.g. a
+            figure left out because nothing was drawn on it.
         numbers (list): Every number produced, for the fabrication check.
     """
 
@@ -325,6 +328,7 @@ class ExecResult:
     findings: list = field(default_factory=list)
     error: str = ''
     warnings: list = field(default_factory=list)
+    notes: list = field(default_factory=list)
     numbers: list = field(default_factory=list)
 
     @property
@@ -343,7 +347,10 @@ def format_exec_error(exc, code):
     Returns:
         str: ``Type: message`` plus the failing line when known.
     """
-    msg = f"{type(exc).__name__}: {exc}"
+    detail = str(exc)
+    if len(detail) > 300:
+        detail = detail[:300].rstrip() + ' ...'
+    msg = f"{type(exc).__name__}: {detail}"
     try:
         tb = traceback.extract_tb(exc.__traceback__)
         lineno = next((fr.lineno for fr in reversed(tb) if fr.filename == '<generated>'), None)
@@ -353,6 +360,106 @@ def format_exec_error(exc, code):
     except Exception:
         _itk_log.exception("Handled exception in format_exec_error")
     return msg
+
+
+STATS_SHORTCUTS = ('mannwhitneyu', 'kruskal', 'chi2_contingency', 'fisher_exact', 'ks_2samp', 'ttest_ind',
+                   'spearmanr', 'pearsonr', 'linregress', 'skew', 'kurtosis', 'gmean', 'binomtest', 'poisson')
+
+
+def _frames_in(ns, skip=('df', 'runs')):
+    """DataFrames the generated code created, by variable name."""
+    out = []
+    for name, value in list(ns.items()):
+        if name.startswith('_') or name in skip or not isinstance(value, pd.DataFrame):
+            continue
+        out.append((name, value))
+    return out
+
+
+def error_hint(exc, ns, ds):
+    """Advice that turns a common mistake into a one-step fix.
+
+    Small models lose most of their correction rounds on the same few
+    slips: a column name that does not exist, a scipy function called
+    without ``stats.``, sample names passed as colours, or a wrong argument
+    to an analysis function. The hint names the right thing directly.
+
+    Args:
+        exc (BaseException): The exception the code raised.
+        ns (dict): The namespace the code ran in.
+        ds (Dataset): The dataset.
+
+    Returns:
+        str: Hint lines, or an empty string.
+    """
+    import difflib
+    hints = []
+    text = str(exc)
+    try:
+        if isinstance(exc, KeyError) and exc.args and isinstance(exc.args[0], str):
+            key = exc.args[0]
+            bad_q = re.match(r"Unknown quantity '([^']+)'", key)
+            if bad_q:
+                try:
+                    ds.resolve_element(bad_q.group(1))
+                    hints.append(f"'{bad_q.group(1)}' is an element, not a quantity. element_summary takes the "
+                                 f"quantity first: element_summary('mass_fg', elements=['{bad_q.group(1)}']); "
+                                 f"for one element across samples use compare_samples('{bad_q.group(1)}').")
+                except Exception:
+                    pass
+                return '\n'.join("Hint: " + h for h in hints)
+            m = re.match(r'^([a-z_]+?)_([A-Za-z]{1,2}\d*|\d+[A-Za-z]{1,2})$', key)
+            if m:
+                try:
+                    hints.append(f"Column names use the isotope label: '{ds.column(m.group(1), m.group(2))}'. "
+                                 f"Use col('{m.group(1)}', '{m.group(2)}').")
+                except Exception:
+                    pass
+            if not hints:
+                try:
+                    label = ds.resolve_element(key)
+                    hints.append(f"'{key}' is an element, not a column. Its columns are named like "
+                                 f"counts_{label} and mass_fg_{label}; use col('mass', '{key}').")
+                except Exception:
+                    pass
+            frames = _frames_in(ns)
+            pool = list(ds.df.columns) + [c for _, f in frames for c in map(str, f.columns)]
+            close = [c for c in difflib.get_close_matches(key, list(dict.fromkeys(pool)), n=4, cutoff=0.6)
+                     if c != key][:3]
+            if close and not hints:
+                hints.append("Did you mean " + ', '.join(f"'{c}'" for c in close) + "?")
+            missing = [(n, f) for n, f in frames if key not in map(str, f.columns)][-4:]
+            for name, f in missing:
+                cols = ', '.join(map(str, list(f.columns)[:18]))
+                hints.append(f"{name} has columns: {cols}")
+        elif isinstance(exc, NameError):
+            m = re.search(r"name '([^']+)'", text)
+            name = m.group(1) if m else ''
+            if name == 'binom_test':
+                hints.append("Use stats.binomtest(k, n, p).pvalue (binom_test was removed from scipy).")
+            elif name:
+                try:
+                    from scipy import stats as _stats
+                    if hasattr(_stats, name):
+                        hints.append(f"Call it as stats.{name}(...).")
+                except Exception:
+                    pass
+        elif isinstance(exc, ValueError) and "'c' argument must be a color" in text:
+            hints.append("c= takes numbers for a colour scale. To colour by sample, loop: "
+                         "for i, s in enumerate(samples): ax.scatter(x[m], y[m], color=PALETTE[i % len(PALETTE)], label=s)")
+        elif isinstance(exc, TypeError) and 'Image data of dtype object' in text:
+            hints.append("imshow needs numbers: pass table.fillna(0).to_numpy(dtype=float).")
+        elif isinstance(exc, TypeError) and ('unexpected keyword argument' in text or 'multiple values' in text):
+            m = re.match(r'(\w+)\(\)', text)
+            fn = m.group(1) if m else ''
+            sig = next((sg for sg, _ in analysis.SIGNATURES if sg.startswith(fn + '(')), '') if fn else ''
+            if sig:
+                hints.append(f"Signature: {sig}")
+        elif isinstance(exc, ValueError) and 'truth value of a Series is ambiguous' in text:
+            hints.append("Combine conditions with & and | and wrap each in parentheses; use .any() or .all() for a single answer.")
+    except Exception:
+        _itk_log.exception("Could not build an error hint")
+    return '\n'.join("Hint: " + h for h in hints)
 
 
 def _bind(fn, ds):
@@ -392,9 +499,25 @@ def build_namespace(ds, collector, tables, findings):
         """Calibrated detection limit of an element, ``None`` when unknown."""
         return ds.lod(element, quantity, sample)
 
+    def lab_style():
+        """The lab colour of each sample; the lab style itself is always in use."""
+        return lab_colors(ds.samples)
+
     def col(quantity, element):
         """Column name of a quantity for an element, e.g. ``col('mass', 'Fe')``."""
         return ds.column(quantity, element)
+
+    def signal(sample, element, t0=None, t1=None):
+        """Raw trace of one element in one run: a DataFrame of ``time_s`` and ``counts``."""
+        if ds.acquisition is None:
+            raise RuntimeError("The raw signal is not available for this data")
+        return ds.acquisition.signal(sample, element, t0, t1)
+
+    def sample_summary():
+        """Per-sample results, one row per run and element (particles/mL, ug/L, background, limits)."""
+        if ds.acquisition is None:
+            raise RuntimeError("Per-sample results are not available for this data")
+        return ds.acquisition.summary()
 
     plt = PyplotShim(collector)
     ns = {
@@ -406,8 +529,10 @@ def build_namespace(ds, collector, tables, findings):
         'limits': ds.limits(), 'per_ml_factor': ds.per_ml_factor(),
         'data_context': ds.safe_context(),
         'show_table': show_table, 'record_finding': record_finding,
-        'lod': lod, 'col': col, 'element': ds.resolve_element,
+        'lod': lod, 'col': col, 'element': ds.resolve_element, 'symbol': element_symbol,
         'new_figure': collector.new_figure, 'plt': plt,
+        'signal': signal, 'sample_summary': sample_summary, 'lab_style': lab_style,
+        'SAMPLE_COLORS': lab_colors(ds.samples),
     }
     ns.update(FIGURE_NAMESPACE)
     for name, fn in analysis.FUNCTIONS.items():
@@ -415,6 +540,9 @@ def build_namespace(ds, collector, tables, findings):
     try:
         from scipy import stats
         ns['stats'] = stats
+        for name in STATS_SHORTCUTS:
+            if hasattr(stats, name):
+                ns[name] = getattr(stats, name)
     except Exception:
         _itk_log.exception("scipy.stats is not available to the sandbox")
     return ns
@@ -422,38 +550,85 @@ def build_namespace(ds, collector, tables, findings):
 
 def _has_content(fig):
     """Whether any panel of a figure has something drawn on it."""
-    for ax in fig.axes:
-        if ax.lines or ax.patches or ax.images or ax.texts or ax.collections:
-            return True
-    return False
+    return any(_axis_has_content(ax) for ax in fig.axes)
+
+
+def _axis_has_content(ax):
+    """Whether one panel has something drawn on it; panel letters alone do not count."""
+    texts = [t for t in ax.texts if t.get_gid() != PANEL_LABEL_GID]
+    return bool(ax.lines or ax.patches or ax.images or texts or ax.collections)
+
+
+def _hide_empty_panels(fig):
+    """Hide the unused panels of a grid, e.g. the sixth of a 2 x 3 grid holding five plots.
+
+    Returns:
+        int: Panels hidden.
+    """
+    panels = [ax for ax in fig.axes if ax.get_label() != '<colorbar>']
+    used = [ax for ax in panels if _axis_has_content(ax)]
+    if not used or len(used) == len(panels):
+        return 0
+    hidden = 0
+    for ax in panels:
+        if any(ax is other for other in used):
+            continue
+        if any(o.get_position().bounds == ax.get_position().bounds for o in used):
+            continue
+        ax.set_visible(False)
+        hidden += 1
+    return hidden
 
 
 def _finish_figures(collector, result):
-    """Style, render and describe the figures, collecting any drawing errors."""
+    """Style, render and describe the figures, collecting any drawing errors.
+
+    A figure with nothing drawn on it is left out: the model is told in a
+    note when the code showed something else, and asked for a redraw when
+    the empty figure was all it made. The unused panels of a grid are hidden.
+    """
+    shown = 0
+    empty = []
     for i, fig in enumerate(collector.figures, start=1):
+        if not _has_content(fig):
+            empty.append(i)
+            continue
+        _hide_empty_panels(fig)
+        shown += 1
+        i = shown
         try:
             style_figure(fig)
             png = render_png(fig)
             desc, warns = describe_figure(fig, i)
         except Exception as e:
-            _itk_log.exception("Figure %d failed to draw", i)
+            _itk_log.warning("Figure %d failed to draw: %s: %s", i, type(e).__name__, e)
             result.error = result.error or f"Figure {i} could not be drawn — {type(e).__name__}: {e}"
             continue
         title = fig._suptitle.get_text() if getattr(fig, '_suptitle', None) else ''
         if not title:
-            titles = [ax.get_title() for ax in fig.axes if ax.get_title()]
+            titles = [axes_title(ax) for ax in fig.axes if axes_title(ax)]
             title = titles[0] if titles else f'Figure {i}'
         result.figures.append({'figure': fig, 'png': png, 'description': desc, 'title': title})
         result.warnings.extend(warns)
+    for i in empty:
+        if result.figures or result.tables or result.text:
+            result.notes.append(f"Figure {i} had nothing drawn on it, so it was not shown. Create a "
+                                "figure only where you draw on it, e.g. inside the if-branch that plots.")
+        else:
+            result.warnings.append(f"Figure {i} is empty: nothing was drawn on it, so nothing could be shown.")
 
 
 def execute(code, ds, timeout=CODE_EXEC_TIMEOUT, stop_event=None):
     """Run generated code against a dataset.
 
+    The code runs until it finishes or *stop_event* is set, as the Stop
+    button does; there is no time limit unless *timeout* is given.
+
     Args:
         code (str): Python written by the model.
         ds (Dataset): The dataset it works on.
-        timeout (float): Seconds before the run is abandoned.
+        timeout (float): Seconds before the run is abandoned, ``None`` for no
+            limit.
         stop_event (threading.Event): Set it from another thread to stop the
             code at its next line, as the Stop button does.
 
@@ -501,13 +676,16 @@ def execute(code, ds, timeout=CODE_EXEC_TIMEOUT, stop_event=None):
                 exec(compiled, ns)
         except BaseException as e:
             err[0] = format_exec_error(e, code)
+            hint = error_hint(e, ns, ds)
+            if hint:
+                err[0] += '\n' + hint
         finally:
             sys.settrace(None)
 
     worker = threading.Thread(target=run, daemon=True)
     worker.start()
-    deadline = time.monotonic() + timeout
-    while worker.is_alive() and not stop.is_set() and time.monotonic() < deadline:
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while worker.is_alive() and not stop.is_set() and (deadline is None or time.monotonic() < deadline):
         worker.join(timeout=0.05)
     if worker.is_alive() or stop.is_set():
         stopped_by_user = stop.is_set()
@@ -588,6 +766,8 @@ def result_digest(result, max_rows=15, max_text=2500):
         parts.append("FIGURE SHOWN TO THE USER:\n" + fig['description'])
     if result.warnings:
         parts.append("FIGURE CHECKS:\n" + "\n".join(f"- {w}" for w in result.warnings))
+    if result.notes:
+        parts.append("NOTES:\n" + "\n".join(f"- {n}" for n in result.notes))
     for f in result.findings:
         parts.append(f"FINDING RECORDED: {f['claim']}")
     if not parts:

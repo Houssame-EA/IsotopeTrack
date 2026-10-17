@@ -319,6 +319,9 @@ class MainWindow(QMainWindow):
         if auto_check_enabled() and not getattr(_app, '_update_check_done', False):
             _app._update_check_done = True
             QTimer.singleShot(4000, lambda: self._update_checker.check(silent=True))
+        if not getattr(_app, '_crash_consent_done', False):
+            _app._crash_consent_done = True
+            QTimer.singleShot(2500, self._maybe_ask_crash_consent)
 
         from save_export.autosave import AutosaveManager
         self._autosave = AutosaveManager(self)
@@ -1106,6 +1109,12 @@ class MainWindow(QMainWindow):
                                  self.show_calibration_methods)
         about_action = _ma('fa6s.circle-info', "About IsotopeTrack",
                            self.show_about_dialog)
+        bug_action = _ma('fa6s.bug', "Report a Bug…", self.show_bug_report)
+        self._crash_reports_action = QAction("Send Anonymous Crash Reports", self)
+        self._crash_reports_action.setCheckable(True)
+        from tools.crash_reporting import reports_enabled
+        self._crash_reports_action.setChecked(reports_enabled())
+        self._crash_reports_action.toggled.connect(self._on_crash_reports_toggled)
         update_action = _ma('fa6s.cloud-arrow-down', "Check for Updates…",
                             lambda: self._update_checker.check(silent=False))
         self._auto_update_action = QAction("Check for Updates on Startup", self)
@@ -1122,7 +1131,42 @@ class MainWindow(QMainWindow):
         help_menu.addSeparator()
         help_menu.addAction(update_action)
         help_menu.addAction(self._auto_update_action)
+        help_menu.addSeparator()
+        help_menu.addAction(bug_action)
+        help_menu.addAction(self._crash_reports_action)
+        help_menu.addSeparator()
         help_menu.addAction(about_action)
+
+    def show_bug_report(self):
+        """Open the anonymous Report a Bug form."""
+        from tools.bug_report_dialog import show_bug_report_dialog
+        show_bug_report_dialog(self)
+
+    def _maybe_ask_crash_consent(self):
+        """Ask once, after the window is on screen, whether crash reports may be sent."""
+        if not self.isVisible():
+            QTimer.singleShot(1500, self._maybe_ask_crash_consent)
+            return
+        from tools.bug_report_dialog import ask_crash_consent_once
+        answer = ask_crash_consent_once(self)
+        if answer is not None:
+            self._sync_crash_reports_actions(answer)
+
+    def _on_crash_reports_toggled(self, enabled):
+        """Store the crash report choice and mirror it in every open window."""
+        from tools.crash_reporting import set_reports_enabled
+        set_reports_enabled(enabled)
+        self._sync_crash_reports_actions(enabled)
+
+    @staticmethod
+    def _sync_crash_reports_actions(enabled):
+        """Set the Help menu tick of every open window without re-triggering it."""
+        for w in getattr(QApplication.instance(), 'main_windows', []):
+            action = getattr(w, '_crash_reports_action', None)
+            if action is not None and action.isChecked() != bool(enabled):
+                action.blockSignals(True)
+                action.setChecked(bool(enabled))
+                action.blockSignals(False)
 
     def open_new_window(self):
         self.user_action_logger.log_action('NEW_WINDOW', 'Opened new analysis window')

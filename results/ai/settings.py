@@ -6,16 +6,25 @@ import time
 import requests
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel,
-    QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QSlider, QSpinBox,
+    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QHBoxLayout,
+    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QSlider, QSpinBox,
     QVBoxLayout,
 )
 
-from results.ai.servers import (
-    MLX_BASE, OLLAMA_TAGS, discover_local_models, fetch_ollama_model_context, fetch_ollama_models,
-    fetch_openai_models, install_server_shutdown_hooks, mlx_server_command, pids_listening_on,
-    port_of, register_launched_server, shutdown_launched_servers, terminate_pids,
+from results.ai.memory import (
+    fit, fmt_gb, folder_is_quantized, folder_weight_bytes, memory_line, mlx_model_folder, recommend,
+    system_memory,
 )
+from results.ai.servers import (
+    MLX_BASE, OLLAMA_TAGS, add_mlx_model_dir, discover_local_models, fetch_ollama_details,
+    fetch_ollama_model_context, fetch_ollama_models, fetch_openai_models, install_server_shutdown_hooks,
+    mlx_server_command, pids_listening_on, port_of, register_launched_server, shutdown_launched_servers,
+    terminate_pids,
+)
+
+IDLE_CHOICES = [("Never", 0), ("5 minutes", 5), ("10 minutes", 10), ("15 minutes", 15),
+                ("30 minutes", 30), ("1 hour", 60)]
+RECOMMENDED_MARK = "★ Recommended for this computer"
 from results.ai.theme import UI_PREFS, style_combo_popup, style_model_list
 
 _itk_log = logging.getLogger("IsotopeTrack.results.ai.settings")
@@ -37,6 +46,8 @@ class BackendDialog(QDialog):
         self._ctx_note = None
         self._model = None
         self._mlx_model_combo = None
+        self._sizes = {}
+        self._mem_total, self._mem_avail = system_memory()
         lo = QVBoxLayout(self); lo.setSpacing(12)
 
         hl = QHBoxLayout(); hl.addWidget(QLabel("Backend:"))
@@ -46,6 +57,12 @@ class BackendDialog(QDialog):
         elif current_cfg.get('backend') == 'custom': self._backend.setCurrentIndex(2)
         self._backend.currentIndexChanged.connect(self._on_backend)
         hl.addWidget(self._backend, stretch=1); lo.addLayout(hl)
+        self._mem_note = QLabel(memory_line(self._mem_total, self._mem_avail))
+        self._mem_note.setObjectName('fbStatus')
+        self._mem_note.setToolTip(
+            "Models marked ★ leave about half of the memory for your other work.\n"
+            "The sizes are what a model needs while answering: its weights plus working memory.")
+        lo.addWidget(self._mem_note)
 
         self._ollama_frame = QFrame()
         of = QVBoxLayout(self._ollama_frame); of.setContentsMargins(0,0,0,0); of.setSpacing(8)
@@ -58,6 +75,7 @@ class BackendDialog(QDialog):
         self._model = style_model_list(QListWidget())
         self._model.itemDoubleClicked.connect(lambda _: self.accept())
         self._model.currentItemChanged.connect(lambda *_: self._apply_model_context())
+        self._model.currentItemChanged.connect(lambda *_: self._update_fit())
         of.addWidget(self._model)
         cur = current_cfg.get('model', '')
         if cur:
@@ -79,8 +97,12 @@ class BackendDialog(QDialog):
         mrb = QPushButton("↻"); mrb.setFixedWidth(32)
         mrb.setToolTip("Rescan the local model cache")
         mrb.clicked.connect(self._scan_mlx_models); mmh.addWidget(mrb)
+        afb = QPushButton("Add folder…")
+        afb.setToolTip("Add a folder holding MLX models, e.g. converted or fine-tuned ones")
+        afb.clicked.connect(self._add_model_folder); mmh.addWidget(afb)
         mf.addLayout(mmh)
         self._mlx_model_combo = style_model_list(QListWidget())
+        self._mlx_model_combo.currentItemChanged.connect(lambda *_: self._update_fit())
         mf.addWidget(self._mlx_model_combo)
         ph = QHBoxLayout(); ph.addWidget(QLabel("Host:"))
         self._mlx_host = QLineEdit()
@@ -135,15 +157,41 @@ class BackendDialog(QDialog):
         self._ctx.setToolTip(
             "Detected from the selected model when the server reports it. "
             "Larger windows use more memory.")
+        self._ctx.setMinimumWidth(120)
         cl.addWidget(self._ctx)
-        self._ctx_note = QLabel("")
-        cl.addWidget(self._ctx_note)
         cl.addStretch(); lo.addLayout(cl)
+        self._ctx_note = QLabel("")
+        self._ctx_note.setWordWrap(True)
+        self._ctx_note.setObjectName('fbStatus')
+        lo.addWidget(self._ctx_note)
+        self._fit_note = QLabel("")
+        self._fit_note.setWordWrap(True)
+        lo.addWidget(self._fit_note)
+
+        il = QHBoxLayout()
+        il.addWidget(QLabel("Free the model's memory after:"))
+        self._idle = style_combo_popup(QComboBox())
+        for text, minutes in IDLE_CHOICES:
+            self._idle.addItem(text, minutes)
+        idle_now = int(current_cfg.get('idle_unload_min', 10))
+        self._idle.setCurrentIndex(max(0, [m for _, m in IDLE_CHOICES].index(idle_now)
+                                       if idle_now in [m for _, m in IDLE_CHOICES] else 2))
+        self._idle.setToolTip(
+            "Unload the model when no question was asked for this long, so its memory\n"
+            "goes back to your other work. It loads again on your next question\n"
+            "(a few seconds to a minute, depending on the model).")
+        il.addWidget(self._idle)
+        il.addWidget(QLabel("without questions"))
+        il.addStretch(); lo.addLayout(il)
+        self._close_chk = QCheckBox("Also free it when the AI window closes")
+        self._close_chk.setChecked(bool(current_cfg.get('unload_on_close', True)))
+        lo.addWidget(self._close_chk)
 
         el = QHBoxLayout()
         el.addWidget(QLabel("Exploration depth (turns):"))
         self._explore_turns = style_combo_popup(QComboBox())
         self._explore_turns.addItems(['5','10','15','20','30'])
+        self._explore_turns.setMinimumWidth(90)
         self._explore_turns.setToolTip(
             "How many query→result cycles the model runs when you click Explore.\n"
             "More turns = deeper analysis but slower.")
@@ -162,9 +210,17 @@ class BackendDialog(QDialog):
         self._figfix_chk = QCheckBox("Ask the model to fix empty or unlabelled figures")
         self._figfix_chk.setChecked(bool(current_cfg.get('fix_figures', True)))
         lo.addWidget(self._figfix_chk)
+        self._think_chk = QCheckBox("Thinking mode (slower)")
+        self._think_chk.setToolTip(
+            "Lets models that can reason (for example Qwen) think before they answer.\n"
+            "It can help on hard questions, but every answer takes much longer,\n"
+            "often several times longer. Leave it off for everyday use.\n"
+            "Ollama and MLX only; models without thinking ignore it.")
+        self._think_chk.setChecked(bool(current_cfg.get('thinking', False)))
+        lo.addWidget(self._think_chk)
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.accepted.connect(self.accept); btns.rejected.connect(self.reject)
+        btns.accepted.connect(self._accept_if_fits); btns.rejected.connect(self.reject)
         lo.addWidget(btns)
 
         self._on_backend(self._backend.currentIndex())
@@ -183,6 +239,7 @@ class BackendDialog(QDialog):
         self._ollama_frame.setVisible(idx == 0)
         self._mlx_frame.setVisible(idx == 1)
         self._custom_frame.setVisible(idx == 2)
+        self._update_fit()
         if idx == 0:
             QTimer.singleShot(0, self._fetch_ollama_models)
         elif idx == 1:
@@ -197,11 +254,9 @@ class BackendDialog(QDialog):
             models, reachable, detail = fetch_ollama_models(timeout=6)
             if models:
                 cur = self._selected_ollama_model()
-                self._model.clear()
-                for name in models:
-                    item = QListWidgetItem(name)
-                    item.setData(Qt.UserRole, name)
-                    self._model.addItem(item)
+                details = fetch_ollama_details(timeout=6)
+                infos = [{'model': n, **details.get(n, {'bytes': 0, 'quantized': False})} for n in models]
+                self._fill_list(self._model, [(n, n) for n in models], infos)
                 self._model.setCurrentRow(models.index(cur) if cur in models else 0)
                 self._ollama_status.setText(f"✓ {len(models)} model(s) installed — "
                                             f"selected: {self._selected_ollama_model()}")
@@ -241,11 +296,12 @@ class BackendDialog(QDialog):
         host = self._mlx_host.text().strip().rstrip('/') or MLX_BASE
         current = self._selected_mlx_model() or self._mlx_model
         entries = [e for e in discover_local_models(host) if e['backend'] == 'mlx']
-        self._mlx_model_combo.clear()
+        infos = []
         for entry in entries:
-            item = QListWidgetItem(entry['label'])
-            item.setData(Qt.UserRole, entry['model'])
-            self._mlx_model_combo.addItem(item)
+            folder = mlx_model_folder(entry['model'])
+            infos.append({'model': entry['model'], 'bytes': folder_weight_bytes(folder) if folder else 0,
+                          'quantized': folder_is_quantized(folder) if folder else False})
+        self._fill_list(self._mlx_model_combo, [(e['label'], e['model']) for e in entries], infos)
         if entries:
             ids = [e['model'] for e in entries]
             self._mlx_model_combo.setCurrentRow(
@@ -261,6 +317,83 @@ class BackendDialog(QDialog):
             self._mlx_status.setText(
                 "No local models found — download one, e.g. "
                 "huggingface-cli download mlx-community/<model>")
+
+    def _fill_list(self, widget, rows, infos):
+        """Fill a model list, adding each model's memory need and the recommended mark.
+
+        Args:
+            widget (QListWidget): The list.
+            rows (list): ``(label, model id)`` pairs.
+            infos (list): Dicts with ``model``, ``bytes`` and ``quantized``.
+        """
+        best = recommend(infos, self._mem_total)
+        widget.clear()
+        for (label, model), info in zip(rows, infos):
+            self._sizes[model] = info.get('bytes') or 0
+            text = label
+            if info.get('bytes'):
+                from results.ai.memory import needed_bytes
+                text += f"   ·   needs ~{fmt_gb(needed_bytes(info['bytes']))}"
+            if model == best:
+                text += f"   {RECOMMENDED_MARK}"
+            item = QListWidgetItem(text)
+            item.setData(Qt.UserRole, model)
+            if model == best:
+                font = item.font(); font.setBold(True); item.setFont(font)
+            widget.addItem(item)
+
+    def _current_model_for_fit(self):
+        """The model the fit note describes: the one selected for the active backend."""
+        idx = self._backend.currentIndex()
+        if idx == 0:
+            return self._selected_ollama_model()
+        if idx == 1:
+            return self._selected_mlx_model()
+        return ''
+
+    def _model_fit(self):
+        """Whether the selected model fits this computer now."""
+        self._mem_total, self._mem_avail = system_memory()
+        model = self._current_model_for_fit()
+        return fit(self._sizes.get(model, 0), self._mem_total, self._mem_avail)
+
+    def _update_fit(self):
+        """Show whether the selected model fits, in colour when it does not."""
+        if getattr(self, '_fit_note', None) is None:
+            return
+        verdict = self._model_fit()
+        self._mem_note.setText(memory_line(self._mem_total, self._mem_avail))
+        self._fit_note.setText(verdict['text'])
+        colour = {'too_big': '#D55E00', 'tight': '#E69F00'}.get(verdict['level'])
+        self._fit_note.setStyleSheet(f"color:{colour}; font-weight:600;" if colour else "")
+        self._fit_note.setObjectName('' if colour else 'fbStatus')
+
+    def _confirm_fit(self):
+        """Ask before using a model that does not fit now.
+
+        Returns:
+            bool: True to go ahead.
+        """
+        verdict = self._model_fit()
+        if verdict['level'] not in ('too_big', 'tight'):
+            return True
+        answer = QMessageBox.question(
+            self, "Model may not fit", verdict['text'] + "\n\nUse it anyway?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        return answer == QMessageBox.Yes
+
+    def _accept_if_fits(self):
+        """Close with OK, after a warning when the model will not fit."""
+        if self._confirm_fit():
+            self.accept()
+
+    def _add_model_folder(self):
+        """Let the user add a folder of MLX models and list them."""
+        path = QFileDialog.getExistingDirectory(self, "Folder with MLX models")
+        if not path:
+            return
+        add_mlx_model_dir(path)
+        self._scan_mlx_models()
 
     def _selected_mlx_model(self):
         """Return the model id chosen in the MLX list.
@@ -284,6 +417,8 @@ class BackendDialog(QDialog):
         model = self._selected_mlx_model()
         if not model:
             self._mlx_status.setText("✗ Pick a model first")
+            return
+        if not self._confirm_fit():
             return
         host = self._mlx_host.text().strip().rstrip('/') or MLX_BASE
         if fetch_openai_models(host, timeout=2)[1]:
@@ -385,7 +520,7 @@ class BackendDialog(QDialog):
         if self._ctx.findText(str(length)) < 0:
             self._ctx.addItem(str(length))
         self._ctx.setCurrentText(str(length))
-        self._ctx_note.setText(f"detected for {model}")
+        self._ctx_note.setText(f"Context window detected for {model}.")
 
     def _selected_ollama_model(self):
         """Return the Ollama model name highlighted in the list.
@@ -462,6 +597,9 @@ class BackendDialog(QDialog):
             'interpret_results': self._interpret_chk.isChecked(),
             'verify_numbers': self._verify_chk.isChecked(),
             'fix_figures': self._figfix_chk.isChecked(),
+            'thinking': self._think_chk.isChecked(),
+            'idle_unload_min': int(self._idle.currentData() or 0),
+            'unload_on_close': self._close_chk.isChecked(),
             'mlx_host': self._mlx_host.text().strip(),
             'custom_base_url': self._custom_url.text().strip() if idx == 2 else '',
             'custom_api_key':  self._custom_key.text().strip() if idx == 2 else '',

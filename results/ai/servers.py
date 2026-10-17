@@ -489,6 +489,59 @@ def discover_cached_mlx_models():
                                         r.lower()))
 
 
+def folder_models(dirs):
+    """MLX models kept in folders the user added, e.g. converted or fine-tuned ones.
+
+    A folder counts when it, or one of its sub-folders, holds a
+    ``config.json`` and weights.
+
+    Args:
+        dirs (list): Folders to look in.
+
+    Returns:
+        list: Absolute model folder paths, sorted by name.
+    """
+    found = []
+    for d in dirs or []:
+        base = os.path.abspath(os.path.expanduser(str(d)))
+        if not os.path.isdir(base):
+            continue
+        for cand in [base] + sorted(glob.glob(os.path.join(base, '*'))):
+            if (os.path.isdir(cand) and os.path.exists(os.path.join(cand, 'config.json'))
+                    and (glob.glob(os.path.join(cand, '*.safetensors')) or glob.glob(os.path.join(cand, '*.npz')))):
+                if cand not in found:
+                    found.append(cand)
+    return sorted(found, key=lambda p: os.path.basename(p).lower())
+
+
+def mlx_model_dirs():
+    """Folders the user added for MLX models, kept between sessions."""
+    try:
+        from PySide6.QtCore import QSettings
+        value = QSettings("IsotopeTrack", "IsotopeTrack").value("ai/mlx_model_dirs", [])
+    except Exception:
+        return []
+    if isinstance(value, str):
+        value = [value] if value else []
+    return [str(v) for v in (value or []) if v]
+
+
+def add_mlx_model_dir(path):
+    """Remember a folder of MLX models for later sessions.
+
+    Args:
+        path (str): Folder holding one model, or several in sub-folders.
+    """
+    dirs = mlx_model_dirs()
+    if path and path not in dirs:
+        dirs.append(path)
+    try:
+        from PySide6.QtCore import QSettings
+        QSettings("IsotopeTrack", "IsotopeTrack").setValue("ai/mlx_model_dirs", dirs)
+    except Exception:
+        _itk_log.exception("Could not save the MLX model folders")
+
+
 def mlx_server_command(model, port):
     """Build the command that starts an MLX server for a model.
 
@@ -517,8 +570,12 @@ def mlx_server_command(model, port):
             '--port', str(port)]
 
 
-def discover_local_models(mlx_host=MLX_BASE):
+def discover_local_models(mlx_host=MLX_BASE, extra_dirs=None):
     """Collect every model this machine can serve without further setup.
+
+    Args:
+        mlx_host (str): MLX server URL.
+        extra_dirs (list): Model folders the user added; the saved ones when omitted.
 
     Returns:
         list: Entries of ``{'backend', 'model', 'label', 'ready'}`` where
@@ -545,6 +602,11 @@ def discover_local_models(mlx_host=MLX_BASE):
             continue
         entries.append({'backend': 'mlx', 'model': repo,
                         'label': f"MLX (cached) · {repo}", 'ready': False})
+    for path in folder_models(mlx_model_dirs() if extra_dirs is None else extra_dirs):
+        if path in served:
+            continue
+        entries.append({'backend': 'mlx', 'model': path,
+                        'label': f"MLX (folder) · {os.path.basename(path)}", 'ready': False})
     return entries
 
 
@@ -585,6 +647,35 @@ def fetch_ollama_models(base_url=OLLAMA_BASE, timeout=PROBE_TIMEOUT):
             return sorted(set(names)), True, ''
         detail = "no models installed"
     return [], reachable, detail
+
+
+def fetch_ollama_details(base_url=OLLAMA_BASE, timeout=PROBE_TIMEOUT):
+    """Size and precision of each installed Ollama model.
+
+    Args:
+        base_url (str): Ollama base URL.
+        timeout (float): Per-request timeout in seconds.
+
+    Returns:
+        dict: ``{name: {'bytes': int, 'quantized': bool}}``; empty when
+        Ollama cannot be reached.
+    """
+    for base in host_variants(base_url):
+        try:
+            r = local_get(f"{base}/api/tags", timeout=timeout)
+            if r.status_code != 200:
+                continue
+            out = {}
+            for entry in r.json().get('models', []) or []:
+                name = entry.get('name') or entry.get('model') or ''
+                level = str((entry.get('details') or {}).get('quantization_level') or '').upper()
+                if name:
+                    out[name] = {'bytes': int(entry.get('size') or 0),
+                                 'quantized': bool(level) and level not in ('F16', 'BF16', 'F32')}
+            return out
+        except Exception:
+            continue
+    return {}
 
 
 def fetch_openai_models(base_url, timeout=PROBE_TIMEOUT, api_key=''):
