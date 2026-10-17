@@ -98,6 +98,71 @@ class TestAnalyses:
         assert 'real association' in verdict[('107Ag', '197Au')]
         assert verdict[('48Ti', '56Fe')] == 'explained by chance coincidence'
 
+    def test_co_occurrence_leaves_out_isotopes_of_one_element(self, planted):
+        """206Pb and 207Pb always share particles, so they are not tested as a pair unless asked."""
+        ds, _ = planted
+        out = A.co_occurrence(ds)
+        assert not ((out['a'].str.endswith('Pb')) & (out['b'].str.endswith('Pb'))).any()
+        assert 'isotopes of one element left out' in out.attrs['note']
+        both = A.co_occurrence(ds, same_element=True, top=100)
+        assert ((both['a'] == '206Pb') & (both['b'] == '207Pb')).any()
+
+    def test_molar_ratio_finds_the_shifted_sample(self, planted):
+        """Ce/La is 2:1 in River_A and 1:1 in the shifted sample, and tight where it is fixed."""
+        ds, truth = planted
+        out = A.molar_ratio(ds, 'Ce', 'La').set_index('sample')
+        assert out.at['River_A', 'simple_ratio'] == '2:1'
+        assert out.at[truth.cela_shift_sample, 'simple_ratio'] == '1:1'
+        assert out.at['River_A', 'log10_iqr'] < 0.15
+        assert out.at[truth.cela_shift_sample, 'p_vs_rest'] < 1e-10
+        assert out.at['Spiked_C', 'n'] == 0
+        assert 'Kruskal-Wallis' in out.attrs['note']
+
+    @pytest.mark.parametrize('value, expected', [(2.02, '2:1'), (0.49, '1:2'), (1.0, '1:1'), (1.51, '3:2'),
+                                                 (2.81, ''), (7.0, ''), (0, '')])
+    def test_simple_ratio(self, value, expected):
+        """Whole-number ratios are named only when close."""
+        assert A.simple_ratio(value) == expected
+
+    def test_isotope_ratio_flags_the_non_natural_sample(self, planted):
+        """206Pb/207Pb is natural in two samples and about 15 % low in the planted one."""
+        ds, truth = planted
+        out = A.isotope_ratio(ds, '206Pb', '207Pb').set_index('sample')
+        assert out['natural'].iloc[0] == pytest.approx(1.0934, rel=0.01)
+        assert -20 < out.at[truth.pb_sample, 'deviation_pct'] < -10
+        assert out.at[truth.pb_sample, 'pct_outside_2sd'] > 20
+        others = out.drop(index=truth.pb_sample)
+        assert (others['deviation_pct'].abs() < 3).all() and (others['pct_outside_2sd'] < 15).all()
+        with pytest.raises(ValueError):
+            A.isotope_ratio(ds, '206Pb', '206Pb')
+
+    def test_element_correlation_slopes(self, planted):
+        """La scales with Ce at slope 1 in River_A and about 0.7 in the shifted sample."""
+        ds, truth = planted
+        out = A.element_correlation(ds, 'Ce', 'La').set_index('sample')
+        assert out.at['River_A', 'slope_low'] <= 1.0 <= out.at['River_A', 'slope_high'] + 0.02
+        assert 0.6 < out.at[truth.cela_shift_sample, 'slope'] < 0.8
+        assert out.at['River_A', 'spearman_rho'] > 0.9
+
+    def test_crust_ratio_against_rudnick_and_gao(self, planted):
+        """Ce/La is crust-like where it is 2:1 and half the crust value in the shifted sample."""
+        from results.ai.crust import UCC_PPM, crust_mass_ratio
+        ds, truth = planted
+        assert UCC_PPM['Ce'] == 63.0 and UCC_PPM['La'] == 31.0 and UCC_PPM['Pb'] == 17.0
+        assert UCC_PPM['Ti'] == pytest.approx(3836, rel=0.002) and UCC_PPM['Na'] == pytest.approx(24260, rel=0.002)
+        assert crust_mass_ratio('Ce', 'La') == pytest.approx(63 / 31)
+        assert crust_mass_ratio('Ce', 'Xx') is None
+        out = A.crust_ratio(ds, 'Ce', 'La').set_index('sample')
+        assert 0.85 < out.at['River_A', 'ef_particles'] < 1.15
+        assert 0.4 < out.at[truth.cela_shift_sample, 'ef_particles'] < 0.6
+        assert 'Rudnick & Gao' in out.attrs['note']
+        ag = A.crust_ratio(ds, 'Ag', 'Au').set_index('sample')
+        assert ag.at[truth.alloy_sample, 'ef_particles'] < 0.1
+
+    def test_element_symbol(self):
+        """Isotope labels map to their element symbol."""
+        assert [A.element_symbol(x) for x in ('56Fe', '238U', 'Fe', '107Ag')] == ['Fe', 'U', 'Fe', 'Ag']
+
     def test_time_bursts_finds_the_planted_burst(self, planted):
         """The Fe burst is found in River_B, between 20 and 22 s."""
         ds, truth = planted

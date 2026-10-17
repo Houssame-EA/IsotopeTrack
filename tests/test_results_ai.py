@@ -290,7 +290,7 @@ class TestFigurePresentation:
     def test_overlapping_titles_are_flagged(self, ds):
         """Text drawn on top of other text is reported for a fix."""
         res = sb.execute("fig, ax = plt.subplots()\nax.plot([1, 2])\nax.set_xlabel('x'); ax.set_ylabel('y')\n"
-                         "ax.set_title('A long panel title', y=0.5)\nax.text(0.5, 0.5, 'x', transform=ax.transAxes)\n"
+                         "ax.set_title('A long panel title', loc='center', y=0.5)\nax.text(0.5, 0.5, 'x', transform=ax.transAxes)\n"
                          "ax.legend(['A long panel title'], loc='center')", ds)
         assert any('overlap' in w for w in res.warnings)
 

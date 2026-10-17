@@ -4,8 +4,10 @@ Used by the tests and by :mod:`results.ai.benchmark`. Each element's
 particles arrive as an independent Poisson process with a log-normal size
 distribution; events that overlap in time merge into one multi-element
 event, exactly as two particles hitting the plasma together would. Anything
-planted on top, a real Ce+La association, an Ag+Au alloy population or a
-contamination burst, is listed in :class:`Truth`.
+planted on top, a real Ce+La association, an Ag+Au alloy population, a
+contamination burst, a sample whose Ce-La particles have another
+composition, or a sample with non-natural Pb isotopes, is listed in
+:class:`Truth`.
 """
 from __future__ import annotations
 
@@ -15,11 +17,19 @@ from dataclasses import dataclass, field
 import numpy as np
 
 DENSITY = {'48Ti': 4.23, '56Fe': 5.24, '140Ce': 7.22, '139La': 6.51,
-           '107Ag': 10.49, '197Au': 19.3, '27Al': 3.95}
+           '107Ag': 10.49, '197Au': 19.3, '27Al': 3.95, '206Pb': 11.34, '207Pb': 11.34}
 MOLAR = {'48Ti': 47.95, '56Fe': 55.93, '140Ce': 139.9, '139La': 138.9,
-         '107Ag': 106.9, '197Au': 196.97, '27Al': 26.98}
+         '107Ag': 106.9, '197Au': 196.97, '27Al': 26.98, '206Pb': 205.97, '207Pb': 206.98}
 SENSITIVITY = {'48Ti': 60.0, '56Fe': 45.0, '140Ce': 900.0, '139La': 850.0,
-               '107Ag': 500.0, '197Au': 700.0, '27Al': 30.0}
+               '107Ag': 500.0, '197Au': 700.0, '27Al': 30.0, '206Pb': 1500.0, '207Pb': 1500.0}
+PB_NATURAL = 1.0934
+"""Natural 206Pb/207Pb atom ratio."""
+PB_SHIFTED = 0.93
+"""206Pb/207Pb of the planted non-natural lead, like ore or smelter lead."""
+LA_CE_SHIFTED = 1.0
+"""La/Ce mass ratio of the planted Ce-La particles of another composition (0.5 elsewhere)."""
+LA_CE_SLOPE_SHIFTED = 0.7
+"""How La scales with Ce in those particles (1.0 elsewhere)."""
 
 
 @dataclass
@@ -35,6 +45,9 @@ class Truth:
         lod_mass_fg (dict): Mass detection limit per element.
         associated (tuple): The element pair planted as one particle type.
         chance_pair (tuple): A pair that only meets by coincidence.
+        cela_shift_sample (str): Sample whose Ce-La particles have another
+            La/Ce ratio and La growing more slowly than Ce.
+        pb_sample (str): Sample whose lead has a non-natural 206Pb/207Pb ratio.
     """
 
     samples: list = field(default_factory=list)
@@ -45,6 +58,32 @@ class Truth:
     lod_mass_fg: dict = field(default_factory=dict)
     associated: tuple = ('140Ce', '139La')
     chance_pair: tuple = ('48Ti', '56Fe')
+    cela_shift_sample: str = ''
+    pb_sample: str = ''
+
+
+def planted_defaults(samples, alloy_sample):
+    """Which samples get the shifted Ce-La particles and the non-natural lead.
+
+    The Ce-La shift goes to the second sample that has Ce-La particles, so
+    there is always another one to compare with; the lead goes to the last
+    sample, or the first when the last already has the Ce-La shift.
+
+    Args:
+        samples (list): Sample names.
+        alloy_sample (str): The sample with Ag-Au instead of Ce-La particles.
+
+    Returns:
+        tuple: ``(cela_shift_sample, pb_sample)``.
+    """
+    with_cela = [s for s in samples if s != alloy_sample]
+    shift = with_cela[1] if len(with_cela) > 1 else ''
+    pb = samples[-1] if samples[-1] != shift else samples[0]
+    return shift, pb
+
+
+LOD_MASS_FG = {'48Ti': 0.12, '56Fe': 0.15, '140Ce': 0.02, '139La': 0.02,
+               '107Ag': 0.05, '197Au': 0.05, '27Al': 0.6, '206Pb': 0.01, '207Pb': 0.01}
 
 
 def _mass_fg(d_nm, rho):
@@ -79,10 +118,17 @@ def _events(rng, sample, truth, scale):
     add(_arrivals(rng, 25 * scale, span),
         lambda: {'56Fe': _mass_fg(rng.lognormal(math.log(55), 0.4), DENSITY['56Fe'])})
     if sample != truth.alloy_sample:
+        shifted = sample == truth.cela_shift_sample
+        m_ref = _mass_fg(45, DENSITY['140Ce'])
+
         def cela():
-            """A natural Ce-La particle with a stable La/Ce ratio."""
+            """A Ce-La particle: La/Ce 0.5 at every size, or 1.0 with La growing more slowly in the shifted sample."""
             m = _mass_fg(rng.lognormal(math.log(45), 0.3), DENSITY['140Ce'])
-            return {'140Ce': m, '139La': m * rng.normal(0.5, 0.05)}
+            if shifted:
+                la = m * LA_CE_SHIFTED * (m / m_ref) ** (LA_CE_SLOPE_SHIFTED - 1.0) * rng.normal(1.0, 0.08)
+            else:
+                la = m * rng.normal(0.5, 0.05)
+            return {'140Ce': m, '139La': la}
         add(_arrivals(rng, 6 * scale, span), cela)
     else:
         def agau():
@@ -97,6 +143,14 @@ def _events(rng, sample, truth, scale):
             lambda: {'56Fe': _mass_fg(rng.lognormal(math.log(55), 0.4), DENSITY['56Fe'])})
     add(_arrivals(rng, 3 * scale, span),
         lambda: {'27Al': _mass_fg(rng.lognormal(math.log(120), 0.5), DENSITY['27Al'])})
+    pb_atoms = PB_SHIFTED if sample == truth.pb_sample else PB_NATURAL
+    f206 = pb_atoms * MOLAR['206Pb'] / (pb_atoms * MOLAR['206Pb'] + MOLAR['207Pb'])
+
+    def lead():
+        """A Pb particle split into its 206 and 207 isotopes."""
+        m = _mass_fg(rng.lognormal(math.log(38), 0.35), DENSITY['206Pb'])
+        return {'206Pb': m * f206, '207Pb': m * (1 - f206)}
+    add(_arrivals(rng, 5 * scale, span), lead)
     events.sort(key=lambda e: e[0])
     return events
 
@@ -153,11 +207,12 @@ def make_dataset(seed=11, scale=1.0):
         :meth:`results.ai.data.Dataset.limits`.
     """
     rng = np.random.default_rng(seed)
-    truth = Truth(samples=['River_A', 'River_B', 'Spiked_C'], span_s=60.0,
+    samples = ['River_A', 'River_B', 'Spiked_C']
+    shift, pb = planted_defaults(samples, 'Spiked_C')
+    truth = Truth(samples=samples, span_s=60.0,
                   ti_median_nm={'River_A': 60.0, 'River_B': 62.0, 'Spiked_C': 95.0},
                   burst=('River_B', 20.0, 22.0), alloy_sample='Spiked_C',
-                  lod_mass_fg={'48Ti': 0.12, '56Fe': 0.15, '140Ce': 0.02,
-                               '139La': 0.02, '107Ag': 0.05, '197Au': 0.05, '27Al': 0.6})
+                  lod_mass_fg=dict(LOD_MASS_FG), cela_shift_sample=shift, pb_sample=pb)
     particles = []
     for sample in truth.samples:
         for t0, t1, comp in _merge(_events(rng, sample, truth, scale)):

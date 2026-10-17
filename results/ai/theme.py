@@ -103,6 +103,46 @@ def fs(delta=0):
     return max(11, min(20, UI_PREFS['font_size'] + delta))
 
 
+_ARROW_PATH = None
+
+
+def _arrow_image():
+    """Path of a small grey chevron used as the drop-down arrow, drawn once.
+
+    The shared stylesheet restyles combo boxes, and on macOS that removes the
+    native arrow, so a list looks like a plain text field. Drawing the arrow
+    here keeps it visible on every platform and in both themes.
+
+    Returns:
+        str: File path with forward slashes, or an empty string on failure.
+    """
+    global _ARROW_PATH
+    if _ARROW_PATH is not None:
+        return _ARROW_PATH
+    _ARROW_PATH = ''
+    try:
+        import os
+        import tempfile
+        from PySide6.QtCore import QPointF, Qt
+        from PySide6.QtGui import QColor, QImage, QPainter, QPen
+        img = QImage(40, 40, QImage.Format_ARGB32)
+        img.fill(Qt.transparent)
+        painter = QPainter(img)
+        painter.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(QColor('#8a8a8a'), 5)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.drawPolyline([QPointF(8, 14), QPointF(20, 27), QPointF(32, 14)])
+        painter.end()
+        path = os.path.join(tempfile.gettempdir(), 'isotopetrack_ai_combo_arrow.png')
+        if img.save(path, 'PNG'):
+            _ARROW_PATH = path.replace('\\', '/')
+    except Exception:
+        _itk_log.exception("Could not draw the combo arrow")
+    return _ARROW_PATH
+
+
 def style_combo_popup(combo):
     """Make a combo box drop-down readable inside themed dialogs.
 
@@ -111,6 +151,9 @@ def style_combo_popup(combo):
     with invisible rows. Giving the combo an explicit list view and styling that
     view directly guarantees visible, clickable items.
 
+    It also draws the drop-down arrow, which the shared stylesheet hides on
+    macOS, so the box reads as a list to pick from.
+
     Args:
         combo (QComboBox): Combo box to fix.
 
@@ -118,6 +161,13 @@ def style_combo_popup(combo):
         QComboBox: The same combo, for chaining.
     """
     try:
+        arrow = _arrow_image()
+        if arrow:
+            combo.setStyleSheet(
+                "QComboBox{padding-right:24px;}"
+                "QComboBox::drop-down{subcontrol-origin:padding;subcontrol-position:center right;"
+                "width:22px;border:none;}"
+                f"QComboBox::down-arrow{{image:url({arrow});width:11px;height:11px;}}")
         view = QListView()
         combo.setView(view)
         combo.setMaxVisibleItems(12)
@@ -169,6 +219,22 @@ THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL)
 OPEN_THINK_RE = re.compile(r'<think>.*\Z', re.DOTALL)
 
 
+def cut_after_code(text):
+    """Drop what a reply says after its last code block.
+
+    The code has not run yet when the model writes that part, so any result
+    it describes there is a guess. A reply without code is returned as it is.
+
+    Args:
+        text (str): Reply text, reasoning already removed.
+
+    Returns:
+        str: The reply up to the end of its last code block.
+    """
+    ends = [m.end() for m in CODE_RE.finditer(text or '')]
+    return text[:ends[-1]] if ends else text
+
+
 def strip_thinking(text):
     """Remove reasoning blocks, including one still being streamed.
 
@@ -176,10 +242,15 @@ def strip_thinking(text):
         text (str): Raw model output.
 
     Returns:
-        str: Text without ``<think>`` sections.
+        str: Text without ``<think>`` sections. When the opening tag was
+        part of the prompt, the reply holds only the closing one; everything
+        up to it is reasoning and is dropped too.
     """
     text = THINK_RE.sub('', text or '')
-    return OPEN_THINK_RE.sub('', text)
+    text = OPEN_THINK_RE.sub('', text)
+    if '</think>' in text:
+        text = text.rsplit('</think>', 1)[1].lstrip()
+    return text
 
 
 def _escape(text):

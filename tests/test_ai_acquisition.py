@@ -241,11 +241,11 @@ class TestCompound:
     def test_prompt_defaults_to_element_mass(self, single):
         """Element mass is the default; the particle mass is opt-in, and the setting flips it."""
         text = build_system_prompt(single, 16384)
-        assert 'Mass first' in text
-        assert 'Use the element values by default: mass_fg_<el>' in text
+        assert 'WHICH QUANTITY: mass unless the user asks for size' in text
+        assert 'Use mass_fg_<el>' in text and 'TiO' not in text
         assert "compare_samples('Ti', 'mass_fg')" in text
         flipped = build_system_prompt(single, 16384, mass_basis='particle')
-        assert 'Use the particle (compound-corrected) values by default' in flipped
+        assert 'Use particle_mass_fg_<el>' in flipped
         assert "compare_samples('Ti', 'particle_mass_fg')" in flipped
         assert '{mq}' not in text + flipped and '{quantity_rule}' not in text + flipped
 

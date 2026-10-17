@@ -13,8 +13,11 @@ are trimmed, and writes its summary from that ledger.
 """
 import logging
 import os
+import subprocess
 import threading
+import time
 
+import shiboken6
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QCursor, QKeySequence
 from PySide6.QtGui import QIcon
@@ -27,22 +30,26 @@ from results.ai.attachments import (
     IMAGE_EXTS, extract_pdf_text, read_image_b64, read_text_file, try_parse_table,
 )
 from results.ai.data import Dataset
-from results.ai.exploration import ExplorationState, is_done, parse_plan
+from results.ai.exploration import (
+    ExplorationState, compact_messages, first_look, is_done, parse_plan, repeat_request,
+)
 from results.ai.prompts import (
-    build_system_prompt, correction_request, figure_fix_request, first_exploration_message,
-    fit_messages, interpretation_request, reply_reserve, suggest_questions, summary_request,
-    turn_feedback,
+    build_system_prompt, code_first_request, correction_request, empty_reply_request, explore_fix_request,
+    figure_fix_request, first_exploration_message, fit_messages, interpretation_request, is_empty_reply,
+    needs_code, reply_reserve, suggest_questions, summary_request, turn_feedback,
 )
 from results.ai.report import build_html
 from results.ai.sandbox import result_digest, unverified_numbers
+from results.ai.memory import mlx_model_folder
 from results.ai.servers import (
     MLX_BASE, OLLAMA_BASE, fetch_ollama_models, fetch_openai_models, install_server_shutdown_hooks,
-    note_model_in_use, park_thread, pids_listening_on, port_of, retire_thread,
-    shutdown_launched_servers, terminate_pids, unload_ollama_model,
+    mlx_server_command, note_model_in_use, park_thread, pids_listening_on, port_of,
+    register_launched_server, retire_thread, shutdown_launched_servers, terminate_pids,
+    unload_ollama_model,
 )
 from results.ai.settings import BackendDialog, CustomizeDialog
 from results.ai.streaming import CodeWorker, ProbeWorker, StreamWorker
-from results.ai.theme import CODE_RE, Theme, fs, strip_thinking
+from results.ai.theme import CODE_RE, Theme, cut_after_code, fs, strip_thinking
 from results.ai.widgets import (
     AttachmentChip, AttachmentPreview, AutoGrowTextEdit, CodeBubble, ComposerResizeHandle,
     Conversation, ConversationListItem, ExplorationBubble, FigureBubble, InteractiveTableBubble,
@@ -68,6 +75,8 @@ MAX_FIGURE_FIXES = 1
 
 class AIChatDialog(QDialog):
     """Chat window of the AI Assistant node."""
+
+    COMPOSER_HINT = "Enter to send · Shift+Enter for a new line"
 
     def __init__(self, ai_node, pw=None):
         """Build the window.
@@ -103,7 +112,12 @@ class AIChatDialog(QDialog):
         self._conv_items = {}
         self._cfg = {'backend': 'ollama', 'model': '', 'mlx_host': MLX_BASE,
                      'temperature': 0.2, 'num_ctx': 8192, 'explore_max_turns': 10,
-                     'interpret_results': True, 'verify_numbers': True, 'fix_figures': True}
+                     'interpret_results': True, 'verify_numbers': True, 'fix_figures': True,
+                     'thinking': False, 'idle_unload_min': 10, 'unload_on_close': True}
+        self._idle_timer = QTimer(self)
+        self._idle_timer.setSingleShot(True)
+        self._idle_timer.timeout.connect(self._on_idle_timeout)
+        self._loading = None
         self.setWindowTitle("AI Data Assistant")
         self.setMinimumSize(900, 650)
         self.resize(1240, 780)
@@ -179,6 +193,7 @@ class AIChatDialog(QDialog):
 
     def _busy(self, label):
         """Lock the input while the model works."""
+        self._idle_timer.stop()
         self._set_sidebar_enabled(False)
         self._input.setEnabled(False)
         self._sendb.setVisible(False)
@@ -198,6 +213,122 @@ class AIChatDialog(QDialog):
         self._explore_btn.setEnabled(self._ds is not None and len(self._ds) > 0)
         QTimer.singleShot(5000, lambda: self._speed.setVisible(False))
         self._enable()
+        self._arm_idle_timer()
+
+    def _arm_idle_timer(self):
+        """Start the countdown after which the model's memory is freed."""
+        minutes = int(self._cfg.get('idle_unload_min', 10) or 0)
+        if minutes > 0 and self._cfg.get('model') and self._cfg.get('backend') in ('ollama', 'mlx'):
+            self._idle_timer.start(minutes * 60_000)
+
+    def _on_idle_timeout(self):
+        """Free the model's memory after the idle time, unless work is still running."""
+        if self._worker is not None or self._code_worker is not None or self._exp_mode or self._loading:
+            self._arm_idle_timer()
+            return
+        minutes = int(self._cfg.get('idle_unload_min', 10) or 0)
+        self._free_model_memory(f"after {minutes} minutes without questions")
+
+    def _free_model_memory(self, reason=''):
+        """Unload the model so its memory goes back to other programs.
+
+        Ollama unloads at once and loads the model again on the next request.
+        An MLX server is stopped only when this app started it; it is started
+        again automatically on the next question.
+
+        Args:
+            reason (str): Shown in the status line, e.g. "after 10 minutes without questions".
+
+        Returns:
+            bool: True when memory was freed.
+        """
+        self._idle_timer.stop()
+        backend, model = self._cfg.get('backend'), self._cfg.get('model', '')
+        freed = False
+        try:
+            if backend == 'ollama' and model:
+                freed = unload_ollama_model(model, OLLAMA_BASE)
+            elif backend == 'mlx':
+                freed = shutdown_launched_servers() > 0
+        except Exception:
+            _itk_log.exception("Could not free the model's memory")
+        if freed:
+            self._unloaded = True
+            _itk_log.info("Freed the memory of %s %s", backend, reason)
+            try:
+                self._set_dot('text_tertiary')
+                self._status.setText(f"{model.split('/')[-1]} · unloaded {reason}".strip()
+                                     + " — reloads on your next question")
+            except RuntimeError:
+                pass
+        return freed
+
+    def _mlx_needs_start(self):
+        """Whether the chosen MLX model is on this computer but its server is not running.
+
+        Returns:
+            bool: True when the server should be started before asking.
+        """
+        if self._cfg.get('backend') != 'mlx':
+            return False
+        model = self._cfg.get('model', '')
+        if not model or not mlx_model_folder(model):
+            return False
+        host = self._cfg.get('mlx_host') or MLX_BASE
+        return not fetch_openai_models(host, timeout=1.5)[1]
+
+    def _start_mlx_then(self, action):
+        """Start the MLX server for the chosen model, then run *action* once it answers.
+
+        Args:
+            action (callable): What to do when the model is loaded, e.g. send the question.
+        """
+        model = self._cfg.get('model', '')
+        host = self._cfg.get('mlx_host') or MLX_BASE
+        cmd = mlx_server_command(model, port_of(host))
+        if not cmd:
+            self._add_widget(NoticeBubble("mlx_lm is not installed — run: pip install mlx-lm", kind='error'))
+            return
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            register_launched_server(proc)
+            install_server_shutdown_hooks()
+        except Exception as e:
+            _itk_log.exception("Could not start the MLX server")
+            self._add_widget(NoticeBubble(f"Could not start the model: {e}", kind='error'))
+            return
+        self._busy(f"Loading {model.split('/')[-1]}…")
+        self._loading = {'deadline': time.monotonic() + 300, 'action': action, 'host': host}
+        QTimer.singleShot(1500, self._poll_loading)
+
+    def _poll_loading(self):
+        """Wait for the MLX server to answer, then continue with the pending action."""
+        state = self._loading
+        if state is None or self._user_stopped:
+            self._loading = None
+            return
+        if fetch_openai_models(state['host'], timeout=1.5)[1]:
+            self._loading = None
+            self._set_dot('success_dot')
+            self._status.setText(f"MLX: {self._cfg.get('model', '').split('/')[-1]}")
+            self._idle()
+            state['action']()
+            return
+        if time.monotonic() > state['deadline']:
+            self._loading = None
+            self._idle()
+            self._add_widget(NoticeBubble("The model did not load in time. Check that it fits in memory, "
+                                          "or start it from the Model settings.", kind='error'))
+            return
+        QTimer.singleShot(1500, self._poll_loading)
+
+    def _mark_reloaded(self):
+        """Turn the status back to connected once a freed model is used again."""
+        if getattr(self, '_unloaded', False):
+            self._unloaded = False
+            backend, model = self._cfg.get('backend', ''), self._cfg.get('model', '')
+            self._set_dot('success_dot')
+            self._status.setText(f"{'Ollama' if backend == 'ollama' else 'MLX'}: {model.split('/')[-1]}")
 
     def _start_worker(self, messages, system, on_done, on_error=None, stream_to_bubble=True):
         """Start one streaming request.
@@ -214,6 +345,7 @@ class AIChatDialog(QDialog):
         host = self._cfg.get('mlx_host', MLX_BASE) if backend == 'mlx' else OLLAMA_BASE
         note_model_in_use(backend, self._cfg.get('model', ''), host)
         attachments = self._turn.get('attachments', []) if self._turn and stream_to_bubble else []
+        self._mark_reloaded()
         self._worker = StreamWorker(self._cfg.get('backend', ''), messages, system,
                                     self._worker_cfg(), attachments)
         if self._turn is not None:
@@ -238,6 +370,9 @@ class AIChatDialog(QDialog):
             return
         if not self._ensure_backend_ready():
             self._open_settings()
+            return
+        if self._mlx_needs_start():
+            self._start_mlx_then(self._send)
             return
         self._user_stopped = False
         self._maybe_set_conv_title(text)
@@ -312,6 +447,8 @@ class AIChatDialog(QDialog):
 
         def restore():
             """Bring the chat window back if something took the focus."""
+            if not shiboken6.isValid(self):
+                return
             if was_active and self.isVisible() and not self.isActiveWindow():
                 self.raise_()
                 self.activateWindow()
@@ -371,7 +508,7 @@ class AIChatDialog(QDialog):
         if self._user_stopped:
             self._user_stopped = False
             return
-        clean = strip_thinking(full).strip()
+        clean = cut_after_code(strip_thinking(full).strip())
         if self._sb:
             self._sb.finalise(clean)
             self._turn['attempt_widgets'].append(self._sb)
@@ -380,6 +517,28 @@ class AIChatDialog(QDialog):
         codes = [c.strip() for c in CODE_RE.findall(clean) if c.strip()]
         prose = CODE_RE.sub('', clean).strip()
         if not codes:
+            has_data = self._ds is not None and len(self._ds) > 0
+            turn = self._turn or {}
+            if turn and not turn.get('emptied') and is_empty_reply(prose):
+                turn['emptied'] = True
+                self._history.append({"role": "user", "content": empty_reply_request()})
+                self._tlbl.setText("Asking again…")
+                self._request_answer()
+                return
+            if (has_data and turn and not turn.get('attachments') and not turn.get('code_nudged')
+                    and needs_code(prose, self._system_prompt('chat'))):
+                turn['code_nudged'] = True
+                self._history.append({"role": "user", "content": code_first_request()})
+                turn['attempt_widgets'].append(self._add_widget(NoticeBubble(
+                    "That answer was not computed from your data — asking the model to run the code first.",
+                    kind='warn')))
+                self._tlbl.setText("Computing from the data…")
+                self._request_answer()
+                return
+            if has_data and turn.get('code_nudged') and needs_code(prose, self._system_prompt('chat')):
+                self._add_widget(NoticeBubble(
+                    "This answer was not computed from your data; check its numbers before using them.",
+                    kind='warn'))
             self._record('assistant', text=prose)
             self._finish_turn()
             return
@@ -388,13 +547,22 @@ class AIChatDialog(QDialog):
             self._finish_turn()
             return
         current_bubble = self._turn['attempt_widgets'].pop() if self._turn['attempt_widgets'] else None
+        intro = self._turn.get('intro_bubble')
+        if intro is None or current_bubble is None:
+            intro = current_bubble
+            self._turn['intro_bubble'] = intro
+            self._turn['intro_prose'] = prose
+        elif current_bubble is not intro:
+            self._turn['attempt_widgets'].append(current_bubble)
         for w in self._turn['attempt_widgets']:
+            if w is intro:
+                continue
             w.setParent(None)
             w.deleteLater()
             if w in self._widgets:
                 self._widgets.remove(w)
-        self._turn['attempt_widgets'] = [current_bubble] if current_bubble is not None else []
-        self._turn['prose'] = prose
+        self._turn['attempt_widgets'] = [intro] if intro is not None else []
+        self._turn['prose'] = self._turn.get('intro_prose', prose)
         self._run_codes(codes, self._after_codes)
 
     def _after_codes(self, results):
@@ -510,7 +678,7 @@ class AIChatDialog(QDialog):
 
     def _do_stop(self):
         """Stop the request in progress."""
-        if not self._worker and not self._code_worker:
+        if not self._worker and not self._code_worker and not self._exp_mode:
             return
         self._user_stopped = True
         self._interpreting = False
@@ -549,6 +717,7 @@ class AIChatDialog(QDialog):
         if self._exp_mode:
             if self._exp_session:
                 self._exp_session.mark_cancelled("stopped by user")
+            self._keep_unfinished_exploration("it was stopped")
             self._teardown_exploration()
         self._turn = None
         self._idle()
@@ -575,21 +744,53 @@ class AIChatDialog(QDialog):
         if not self._ensure_backend_ready():
             self._open_settings()
             return
+        if self._mlx_needs_start():
+            self._start_mlx_then(self._explore)
+            return
         question = self._input.text().strip() or (
-            "Scan the dataset for anything unusual: differences between samples, real versus chance "
-            "multi-element particles, truncation at the detection limit, outliers and time bursts.")
+            "Explore the dataset for anything surprising: molar ratios that differ between samples or are "
+            "fixed, isotope ratios away from natural, element ratios far from the upper crust, element pairs "
+            "that scale differently with size, and combinations found in one sample only.")
         self._input.clear()
         self._user_stopped = False
         self._exp_mode = True
         self._exp = ExplorationState(question=question, max_turns=int(self._cfg.get('explore_max_turns', 10)))
-        self._exp.messages = [{"role": "user", "content": first_exploration_message(question)}]
         self._maybe_set_conv_title(f"Explore: {question}")
         self._add_user(f"Explore: {question}")
         self._record('user', text=f"Explore: {question}")
         self._exp_session = self._add_widget(ExplorationBubble(question))
-        self._exp_session.set_progress(0, self._exp.max_turns, "Planning…")
+        self._exp_session.set_progress(0, self._exp.max_turns, "Taking a first look at the data…")
         self._scrollb()
         self._busy("Exploring…")
+        holder = {}
+
+        def screen(ds=self._ds):
+            """Compute the first look off the GUI thread."""
+            try:
+                holder['look'] = first_look(ds)
+            except Exception:
+                _itk_log.exception("First look failed")
+                holder['look'] = ''
+
+        thread = threading.Thread(target=screen, daemon=True)
+        thread.start()
+        self._await_first_look(thread, holder, self._exp)
+
+    def _await_first_look(self, thread, holder, state):
+        """Start the first turn once the first look is ready.
+
+        Args:
+            thread (threading.Thread): The thread computing it.
+            holder (dict): Receives ``look``.
+            state (ExplorationState): The exploration it belongs to.
+        """
+        if self._user_stopped or not self._exp_mode or self._exp is not state:
+            return
+        if thread.is_alive():
+            QTimer.singleShot(50, lambda: self._await_first_look(thread, holder, state))
+            return
+        state.messages = [{"role": "user", "content": first_exploration_message(state.question, holder.get('look', ''))}]
+        self._exp_session.set_progress(0, state.max_turns, "Planning…")
         self._run_exploration_turn()
 
     def _run_exploration_turn(self):
@@ -597,14 +798,15 @@ class AIChatDialog(QDialog):
         if self._user_stopped or not self._exp_mode:
             return
         st = self._exp
-        if st.turn >= st.max_turns:
+        fixing = st.retry
+        if not st.begin_turn():
             self._finalize_exploration("turn limit reached")
             return
-        st.turn += 1
-        self._exp_session.set_progress(st.turn, st.max_turns, f"Turn {st.turn}: choosing what to test…")
+        what = "fixing the code…" if fixing else "choosing what to test…"
+        self._exp_session.set_progress(st.turn, st.max_turns, f"Turn {st.turn}: {what}")
         self._tlbl.setText(f"Exploring — turn {st.turn}/{st.max_turns}…")
         system = self._system_prompt('explore')
-        msgs = fit_messages(st.messages, system, self._num_ctx, pinned=1)
+        msgs = fit_messages(compact_messages(st.messages), system, self._num_ctx, pinned=1)
         self._start_worker(msgs, system, self._on_exp_turn_done, self._on_exp_err, stream_to_bubble=False)
 
     def _on_exp_turn_done(self, full):
@@ -613,12 +815,13 @@ class AIChatDialog(QDialog):
             return
         st = self._exp
         clean = strip_thinking(full).strip()
-        st.messages.append({"role": "assistant", "content": clean})
+        done = is_done(clean)
         if not st.plan:
             st.plan = parse_plan(clean)
             self._exp_session.set_plan(st.plan)
+        clean = cut_after_code(clean)
+        st.messages.append({"role": "assistant", "content": clean})
         m = CODE_RE.search(clean)
-        done = is_done(clean)
         if not m:
             if done or st.turn >= st.max_turns:
                 self._finalize_exploration("the model finished")
@@ -632,6 +835,15 @@ class AIChatDialog(QDialog):
             QTimer.singleShot(50, self._run_exploration_turn)
             return
         code = m.group(1).strip()
+        earlier = st.repeated(code)
+        if earlier:
+            if st.too_many_repeats():
+                self._finalize_exploration("the model kept repeating its code")
+                return
+            st.messages.append({"role": "user", "content": repeat_request(earlier)})
+            self._exp_session.set_progress(st.turn, st.max_turns, f"Turn {st.turn}: repeated turn {earlier}, asking for a new test…")
+            QTimer.singleShot(50, self._run_exploration_turn)
+            return
         rationale = clean[:m.start()].strip()
         rationale = rationale.split('PLAN:')[0].strip() if st.turn == 1 and 'PLAN:' in rationale else rationale
         self._exp_session.set_progress(st.turn, st.max_turns, f"Turn {st.turn}: running the code…")
@@ -646,20 +858,21 @@ class AIChatDialog(QDialog):
         code, res = results[0]
         st.ledger.add(res.findings, st.turn)
         st.numbers.extend(res.numbers)
-        self._exp_session.add_step(st.turn, rationale[-400:], code, res)
+        action = st.after_code(res.error, done)
+        if action != 'fix':
+            self._exp_session.add_step(st.turn, rationale[-400:], code, res)
         self._exp_session.set_findings(st.ledger)
         if not res.error:
             self._record_result(code, res)
-        st.failures = st.failures + 1 if res.error else 0
         self._scrollb()
-        if st.failures >= 3:
-            self._finalize_exploration("the code kept failing")
+        if action == 'finish':
+            self._finalize_exploration("the code kept failing" if res.error else "the model finished")
             return
-        if done:
-            self._finalize_exploration("the model finished")
-            return
-        st.messages.append({"role": "user", "content": turn_feedback(
-            result_digest(res, 12), st.turn, st.max_turns, st.ledger.as_text(), st.plan_text())})
+        if action == 'fix':
+            st.messages.append({"role": "user", "content": explore_fix_request(res.error, result_digest(res, 6))})
+        else:
+            st.messages.append({"role": "user", "content": turn_feedback(
+                result_digest(res, 12), st.turn, st.max_turns, st.ledger.as_text(), st.plan_text())})
         park_thread(self._worker)
         self._worker = None
         QTimer.singleShot(50, self._run_exploration_turn)
@@ -684,7 +897,7 @@ class AIChatDialog(QDialog):
         self._tlbl.setText("Writing the summary…")
         st.messages.append({"role": "user", "content": summary_request(st.ledger.as_text(), st.question)})
         system = self._system_prompt('explore')
-        msgs = fit_messages(st.messages, system, self._num_ctx, pinned=1)
+        msgs = fit_messages(compact_messages(st.messages), system, self._num_ctx, pinned=1)
         self._start_worker(msgs, system, self._on_exp_summary_done, self._on_exp_summary_err,
                            stream_to_bubble=False)
 
@@ -715,8 +928,30 @@ class AIChatDialog(QDialog):
             return
         if self._exp_session:
             self._exp_session.mark_cancelled(f"summary failed: {err}")
+        self._keep_unfinished_exploration(f"the summary request failed ({str(err)[:120]})")
         self._teardown_exploration()
         self._idle()
+
+    def _keep_unfinished_exploration(self, reason):
+        """Keep what an exploration found when it ends before its summary.
+
+        The findings recorded so far go into the export and the chat history,
+        so they are not lost and a follow-up question can build on them.
+
+        Args:
+            reason (str): Why it ended, e.g. "it was stopped".
+        """
+        st = self._exp
+        if st is None or st.turn == 0:
+            return
+        findings = st.ledger.as_text()
+        summary = (f"The exploration ended after {st.turn} turn{'s' if st.turn != 1 else ''} because {reason}, "
+                   "before its summary was written. " + ("The findings it recorded are listed below."
+                                                         if findings else "It recorded no findings."))
+        self._history.append({"role": "user", "content": f"Explore: {st.question}"})
+        self._history.append({"role": "assistant", "content":
+                              f"[Unfinished {st.turn}-turn exploration]\n\n{summary}\n\nRecorded findings:\n{findings}"})
+        self._record('exploration', question=st.question, summary=summary, findings=findings)
 
     def _teardown_exploration(self):
         """Forget the exploration state."""
@@ -959,8 +1194,8 @@ class AIChatDialog(QDialog):
         self._composer = QFrame()
         self._composer.setObjectName('aiComposer')
         comp_l = QVBoxLayout(self._composer)
-        comp_l.setContentsMargins(8, 6, 8, 6)
-        comp_l.setSpacing(6)
+        comp_l.setContentsMargins(12, 10, 10, 8)
+        comp_l.setSpacing(4)
         self._preview_row = QWidget()
         self._preview_lo = QHBoxLayout(self._preview_row)
         self._preview_lo.setContentsMargins(2, 2, 2, 2)
@@ -969,39 +1204,44 @@ class AIChatDialog(QDialog):
         self._preview_row.setVisible(False)
         comp_l.addWidget(self._preview_row)
         self._previews = []
-        in_row = QHBoxLayout()
-        in_row.setContentsMargins(0, 0, 0, 0)
-        in_row.setSpacing(6)
-        self._attach_btn = QToolButton()
-        self._attach_btn.setToolTip("Attach an image, PDF or text file")
-        self._attach_btn.setAutoRaise(True)
-        self._attach_btn.clicked.connect(self._attach_file)
-        self._icon_buttons.append((self._attach_btn, 'fa6s.paperclip', False))
-        in_row.addWidget(self._attach_btn, alignment=Qt.AlignBottom)
         self._input = AutoGrowTextEdit()
         self._input.setObjectName('aiInput')
-        self._input.setPlaceholderText("Ask about your data…   (Shift+Enter for a new line, Esc to stop)")
+        self._input.setPlaceholderText("Ask about your data…")
         self._input.submit.connect(self._send)
-        in_row.addWidget(self._input, stretch=1)
-        self._stop = QPushButton(" Stop")
-        self._stop.setObjectName('aiStop')
+        self._input.installEventFilter(self)
+        comp_l.addWidget(self._input)
+        bottom = QHBoxLayout()
+        bottom.setContentsMargins(0, 0, 0, 0)
+        bottom.setSpacing(8)
+        self._attach_btn = QToolButton()
+        self._attach_btn.setObjectName('aiAttach')
+        self._attach_btn.setToolTip("Attach an image, PDF or text file")
+        self._attach_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._attach_btn.clicked.connect(self._attach_file)
+        self._icon_buttons.append((self._attach_btn, 'fa6s.plus', False))
+        bottom.addWidget(self._attach_btn)
+        bottom.addStretch()
+        self._counter = QLabel(self.COMPOSER_HINT)
+        self._counter.setObjectName('aiHint')
+        self._input.char_changed.connect(self._update_counter)
+        bottom.addWidget(self._counter)
+        self._stop = QPushButton()
+        self._stop.setObjectName('aiStopRound')
         self._stop.setToolTip("Stop the model and any running code now (Esc)")
+        self._stop.setCursor(QCursor(Qt.PointingHandCursor))
         self._stop.setVisible(False)
         self._stop.clicked.connect(self._do_stop)
         self._icon_buttons.append((self._stop, 'fa6s.stop', True))
-        in_row.addWidget(self._stop, alignment=Qt.AlignBottom)
-        self._sendb = QPushButton(" Send")
-        self._sendb.setObjectName('fbPrimary')
+        bottom.addWidget(self._stop)
+        self._sendb = QPushButton()
+        self._sendb.setObjectName('aiSend')
+        self._sendb.setToolTip("Send (Enter)")
+        self._sendb.setCursor(QCursor(Qt.PointingHandCursor))
         self._sendb.clicked.connect(self._send)
-        self._icon_buttons.append((self._sendb, 'fa6s.paper-plane', True))
-        in_row.addWidget(self._sendb, alignment=Qt.AlignBottom)
-        comp_l.addLayout(in_row)
+        self._icon_buttons.append((self._sendb, 'fa6s.arrow-up', True))
+        bottom.addWidget(self._sendb)
+        comp_l.addLayout(bottom)
         outer_l.addWidget(self._composer)
-        self._counter = QLabel("0 chars")
-        self._counter.setObjectName('fbHint')
-        self._counter.setAlignment(Qt.AlignRight)
-        self._input.char_changed.connect(self._update_counter)
-        outer_l.addWidget(self._counter)
         main.addWidget(outer)
         self._inp_frame = outer
         split.addWidget(main_wrap)
@@ -1069,8 +1309,20 @@ class AIChatDialog(QDialog):
         Args:
             n_chars (int): Characters typed.
         """
+        if not n_chars:
+            self._counter.setText(self.COMPOSER_HINT)
+            return
         tokens = max(0, round(n_chars / 3.5))
-        self._counter.setText(f"{n_chars:,} chars  ~{tokens:,} tokens")
+        self._counter.setText(f"{n_chars:,} characters · ~{tokens:,} tokens")
+
+    def eventFilter(self, obj, event):
+        """Outline the message box while the user is typing in it."""
+        from PySide6.QtCore import QEvent
+        if obj is getattr(self, '_input', None) and event.type() in (QEvent.FocusIn, QEvent.FocusOut):
+            self._composer.setProperty('focused', event.type() == QEvent.FocusIn)
+            self._composer.style().unpolish(self._composer)
+            self._composer.style().polish(self._composer)
+        return super().eventFilter(obj, event)
 
     def _add_conv_list_item(self, conv, is_current=False):
         """Create the sidebar entry for an existing Conversation."""
@@ -1370,8 +1622,24 @@ class AIChatDialog(QDialog):
         QFrame#aiComposer {{
             background: {p.bg_secondary};
             border: 1px solid {p.border};
-            border-radius: 10px;
+            border-radius: 16px;
         }}
+        QFrame#aiComposer[focused="true"] {{ border: 1px solid {p.accent}; }}
+        QLabel#aiHint {{ color: {p.text_muted}; font-size: {fs(-3)}px; background: transparent; }}
+        QToolButton#aiAttach {{
+            background: transparent; border: 1px solid {p.border}; border-radius: 15px;
+            min-width: 30px; max-width: 30px; min-height: 30px; max-height: 30px; padding: 0;
+        }}
+        QToolButton#aiAttach:hover {{ background: {p.accent_soft}; border-color: {p.accent}; }}
+        QPushButton#aiSend, QPushButton#aiStopRound {{
+            border: none; border-radius: 17px; padding: 0;
+            min-width: 34px; max-width: 34px; min-height: 34px; max-height: 34px;
+        }}
+        QPushButton#aiSend {{ background: {p.accent}; }}
+        QPushButton#aiSend:hover {{ background: {p.accent_hover}; }}
+        QPushButton#aiSend:disabled {{ background: {p.disabled}; }}
+        QPushButton#aiStopRound {{ background: {p.danger}; }}
+        QPushButton#aiStopRound:hover {{ background: {p.danger_border}; }}
         QPlainTextEdit#aiInput {{
             border: none; background: transparent; color: {p.text_primary};
             font-size: {size}px; padding: 6px 4px;
@@ -1467,7 +1735,7 @@ class AIChatDialog(QDialog):
             t (str): Message text.
         """
         b = TextBubble(t, True); self._widgets.append(b)
-        self._cl.insertWidget(self._cl.count()-1, b); self._scrollb()
+        self._cl.insertWidget(self._cl.count()-1, b); self._scrollb(force=True)
 
     def _add_ai(self, t):
         """Show an assistant message.
@@ -1478,11 +1746,14 @@ class AIChatDialog(QDialog):
         b = TextBubble(t, False); self._widgets.append(b)
         self._cl.insertWidget(self._cl.count()-1, b); self._scrollb()
 
-    def _scrollb(self):
-        """Scroll the chat to the newest message."""
-        QTimer.singleShot(50, lambda:
-            self._scroll.verticalScrollBar().setValue(
-                self._scroll.verticalScrollBar().maximum()))
+    def _scrollb(self, force=False):
+        """Scroll the chat to the newest message, unless the user scrolled up to read.
+
+        Args:
+            force (bool): Scroll even then, as after the user sends a message.
+        """
+        conv = self._cur
+        QTimer.singleShot(50, lambda c=conv, f=force: c.scroll_to_end(f))
 
     def _start_autodetect(self):
         """Probe loopback for a running model server and self-configure, so the
@@ -1594,9 +1865,12 @@ class AIChatDialog(QDialog):
             release_models()
 
     def closeEvent(self, event):
-        """Stop any running request when the window closes; the model stays loaded until the app quits."""
+        """Stop any running request when the window closes, and free the model's memory if set to."""
         try:
             self.shutdown(release=False)
+            self._loading = None
+            if self._cfg.get('unload_on_close', True):
+                self._free_model_memory("when the AI window closed")
         except Exception:
             _itk_log.exception("Handled exception in closeEvent")
         super().closeEvent(event)

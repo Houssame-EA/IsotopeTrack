@@ -2108,8 +2108,10 @@ SECTION_RESULTS = dict(
                     body="""
                     <p>Drop nodes here and drag between ports to connect a
                     sample to a visualization. Shortcuts: <b>Del</b> deletes
-                    a node, <b>Ctrl+C</b> duplicates, <b>Ctrl+Z</b> undoes.
-                    Double-click a node to configure or open it.</p>
+                    a node, <b>Ctrl+C</b> duplicates, <b>Ctrl+Z</b> undoes,
+                    <b>Ctrl+L</b> arranges. Double-click a node to configure
+                    or open it. Branches added from Insights stack under each
+                    other beside their source.</p>
                     """),
                 dict(
                     id="zoom",
@@ -2117,7 +2119,10 @@ SECTION_RESULTS = dict(
                     rect=(0.724, 0.070, 0.098, 0.030),
                     body="""
                     <p>Zoom the canvas in/out, back to 100&nbsp;%, or
-                    <b>Fit</b> everything into view.</p>
+                    <b>Fit</b> everything into view. <b>Arrange</b>, next to
+                    Fit, tidies every node into columns by data flow, each
+                    source centred on its branches; <b>Ctrl+Z</b> puts them
+                    back.</p>
                     """),
                 dict(
                     id="insights",
@@ -2206,7 +2211,12 @@ SECTION_RESULTS = dict(
                     rect=(0.071, 0.188, 0.380, 0.563),
                     body="""
                     <p>Search and tick the sample(s) to analyze; the banner
-                    below confirms the selection.</p>
+                    below confirms the selection. Each sample shows its
+                    particle count, and the ◀ ▶ buttons step through the
+                    samples one at a time — or through the highlighted ones
+                    (click, Shift-click, ⌘/Ctrl-click) — updating the
+                    connected plots as you go (Cancel goes back to where
+                    you started).</p>
                     """),
                 dict(
                     id="isotopes",
@@ -2247,11 +2257,15 @@ SECTION_RESULTS = dict(
                     """),
                 dict(
                     id="group_controls",
-                    title="Group name / Apply to Checked",
+                    title="Group name / Group",
                     rect=(0.317, 0.208, 0.236, 0.046),
                     body="""
-                    <p>Type a group name and <b>Apply to Checked</b> to
-                    assign it to every ticked sample at once.</p>
+                    <p>Click rows to highlight them (Shift for a range,
+                    ⌘/Ctrl to add one, ⌘/Ctrl+A for all) and press
+                    <b>Group</b> — or use the bar under the list or a
+                    right-click to Include, Exclude, Group or Ungroup them
+                    all at once. With the name field empty, the name they
+                    share is used. Each group gets a colour tag.</p>
                     """),
                 dict(
                     id="group_fields",

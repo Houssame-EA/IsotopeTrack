@@ -33,9 +33,10 @@ On top of those, each dataset has:
   starting over;
 - ``explore``: open and targeted explorations run through the same loop as
   the Explore button, scored on how many of the planted features the
-  summary reports (a real Ce+La association, the Fe burst, the Ag+Au alloy
-  sample, the sample with larger Ti) and failed on a false discovery (Ti+Fe
-  called a real association).
+  summary reports (the Ce:La ratio shift, the non-natural Pb isotope ratio,
+  the Ag+Au alloy sample, the sample with larger Ti, the Fe burst for the
+  iron question) and failed on a false discovery (Ti+Fe called a real
+  association).
 
 Every question goes through the same steps as the chat window: up to three
 code corrections, one figure redraw when the drawing checks complain, and
@@ -43,9 +44,11 @@ the grounded takeaway, with the history kept the way the chat keeps it.
 
 Run it from the repository root against a local model::
 
-    python -m results.ai.benchmark --backend ollama --model qwen3.8:27b-mlx --no-think
-    python -m results.ai.benchmark --backend mlx --host http://127.0.0.1:8080 --no-think
+    python -m results.ai.benchmark --backend ollama --model qwen3.8:27b-mlx
+    python -m results.ai.benchmark --backend mlx --host http://127.0.0.1:8080
     python -m results.ai.benchmark --reference
+
+Thinking is off by default, as in the app; ``--think`` switches it on.
 
 ``--reference`` answers with the built-in reference code instead of a model,
 which checks the benchmark itself. ``--split``, ``--dataset``, ``--category``
@@ -67,21 +70,24 @@ import pandas as pd
 from matplotlib.colors import LogNorm, to_rgba_array
 
 from results.ai.data import Dataset
-from results.ai.exploration import ExplorationState, is_done, parse_plan
+from results.ai.exploration import (
+    ExplorationState, compact_messages, first_look, is_done, parse_plan, repeat_request,
+)
+from results.ai.figures import axes_title
 from results.ai.prompts import (
-    build_system_prompt, correction_request, figure_fix_request, first_exploration_message,
-    fit_messages, interpretation_request, reply_reserve, summary_request, turn_feedback,
+    build_system_prompt, code_first_request, correction_request, explore_fix_request, figure_fix_request,
+    empty_reply_request, first_exploration_message, fit_messages, interpretation_request, is_empty_reply,
+    needs_code, reply_reserve, summary_request, turn_feedback,
 )
 from results.ai.sandbox import execute, floats_in_text, result_digest
 from results.ai.synthetic import (
-    DENSITY, SENSITIVITY, Truth, _diameter_nm, _events, _merge, _particle, make_dataset,
+    DENSITY, LOD_MASS_FG, SENSITIVITY, Truth, _diameter_nm, _events, _merge, _particle, make_dataset,
+    planted_defaults,
 )
-from results.ai.theme import CODE_RE, strip_thinking
+from results.ai.theme import CODE_RE, cut_after_code, strip_thinking
 
 ISOTOPES = {'Ti': '48Ti', 'Fe': '56Fe', 'Ce': '140Ce', 'La': '139La',
             'Ag': '107Ag', 'Au': '197Au', 'Al': '27Al'}
-LOD_MASS_FG = {'48Ti': 0.12, '56Fe': 0.15, '140Ce': 0.02, '139La': 0.02,
-               '107Ag': 0.05, '197Au': 0.05, '27Al': 0.6}
 QUALITY_WARNINGS = ('is empty', 'overlap', 'has no x-axis label', 'has no y-axis label')
 MAX_FIX_ATTEMPTS = 3
 MAX_FIGURE_FIXES = 1
@@ -120,13 +126,31 @@ def make_variant(name):
     spec = DATASETS[name]
     if spec.get('builtin'):
         return make_dataset(spec['seed'])
+    return build_variant(spec)
+
+
+def build_variant(spec):
+    """Generate a dataset from a specification.
+
+    Args:
+        spec (dict): ``seed``, ``samples``, ``ti_median_nm``, ``burst``,
+            ``alloy_sample`` and optionally ``scale`` (arrival-rate factor),
+            ``cela_shift_sample`` and ``pb_sample`` (chosen by
+            :func:`results.ai.synthetic.planted_defaults` otherwise).
+
+    Returns:
+        tuple: ``(data_context, truth, limits)``.
+    """
     rng = np.random.default_rng(spec['seed'])
+    shift, pb = planted_defaults(list(spec['samples']), spec['alloy_sample'])
     truth = Truth(samples=list(spec['samples']), span_s=60.0,
                   ti_median_nm=dict(spec['ti_median_nm']), burst=tuple(spec['burst']),
-                  alloy_sample=spec['alloy_sample'], lod_mass_fg=dict(LOD_MASS_FG))
+                  alloy_sample=spec['alloy_sample'], lod_mass_fg=dict(LOD_MASS_FG),
+                  cela_shift_sample=spec.get('cela_shift_sample', shift), pb_sample=spec.get('pb_sample', pb))
+    scale = float(spec.get('scale', 1.0))
     particles = []
     for sample in truth.samples:
-        for t0, t1, comp in _merge(_events(rng, sample, truth, 1.0)):
+        for t0, t1, comp in _merge(_events(rng, sample, truth, scale)):
             p = _particle(sample, t0, t1, comp, rng, truth.lod_mass_fg)
             if p is not None:
                 particles.append(p)
@@ -226,7 +250,7 @@ def _names(names):
 ELEMENT_PATTERNS = {'Ti': r'(?-i:\b(48)?Ti\b)|titanium', 'Fe': r'(?-i:\b(56)?Fe\b)|\biron\b',
                     'Ce': r'(?-i:\b(140)?Ce\b)|cerium', 'La': r'(?-i:\b(139)?La\b)|lanthanum',
                     'Ag': r'(?-i:\b(107)?Ag\b)|silver', 'Au': r'(?-i:\b(197)?Au\b)|\bgold\b',
-                    'Al': r'(?-i:\b(27)?Al\b)|alumin'}
+                    'Al': r'(?-i:\b(27)?Al\b)|alumin', 'Pb': r'(?-i:\b(20[4678])?Pb\b)|lead isotop'}
 
 
 def _hist_ref(sym, quantity, label):
@@ -238,6 +262,10 @@ def _hist_ref(sym, quantity, label):
             f"    ax.hist(df.loc[df['sample']==s, col('{quantity}','{sym}')].dropna(), bins=bins,"
             f" histtype='step', label=s)\n"
             f"ax.set_xscale('log'); ax.set_xlabel('{label}'); ax.set_ylabel('Particles'); ax.legend()")
+
+
+AFFIRMED_REAL = (r"(?:^|[.!?:]\s+)(?:(?!\b(?:not|no|rather than|unlikely|neither|nor|instead of)\b|n't)[^.!?])*"
+                 r"\breal associations?\b")
 
 
 def build_questions(name, dc, truth):
@@ -256,7 +284,7 @@ def build_questions(name, dc, truth):
     n_s = len(S)
     s0, s1, sl = S[0], S[1], S[-1]
     burst_sample, b0, b1 = truth.burst
-    split = DATASETS[name]['split']
+    split = DATASETS.get(name, {}).get('split', 'train')
     has = {sym: tf[f'mass_{sym}'].notna() for sym in ISOTOPES}
 
     ti_med = {s: float(tf.loc[(tf['sample'] == s) & has['Ti'], 'diam_Ti'].median()) for s in S}
@@ -342,7 +370,7 @@ def build_questions(name, dc, truth):
             first_of=_names(S), reference_answer=f"{no_ce[0]} has no Ce particles.")
     add('tife_chance', "Are particles with both Ti and Fe real associations, or explained by "
         "chance coincidence?", 'text', r'chance|coinciden', 'reasoning',
-        reference="show_table(coincidence('Ti', 'Fe'))", reject=r'\breal association\b(?!.*not)',
+        reference="show_table(coincidence('Ti', 'Fe'))", reject=AFFIRMED_REAL,
         reference_answer="They occur about as often as chance coincidence predicts.")
     add('cela_real', "Are Ce+La particles real associations or chance coincidences?", 'text',
         r'real|genuine|associat|not.{0,20}(chance|coinciden)', 'reasoning',
@@ -750,6 +778,10 @@ def _add_explore(add, S, s0, largest_ti, burst_sample, b0, b1, truth):
                 r'(alone|only)|not (a )?real|no real|not significant|random coincidence|rather than')
     planted = {
         'Ce+La real': ([E['Ce'], E['La'], real], not_real),
+        'Ce:La shift': ([E['Ce'], E['La'], _name_pattern(truth.cela_shift_sample, S),
+                         r'ratio|stoichiom|1\s*:\s*1|slope|scal'], ''),
+        'Pb isotopes': ([E['Pb'], _name_pattern(truth.pb_sample, S),
+                         r'isotop|206|207|natural|non-?natural|anthropogenic|deviat'], ''),
         'Fe burst': ([_name_pattern(burst_sample, S), r'\bbursts?\b|\bspikes?\b|\bsurges?\b|\bpeaks?\b|\bsudden|\btransient|\bepisod|\banomal'], ''),
         'Ag+Au sample': ([E['Ag'], E['Au'], _name_pattern(truth.alloy_sample, S)], ''),
         f'larger Ti in {largest_ti}': ([_name_pattern(largest_ti, S), E['Ti'],
@@ -763,6 +795,9 @@ def _add_explore(add, S, s0, largest_ti, burst_sample, b0, b1, truth):
                                         r"chance|coinciden|random|\bnot\b|\bno\b|n't|rather than|separate|independent")}
     lines = {
         'Ce+La real': "Ce and La occur together far more often than chance, a real association.",
+        'Ce:La shift': (f"The Ce/La molar ratio is about 1:1 in {truth.cela_shift_sample}, against 2:1 in the "
+                        f"other samples, and the ratio changes with particle size there."),
+        'Pb isotopes': f"The 206Pb/207Pb ratio in {truth.pb_sample} is about 15% below natural, a non-natural Pb source.",
         'Fe burst': f"There is a burst of Fe particles in {burst_sample} around {b0:g} to {b1:g} s.",
         'Ag+Au sample': f"Ag and Au particles appear only in {truth.alloy_sample}.",
         f'larger Ti in {largest_ti}': f"{largest_ti} has larger Ti particles than the other samples.",
@@ -774,15 +809,19 @@ def _add_explore(add, S, s0, largest_ti, burst_sample, b0, b1, truth):
         """The planted features and reference summary for these names."""
         return {k: planted[k] for k in names}, ' '.join([lines[k] for k in names] + [tife])
 
-    script = ["PLAN:\n1. Associations between elements\n2. Bursts in time\n```python\n"
+    script = ["PLAN:\n1. Associations between elements\n2. Ce/La molar ratio by sample\n3. Pb isotope ratio\n"
+              "4. Bursts in time\n```python\n"
               "show_table(coincidence_overview())\n"
               "record_finding('Element pairs compared with the chance coincidence rate')\n```",
+              "Ce/La molar ratio by sample.\n```python\nshow_table(molar_ratio('Ce', 'La'))\n```",
+              "Pb isotope ratio by sample.\n```python\nshow_table(isotope_ratio('206Pb', '207Pb'))\n```",
               "Time bursts of Fe.\n```python\nshow_table(time_bursts('Fe'))\n```",
               "EXPLORATION DONE"]
-    names_open = ['Ce+La real', 'Fe burst', 'Ag+Au sample', f'larger Ti in {largest_ti}']
+    names_open = [k for k, ok in (('Ce:La shift', truth.cela_shift_sample), ('Pb isotopes', truth.pb_sample),
+                                  ('Ag+Au sample', True), (f'larger Ti in {largest_ti}', True)) if ok]
     f, ref = pick(names_open)
     add('explore_open', "Explore the dataset and tell me what is interesting.", 'explore', None, 'explore',
-        findings=f, forbidden=forbidden, need=3, max_turns=8, reference_answer=ref, steps=script)
+        findings=f, forbidden=forbidden, need=min(3, len(names_open)), max_turns=8, reference_answer=ref, steps=script)
     f, ref = pick(['Fe burst'])
     add('explore_iron', "Is there anything unusual about iron in this data?", 'explore', None, 'explore',
         findings=f, forbidden=forbidden, need=1, max_turns=5, reference_answer=ref, steps=script)
@@ -796,14 +835,21 @@ def _add_explore(add, S, s0, largest_ti, burst_sample, b0, b1, truth):
         findings=f, forbidden=forbidden, need=1, max_turns=5, reference_answer=ref, steps=script)
 
 
+def _raise_for_status(response):
+    """Raise on an HTTP error with the server's own message, which says what went wrong."""
+    if response.status_code >= 400:
+        detail = (response.text or '').strip().replace('\n', ' ')[:400]
+        raise RuntimeError(f"HTTP {response.status_code} from {response.url}: {detail}")
+
+
 def complete(cfg, messages, system, timeout=600):
     """One non-streaming chat completion.
 
     Args:
         cfg (dict): ``backend`` (``ollama``, ``mlx`` or ``custom``),
             ``model``, ``host``, ``api_key``, ``num_ctx``, ``temperature``
-            and ``think`` (False switches a thinking model's reasoning off,
-            None leaves the model's default).
+            and ``think`` (True lets a thinking model reason first; off by
+            default, as in the app).
         messages (list): Chat messages.
         system (str): System prompt.
         timeout (float): Seconds to wait.
@@ -821,8 +867,8 @@ def complete(cfg, messages, system, timeout=600):
                 "model": cfg.get('model', ''), "messages": msgs, "stream": False,
                 "options": {"temperature": cfg.get('temperature', 0.2), "num_ctx": num_ctx,
                             "num_predict": reply_reserve(num_ctx)},
-                **({"think": False} if cfg.get('think') is False else {})}, timeout=timeout)
-        r.raise_for_status()
+                "think": bool(cfg.get('think', False))}, timeout=timeout)
+        _raise_for_status(r)
         return (r.json().get('message') or {}).get('content', '')
     host = (cfg.get('host') or MLX_BASE).rstrip('/')
     url = host if host.endswith('/v1') else f"{host}/v1"
@@ -833,15 +879,15 @@ def complete(cfg, messages, system, timeout=600):
                "max_tokens": reply_reserve(num_ctx)}
     if cfg.get('model'):
         payload['model'] = cfg['model']
-    if cfg.get('think') is False:
-        payload['chat_template_kwargs'] = {"enable_thinking": False}
+    if cfg.get('backend') != 'custom':
+        payload['chat_template_kwargs'] = {"enable_thinking": bool(cfg.get('think', False))}
     session = local_session()
     if cfg.get('backend') == 'custom':
         import requests
         session = requests.Session()
     with session as s:
         r = s.post(f"{url}/chat/completions", json=payload, headers=headers, timeout=timeout)
-    r.raise_for_status()
+    _raise_for_status(r)
     return r.json()['choices'][0]['message']['content']
 
 
@@ -1001,10 +1047,10 @@ def _panel_ok(ax, spec):
             return False, f"fewer than {k} time bins"
     if spec.get('xlabel') and not re.search(spec['xlabel'], ax.get_xlabel(), re.I):
         return False, f"x label '{ax.get_xlabel()}'"
-    if spec.get('title') and not re.search(spec['title'], ax.get_title()):
-        return False, f"title '{ax.get_title()}'"
+    if spec.get('title') and not re.search(spec['title'], axes_title(ax)):
+        return False, f"title '{axes_title(ax)}'"
     if spec.get('label_or_title'):
-        text = ' '.join([ax.get_title(), ax.get_xlabel(), ax.get_ylabel()])
+        text = ' '.join([axes_title(ax), ax.get_xlabel(), ax.get_ylabel()])
         if not re.search(spec['label_or_title'], text, re.I):
             return False, "panel does not name its element"
     if spec.get('ticklabels_all'):
@@ -1319,7 +1365,7 @@ def _figure_ok(fig, req):
             if not ok:
                 return False, why
     if req.get('titles_all'):
-        titles = ' '.join(ax.get_title() for ax in panels)
+        titles = ' '.join(axes_title(ax) for ax in panels)
         missing = [s for s in req['titles_all'] if s not in titles]
         if missing:
             return False, f"panel titles miss {missing[:2]}"
@@ -1409,7 +1455,8 @@ def score(question, results, answer):
 def _chat_turn(messages, system, ds, model, num_ctx, out, results):
     """One user request handled the way the chat window handles it.
 
-    The model's code runs; a failure goes back for a fix (up to
+    An empty answer is asked for again once, and an answer without code that
+    quotes results goes back once to be computed first. The model's code runs; a failure goes back for a fix (up to
     :data:`MAX_FIX_ATTEMPTS`), a figure with drawing problems goes back once
     for a redraw, and the results are then shown to the model for the
     takeaway. The history ends as the chat keeps it: the code reply, the
@@ -1429,12 +1476,23 @@ def _chat_turn(messages, system, ds, model, num_ctx, out, results):
         str: The final answer text.
     """
     fixes = figure_fixes = 0
+    nudged = emptied = False
     while True:
-        reply = strip_thinking(model(fit_messages(messages, system, num_ctx), system) or '').strip()
+        reply = cut_after_code(strip_thinking(model(fit_messages(messages, system, num_ctx), system) or '').strip())
         messages.append({"role": "assistant", "content": reply})
         codes = [c for c in CODE_RE.findall(reply) if c.strip()]
         prose = CODE_RE.sub('', reply).strip()
         if not codes:
+            if not emptied and is_empty_reply(prose):
+                emptied = True
+                out.fixes += 1
+                messages.append({"role": "user", "content": empty_reply_request()})
+                continue
+            if not nudged and needs_code(prose, system):
+                nudged = True
+                out.fixes += 1
+                messages.append({"role": "user", "content": code_first_request()})
+                continue
             return prose
         batch = [execute(c, ds, EXEC_TIMEOUT_S) for c in codes]
         out.attempts += 1
@@ -1565,19 +1623,20 @@ def _ask_explore(question, ds, model, num_ctx):
                   category=question.category)
     t0 = time.time()
     st = ExplorationState(question=question.text, max_turns=question.max_turns)
-    st.messages = [{"role": "user", "content": first_exploration_message(question.text)}]
+    st.messages = [{"role": "user", "content": first_exploration_message(question.text, first_look(ds))}]
     out.transcript = st.messages
     system = build_system_prompt(ds, num_ctx, 'explore', question.max_turns)
     summary = ''
     try:
-        while st.turn < st.max_turns:
-            st.turn += 1
-            reply = strip_thinking(model(fit_messages(st.messages, system, num_ctx, pinned=1), system) or '').strip()
-            st.messages.append({"role": "assistant", "content": reply})
+        while st.begin_turn():
+            reply = strip_thinking(model(fit_messages(compact_messages(st.messages), system, num_ctx, pinned=1),
+                                         system) or '').strip()
+            done = is_done(reply)
             if not st.plan:
                 st.plan = parse_plan(reply)
+            reply = cut_after_code(reply)
+            st.messages.append({"role": "assistant", "content": reply})
             m = CODE_RE.search(reply)
-            done = is_done(reply)
             if not m:
                 if done:
                     break
@@ -1588,18 +1647,28 @@ def _ask_explore(question, ds, model, num_ctx):
                                     "Write one line naming the hypothesis, then ONE ```python block — "
                                     "or EXPLORATION DONE."})
                 continue
+            earlier = st.repeated(m.group(1).strip())
+            if earlier:
+                if st.too_many_repeats():
+                    break
+                st.messages.append({"role": "user", "content": repeat_request(earlier)})
+                continue
             res = execute(m.group(1).strip(), ds, EXEC_TIMEOUT_S)
             out.attempts += 1
             st.ledger.add(res.findings, st.turn)
-            st.failures = st.failures + 1 if res.error else 0
             out.error = res.error or out.error
-            if st.failures >= 3 or done:
+            action = st.after_code(res.error, done)
+            if action == 'finish':
                 break
+            if action == 'fix':
+                out.fixes += 1
+                st.messages.append({"role": "user", "content": explore_fix_request(res.error, result_digest(res, 6))})
+                continue
             st.messages.append({"role": "user", "content": turn_feedback(
                 result_digest(res, 12), st.turn, st.max_turns, st.ledger.as_text(), st.plan_text())})
         st.messages.append({"role": "user", "content": summary_request(st.ledger.as_text(), question.text)})
         summary = CODE_RE.sub('', strip_thinking(
-            model(fit_messages(st.messages, system, num_ctx, pinned=1), system) or '')).strip()
+            model(fit_messages(compact_messages(st.messages), system, num_ctx, pinned=1), system) or '')).strip()
     except Exception as e:
         out.error = f"{type(e).__name__}: {e}"
     out.answer = summary
@@ -1709,7 +1778,8 @@ def main(argv=None):
     ap.add_argument('--api-key', default='')
     ap.add_argument('--num-ctx', type=int, default=16384)
     ap.add_argument('--temperature', type=float, default=0.2)
-    ap.add_argument('--no-think', action='store_true', help="switch the model's thinking off")
+    ap.add_argument('--think', action='store_true', help="switch the model's thinking on (off by default)")
+    ap.add_argument('--no-think', action='store_true', help="kept for old commands; thinking is off by default")
     ap.add_argument('--split', choices=['dev', 'test'], default=None, help="only one split")
     ap.add_argument('--dataset', nargs='*', default=None, choices=list(DATASETS),
                     help="only these datasets")
@@ -1725,14 +1795,14 @@ def main(argv=None):
     else:
         cfg = {'backend': args.backend, 'model': args.model, 'host': args.host, 'api_key': args.api_key,
                'num_ctx': args.num_ctx, 'temperature': args.temperature,
-               'think': False if args.no_think else None}
+               'think': bool(args.think and not args.no_think)}
         factory = lambda q: (lambda messages, system: complete(cfg, messages, system))
     outcomes = run(factory, args.num_ctx, args.only, args.split, args.dataset, args.category)
     if args.out:
         with open(args.out, 'w', encoding='utf-8') as f:
             json.dump({'model': args.model or ('reference' if args.reference else ''),
                        'backend': args.backend, 'num_ctx': args.num_ctx,
-                       'think': not args.no_think, 'split': args.split,
+                       'think': bool(args.think and not args.no_think), 'split': args.split,
                        'outcomes': [asdict(o) for o in outcomes]}, f, indent=2)
     return 0 if outcomes and all(o.passed for o in outcomes) else 1
 

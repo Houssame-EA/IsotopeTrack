@@ -18,6 +18,7 @@ import re
 import numpy as np
 
 from results.ai.analysis import SIGNATURES
+from results.ai.figures import NAMESPACE as FIGURE_TOOLS, TERNARY
 
 _itk_log = logging.getLogger("IsotopeTrack.results.ai.prompts")
 
@@ -219,7 +220,7 @@ def dataset_brief(ds, compact=False, mass_basis='element'):
 _ROLE = """You are the data analyst inside IsotopeTrack, working on single-particle ICP-ToF-MS (spICP-ToF-MS) data. You answer by writing Python that runs on the user's full dataset; the user sees the tables and figures it produces, and you then explain what came out."""
 
 _HOW = """HOW TO ANSWER
-- For any question about the data: one short line saying what you will compute, then ONE ```python block. It runs at once on all particles. You will then be shown the exact results and asked for the takeaway, so do not state any numbers before that.
+- For any question about the data: one short line saying what you will compute, then ONE ```python block, and end your reply there. It runs at once on all particles. You will then be shown the exact results and asked for the takeaway, so do not state any numbers or describe any result before that.
 - Present results the way a good paper would. When a result is a distribution, a comparison between samples, a relationship, a composition or a change over time, draw a figure designed for that result in the same code block, and keep tables short (the key rows and columns) for the exact numbers.
 - For questions about concepts or methods (not this data), answer in plain text without code.
 - Report what the data shows. Do not name phases, sources or origins unless the user asks you to interpret.
@@ -230,12 +231,15 @@ df: pandas DataFrame, one row per particle. Columns:
   sample, run, t_start, t_end (s), duration_ms, n_elements, combo (e.g. '48Ti + 56Fe'), total_mass_fg{class_col}
   per element <el>: counts_<el>, mass_fg_<el>, moles_fmol_<el>, diameter_nm_<el>, mass_pct_<el>, mole_pct_<el>,
                     particle_mass_fg_<el>, particle_diameter_nm_<el> (compound-corrected)
+  mass_pct_<el> / mole_pct_<el>: that element's share of the whole particle's mass / moles, as the app
+    reports it; "Ag mass %" means df[col('mass_pct', 'Ag')], not Ag/(Ag+Au)
   NaN means the element was not detected in that particle: df['particle_mass_fg_48Ti'].dropna()
 {quantity_rule}
 elements: labels, most frequent first (e.g. '56Fe'); samples: sample names; runs: acquisition spans
-col('size', 'Ti') -> 'diameter_nm_48Ti' (accepts symbols and aliases); element('Fe') -> '56Fe'
+col('size', 'Ti') -> 'diameter_nm_48Ti' (accepts symbols and aliases); element('Fe') -> '56Fe'; symbol('56Fe') -> 'Fe'
 lod('Ti', 'mass_fg', sample=None) -> calibrated detection limit on the same scale as that column, or None
-np, pd, math, stats (scipy.stats), Counter are loaded. No imports, no file access."""
+np, pd, math, stats (scipy.stats), Counter are loaded, and these by name: mannwhitneyu, kruskal,
+  chi2_contingency, fisher_exact, ks_2samp, ttest_ind, spearmanr, pearsonr, linregress, skew, binomtest. No imports, no file access."""
 
 _ACQUISITION = """RAW SIGNAL AND PER-SAMPLE RESULTS (from the main window, same numbers as the summary export)
 sample_summary() -> DataFrame, one row per run and element. Columns:
@@ -261,37 +265,48 @@ print(...)  only for short text"""
 _FIGURES = """FIGURES — you design and draw them yourself with matplotlib; there are no templates
   fig, ax = plt.subplots(nrows, ncols, figsize=(w, h))   or   fig, ax = new_figure(nrows, ncols, size=(w, h))
 Choose the form that shows the result best, for example:
-  sizes or masses by sample -> overlaid log-binned step histograms, or box/violin plots on a log axis
+  sizes or masses by sample -> lognormal_hist(ax, values, bins, color=SAMPLE_COLORS[s], label=s, unit='nm'),
+    one call per sample with shared np.logspace bins: filled bars with the fitted log-normal curve and its
+    geometric mean (GM) and GSD in the legend (returns n, gm, gsd); GM is the fit's centre, not the
+    measured median: quote medians from compare_samples or the data; outlines only (histtype='step') or no fit
+    (fit=False) when the user asks; more than 4 samples -> small multiples, or box/violin plots on a log axis
   one quantity against another -> scatter on log-log axes, small markers, alpha for dense clouds, one colour per sample
   composition of particle types -> horizontal stacked bars of percentages, sorted
   pair or sample statistics -> heatmap (ax.imshow with a colour bar) with annotated cells
   arrival over time -> time series of counts per bin, bursts shaded with ax.axvspan
   many samples -> small multiples sharing axes rather than one crowded panel
+  several views of one result -> one figure with panels (a), (b), ... via label_panels, each panel its own type
 Make it look professional:
 - one message per figure; descriptive axis labels with units; a short title on the panel OR a figure title, not both on a single-panel figure
 - masses and sizes are close to log-normal: log axes and np.logspace bins unless asked otherwise
-- the same colour for the same sample in every panel, from PALETTE (colour-blind safe); at most about 8 legend entries
+- colour each sample with SAMPLE_COLORS[s] (influent blue, effluent orange, the rest colour-blind safe), the same in every panel; at most about 8 legend entries
+- the lab style (Times New Roman bold, no top/right axis lines) is applied to every figure; change it only when the user asks, e.g. plt.rcParams['font.family'] = 'sans-serif' or plt.rcParams['font.weight'] = 'normal' before plotting
 - mark detection limits with ax.axvline(lod(element, quantity), ls='--', color='0.4') using the plotted quantity; annotate key numbers on the plot when it helps
 - never call df.plot(), plt.show(), savefig or tight_layout; the layout is handled for you
+- at most 12 figures per code block; when asked for more, combine related views as lettered panels (label_panels) in fewer figures
+- create a figure only where you draw on it, e.g. inside the if-branch that plots, never before a check that may skip the plot
 - to change a figure the user already has, rewrite its full code with the change"""
 
 _DOMAIN = """SPICP-TOF-MS
 - One event is one particle passing the plasma. Elements in one event are in one particle, or two particles arrived together by chance: check multi-element claims with coincidence(a, b) or co_occurrence().
 - Near the detection limit, distributions are truncated and medians are biased high; size_distribution() flags this.
-- Treat detections with n < 10 with caution."""
+- Treat detections with n < 10 with caution.
+- A pair sharing particles far above chance is a real association even if it occurs in only some samples; an element missing from another sample does not make it an artifact.
+- Trust a significant result from an analysis function over a weaker test you improvised; if your own test disagrees, check its filter before rejecting the finding.
+- Never recompute chance co-occurrence as n_a * n_b / n: coincidence() and co_occurrence() already compute it per run from arrival times. A share of particles holding both elements near 100% means an element is in nearly every particle (an alloy or a host), not that pairs are chance."""
 
 _EXAMPLE = """EXAMPLE
 User: is Ti bigger in some samples?
-Comparing Ti masses across samples, with tests and a log-scale histogram.
+Comparing Ti masses across samples, with tests and log-normal histograms.
 ```python
 res = compare_samples('Ti', '{mq}')
 show_table(res, title='Ti {mname} by sample')
 fig, ax = plt.subplots(figsize=(6.5, 4))
 c = col('{mq}', 'Ti')
 v = df[c].dropna()
-bins = np.logspace(np.log10(v.min()), np.log10(v.max()), 60)
+bins = np.logspace(np.log10(v.min()), np.log10(v.max()), 50)
 for s in samples:
-    ax.hist(df.loc[df['sample'] == s, c].dropna(), bins=bins, histtype='step', lw=1.5, label=s)
+    lognormal_hist(ax, df.loc[df['sample'] == s, c].dropna(), bins, color=SAMPLE_COLORS[s], label=s, unit='fg')
 m = lod('Ti', '{mq}')
 if m:
     ax.axvline(m, ls='--', color='grey', label='LOD')
@@ -313,23 +328,13 @@ def quantity_rule(mass_basis='element'):
         str: The rule text.
     """
     if mass_basis == 'particle':
-        default, other = 'particle (compound-corrected)', 'element'
-        cols, other_cols = 'particle_mass_fg_<el> and particle_diameter_nm_<el>', 'mass_fg_<el> and diameter_nm_<el>'
-        ask = "the element mass or size ('element mass', 'only Ti', 'without the compound')"
+        main, alt, when = 'particle_mass_fg_<el>', 'mass_fg_<el>', 'the element mass'
     else:
-        default, other = 'element', 'particle (compound-corrected)'
-        cols, other_cols = 'mass_fg_<el> and diameter_nm_<el>', 'particle_mass_fg_<el> and particle_diameter_nm_<el>'
-        ask = "the particle or compound-corrected mass or size ('particle mass', 'corrected', 'as TiO2')"
+        main, alt, when = 'mass_fg_<el>', 'particle_mass_fg_<el>', 'the particle or corrected mass'
     return (
-        "WHICH QUANTITY — follow this every time:\n"
-        "  - Mass first. Unless the user asks for size or diameter, analyse and plot mass.\n"
-        f"  - Use the {default} values by default: {cols}.\n"
-        f"  - Use the {other} values ({other_cols}) only when the user asks for {ask}.\n"
-        "    Without a compound set, both are the same.\n"
-        "  - If the user asks to switch (e.g. 'use the particle mass from now on'), keep the new choice for the\n"
-        "    rest of the conversation until they switch back.\n"
-        "  - In sample_summary() the same rule picks between the plain columns and the particle_ ones.\n"
-        "  - Say in the axis label which one you used, e.g. 'Ti mass (fg)' or 'Ti particle mass (fg)'.")
+        "WHICH QUANTITY: mass unless the user asks for size or diameter. "
+        f"Use {main} (and the matching diameter column); use {alt} only when the user asks for {when}, "
+        "and keep that choice if they say so for the rest of the conversation.")
 
 
 def _example(mass_basis='element'):
@@ -337,6 +342,20 @@ def _example(mass_basis='element'):
     mq = 'particle_mass_fg' if mass_basis == 'particle' else 'mass_fg'
     mname = 'particle mass' if mass_basis == 'particle' else 'mass'
     return _EXAMPLE.replace('{mq}', mq).replace('{mname}', mname)
+
+
+def _figure_tools():
+    """The matplotlib helpers already loaded in the sandbox, so the model never imports them."""
+    names = [n for n in FIGURE_TOOLS if n not in ('PALETTE', 'lognormal_hist', 'label_panels')]
+    return ("Already loaded, never import them: " + ', '.join(names) + ".\n"
+            "PALETTE is a list of colour-blind-safe hex colours. Colour points by a value with "
+            "ax.scatter(x, y, c=v, norm=LogNorm(), cmap='viridis') and fig.colorbar(...)."
+            + ("\nTernary (3-part composition): fig, ax = new_figure(projection='ternary'); "
+               "ax.scatter(top, left, right) with the three parts of each particle (each row is normalised); "
+               "ax.set_tlabel('Ag'); ax.set_llabel('Au'); ax.set_rlabel('Cu')." if TERNARY else '')
+            + "\nDifferent panel types in one figure: fig, (a, b) = new_figure(1, 2, projection=["
+            + ("'ternary'" if TERNARY else "'polar'") + ", None]) gives each panel its own type "
+            "(None = ordinary panel, e.g. a heatmap). label_panels([a, b]) writes (a), (b) on the panels.")
 
 
 def _functions_block(compact=False):
@@ -365,7 +384,7 @@ def build_system_prompt(ds, num_ctx=8192, mode='chat', max_turns=10, mass_basis=
     parts = [_ROLE, _HOW, _DATA.replace('{class_col}', class_col).replace('{quantity_rule}', quantity_rule(mass_basis))]
     if ds is not None and ds.acquisition is not None:
         parts.append(_ACQUISITION)
-    parts += [_functions_block(compact), _OUTPUT, _FIGURES, _DOMAIN]
+    parts += [_functions_block(compact), _OUTPUT, _FIGURES + '\n' + _figure_tools(), _DOMAIN]
     if not compact:
         parts.append(_example(mass_basis))
     if mode == 'explore':
@@ -384,25 +403,48 @@ def exploration_rules(max_turns):
         str: The rules section.
     """
     return f"""EXPLORATION MODE — you have up to {max_turns} turns
-- Turn 1: start with a line "PLAN:" followed by 3 to 6 numbered hypotheses worth testing for the user's question (for example: differences between samples, real associations versus chance coincidence, truncation at the detection limit, outliers, time bursts, enriched combinations). Then ONE python block testing the first.
+- Turn 1: start with a line "PLAN:" followed by 3 to 6 numbered hypotheses worth testing for the user's question. Take them from the FIRST LOOK leads when a screen is given, most surprising first, keeping those that bear on the question. Then ONE python block testing the first.
+- Hunt for what would surprise an analyst: molar ratios that differ between samples or are fixed, isotope ratios away from natural, element pairs whose ratio changes with particle size, element ratios far from the upper crust, combinations found in one sample only. Use molar_ratio, isotope_ratio, crust_ratio and element_correlation for these.
+- The screen is a lead, not a result: confirm each lead with your own test, then dig into it: which particles carry it, their sizes, which samples, whether it holds at every size. Skip what the screen lists as nothing unusual.
+- Look at outliers, time bursts or detection-limit truncation only when the question asks about them or about one element's unusual behaviour.
 - Every later turn: one line naming the hypothesis you test, then ONE python block under 50 lines.
 - Show the evidence for each hypothesis as a figure you design for it, plus a short table of the key numbers.
 - In the code, call record_finding(claim, n=..., p=..., effect=...) whenever a result supports or rejects a hypothesis. Write the claim in plain words with its key numbers, and record negative results too.
+- p is the p-value of the test behind the finding, e.g. the smallest p or p_adj in the table you used; p=None for a descriptive finding with no test. Never pass p=1.0 as a placeholder: a finding with p >= 0.05 is listed as not supported.
 - After each turn you see the results and the findings so far. Do not repeat a test you already ran.
+- If your code fails you get the error back; fixing it does not use a turn.
 - When the plan is covered or nothing new appears, reply with the line EXPLORATION DONE and no code."""
 
 
-def first_exploration_message(question):
+def first_exploration_message(question, look=''):
     """The pinned opening message of an exploration.
 
     Args:
         question (str): The user's question.
+        look (str): The automatic first-look screen, or empty.
 
     Returns:
         str: Message text.
     """
-    return (f"USER QUESTION: {question}\n\n"
-            "Begin: write PLAN: with your numbered hypotheses, then ONE python block testing the first.")
+    parts = [f"USER QUESTION: {question}"]
+    if look:
+        parts.append(look)
+    parts.append("Begin: write PLAN: with your numbered hypotheses, then ONE python block testing the first.")
+    return '\n\n'.join(parts)
+
+
+def explore_fix_request(error, digest=''):
+    """Send a failed exploration turn back for a fix that does not use a turn.
+
+    Args:
+        error (str): The sandbox error.
+        digest (str): Any output before the error.
+
+    Returns:
+        str: Message text.
+    """
+    return (correction_request(error, digest) +
+            "\n\nThis fix does not use one of your turns. Test the same hypothesis and keep record_finding.")
 
 
 def turn_feedback(digest, turn, max_turns, ledger_text, plan_text=''):
@@ -448,9 +490,10 @@ FINDINGS:
 {ledger_text or '(no findings were recorded)'}
 
 Format in markdown:
-- One or two sentence headline with the most important result.
-- "**Supported**": one bullet per supported finding: what, how many particles or samples, the test result (p or effect), why it matters.
+- One or two sentence headline with the most surprising result.
+- "**Supported**": one bullet per supported finding, most surprising first: what, how many particles or samples, the test result (p or effect), why it matters.
 - "**Not supported**": hypotheses the data did not back.
+- "**Unremarkable**": one line naming what was checked and found ordinary, with no numbers; leave it out when nothing was.
 - "**Caveats**": detection-limit truncation, coincidence, interferences or small numbers that affect the reading, only if they apply.
 No code."""
 
@@ -468,6 +511,8 @@ def interpretation_request(results_text):
             f"{results_text}\n\n"
             "Give the user the takeaway in 1 to 4 sentences. Use only numbers shown above, "
             "mention test results when there are any, and point out a caveat from the notes if one applies. "
+            "You cannot see the figures: their description lists only what was drawn, so do not describe "
+            "differences, trends or shapes in a figure unless the numbers above show them. "
             "If a figure has a problem listed under FIGURE CHECKS, say so briefly. Do not write code.")
 
 
@@ -492,6 +537,89 @@ def correction_request(error, digest=''):
     if digest:
         msg += "\n\nOutput before the error:\n" + digest
     return msg
+
+
+NO_CODE_PREFIX = '[NO CODE]'
+EMPTY_PREFIX = '[EMPTY REPLY]'
+
+_RESULT_NUMBER_RE = re.compile(r'(?<![A-Za-z\d._\-])\d+(?:[.,]\d+)*(?![A-Za-z\d_])')
+_LIST_MARK_RE = re.compile(r'^\s*\d+[.)]\s', re.MULTILINE)
+_RESULT_PHRASE_RE = re.compile(
+    r'\b(?:figure|plot|table|histogram|chart|graph|heatmap|box ?plot)\s+(?:above|below)\b'
+    r'|\b(?:shown|see|displayed|plotted)\s+(?:above|below)\b'
+    r'|\bonce the (?:code|figure|plot|table)\b|\bwhen the code (?:runs|has run)\b'
+    r'|\bwill (?:appear|be shown)\b|\bthe (?:figure|plot|chart) (?:shows|above)\b', re.I)
+
+
+def _number_values(text):
+    """The numbers written in *text*, as floats."""
+    out = set()
+    for m in _RESULT_NUMBER_RE.findall(text or ''):
+        try:
+            out.add(float(m.replace(',', '')))
+        except ValueError:
+            pass
+    return out
+
+
+def needs_code(prose, known=''):
+    """Whether an answer without code looks like it reports results it never computed.
+
+    With data connected, an answer that quotes numbers, refers to a figure or
+    table "above", promises results "once the code runs", or is empty was not
+    computed from the data. Element and isotope labels such as 56Fe or
+    40Ar16O, digits inside sample names, numbered-list markers and small
+    counts up to 10 are not counted, nor are numbers that appear in *known*
+    (the dataset summary the model was given).
+
+    Args:
+        prose (str): The answer text, code blocks removed.
+        known (str): Text whose numbers the model may quote without code.
+
+    Returns:
+        bool: True when the answer should be sent back for code.
+    """
+    text = (prose or '').strip()
+    if is_empty_reply(text):
+        return True
+    if _RESULT_PHRASE_RE.search(text):
+        return True
+    quoted = {v for v in _number_values(_LIST_MARK_RE.sub(' ', text)) if not (v.is_integer() and v <= 10)}
+    return bool(quoted - _number_values(known))
+
+
+def is_empty_reply(prose):
+    """Whether a reply holds no real text (nothing, or a stray character such as ".").
+
+    Args:
+        prose (str): The reply text, code blocks removed.
+
+    Returns:
+        bool: True when fewer than three letters or digits are left.
+    """
+    return len(re.sub(r'[\W_]', '', prose or '')) < 3
+
+
+def empty_reply_request():
+    """Ask again after a reply that came back empty.
+
+    Returns:
+        str: Message text.
+    """
+    return (f"{EMPTY_PREFIX} Your reply was empty. Answer the last question again: if it is about this "
+            "data, write one short line, then ONE ```python block, and end your reply there.")
+
+
+def code_first_request():
+    """Send back an answer that reported results without running code.
+
+    Returns:
+        str: Message text.
+    """
+    return (f"{NO_CODE_PREFIX} Your answer has no code, so none of its numbers, figures or tables "
+            "came from the data. If the question is about this data, write the code now and answer "
+            "only from its output; do not write any number before the code has run. If it is a "
+            "general question that needs no data, give the answer again without numbers about this data.")
 
 
 def figure_fix_request(warnings):
