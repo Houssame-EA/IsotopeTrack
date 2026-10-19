@@ -5,6 +5,71 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
+## v1.11.1 - 2026-10-19
+
+### What’s Changed
+
+### IsotopeTrack v1.11.1
+
+#### Workflow canvas & Insights
+
+- **Arrange** (Ctrl+L, or right-click): lays out the whole workflow by data flow, centres each source on its branches and packs separate groups to fit the view. Animated and undone in one step with Ctrl+Z.
+- Branches added from Insights now stack beside their source instead of running off in one long line.
+- The canvas grows with its content. Trackpad swipe pans; pinch or Cmd/Ctrl + scroll zooms (10 %–500 %).
+- **Sample selectors:** particle counts, Shift-click ranges, groups with suggested names and colour tags, live stepping between samples.
+
+#### Ionic calibration
+
+- New **Checks** window per isotope: slope uncertainty and 95 % interval, saturation of the top standard, isotopes vs natural abundance, drift between repeated standards, blank used for LOD/LOQ, and day-to-day sensitivity history.
+- Optional **drift correction** from a repeated standard (off by default, saved with the session).
+- **Auto-fill** recognises preset standards (71A, 68A-B, 68B-C, CMS-1…), element symbols and names in sample names, and element lists loaded in the periodic table.
+- The Sample column stays in place when scrolling sideways.
+- Figure Builder look for the calibration windows; manual sensitivity override fixed.
+
+#### AI assistant
+
+- **Deep Explore** now hunts for surprising results instead of listing tables. A first-look screen ranks leads: molar ratios that differ between samples or are fixed, isotope ratios that differ from natural abundance, element pairs whose ratio changes with particle size, combinations found in one sample only, and ratios far from the upper continental crust. It also lists in one line what was checked and found ordinary.
+- **New analysis tools:** molar ratio, isotope ratio, element correlation and crust ratio (upper continental crust, Rudnick & Gao).
+- **More data available to the assistant:** the raw signal of each run and the per-sample results of the summary export (particles/mL, mass concentration, detection limits, calibration slope, transport rate…). Element mass is used by default; compound-corrected particle values on request.
+- **Better figures:** log-normal histograms with GM and GSD, mixed panel types, panel labels, up to 12 figures per answer.
+- **More reliable answers:** numbers always come from code, empty replies are retried, and unfinished explorations keep their findings.
+- **Memory-aware model settings:** shows your RAM, the size of each model and the recommended model for your computer, warns when a model won't fit, and unloads the model when idle or when the window closes.
+- Generated code is no longer cut off by a time limit; press **Stop** to end it.
+
+#### Other improvements
+
+- **Particle classifier:** easier rule editor with signed chips and simple syntax, syntax hints, and a coloured group summary per sample.
+- **SIA:** outlier exclusion updates sigma, isotope labels and trend, and is kept in the session history and in saved projects.
+- **Look:** softer light theme, Time / m/z switch, sliding theme switch, readable parameters table in dark mode.
+
+#### Anonymous crash reports (opt-in)
+
+- New **Help → Report a Bug** and **Send Anonymous Crash Reports**. You are asked once and it is off unless you agree.
+- Only the error type, a cleaned message, code positions and the app/OS/Python versions are sent. **No data, file paths, names, e-mail addresses or location ever leave your computer.**
+
+#### Downloads
+
+- **macOS (Apple Silicon):** `IsotopeTrack_M.dmg`
+  
+- **Windows:** `IsotopeTrack_Setup.exe`
+  
+- `SHA256SUMS.txt` lets the in-app updater verify the download.
+  
+- Release v1.11.1 ([#40](https://github.com/Houssame-EA/IsotopeTrack/pull/40)) [@Houssame-EA](https://github.com/Houssame-EA)
+  
+- deep Explore, training pipeline, memory-aware models; canvas Arrange and sample selectors ([#39](https://github.com/Houssame-EA/IsotopeTrack/pull/39)) [@Houssame-EA](https://github.com/Houssame-EA)
+  
+- Improvements: easier classifier, app-wide style, SIA tracking, dark-mode table fix ([#38](https://github.com/Houssame-EA/IsotopeTrack/pull/38)) [@Houssame-EA](https://github.com/Houssame-EA)
+  
+- AI assistant package refactor and ionic calibration improvements ([#37](https://github.com/Houssame-EA/IsotopeTrack/pull/37)) [@Houssame-EA](https://github.com/Houssame-EA)
+  
+
+### Contributors
+
+@Houssame-EA and [@github-actions[bot]](https://github.com/apps/github-actions)
+
+**Full Changelog**: [v1.11.0...v1.11.1](https://github.com/Houssame-EA/IsotopeTrack/compare/v1.11.0...v1.11.1)
+
 ## v1.11.0 - 2026-10-08
 
 ### What’s Changed
