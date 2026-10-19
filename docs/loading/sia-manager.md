@@ -12,8 +12,6 @@
 | `QUANTILE_TARGET` | `0.9999` |
 | `PER_MASS_MIN_PTS` | `10` |
 | `PER_MASS_BINS` | `50` |
-| `OUTLIER_SD_MULT` | `2.0` |
-| `_QQ_POINT_COLOR` | `QColor(65, 105, 225, 180)` |
 | `_QQ_LINE_COLOR` | `QColor(220, 50, 50)` |
 
 ## Classes
@@ -43,10 +41,28 @@ Unified SIA Manager — Nu Vitesse + TOFWERK.
 | `_themed_msgbox` | `(self, kind: str, parent, title: str, text: str, buttons=None, default` | Show a QMessageBox styled to the active theme palette. |
 | `_on_theme_changed` | `(self, _name: str)` | Restyle owned widgets and any live dialogs when the theme changes. |
 | `_loaded_button_qss` | `() → str` | QSS for the upload button once a SIA has been loaded. |
-| `_close_button_qss` | `() → str` | QSS for the Close buttons in SIA dialogs. |
+| `_style_upload_button` | `(self, loaded)` | Show the upload button in its loaded or empty state. |
+| `_point_color` | `(alpha=255)` | Scatter point colour that stays readable on the current plot background. |
+| `_info_card_qss` | `() → str` | QSS for the information card at the top of the SIA dialog. |
 | `_restyle_plot_widget` | `(pw)` | Re-apply plot background and axis colors from the active palette. |
 | `_register_dialog` | `(self, dialog)` | Track a dialog so it gets restyled on theme change. |
 | `create_sia_buttons` | `(self, parent_layout)` | Create and add the three SIA control buttons to a layout. |
+| `get_effective_sigma` | `(self) → float` | Return the sigma the application should use from the loaded SIA. |
+| `_sigma_mode_is_per_isotope` | `(self) → bool` | Whether the main window is in per-isotope sigma mode. |
+| `_apply_sigma` | `(self, value: float)` | Put a sigma into the Sigma box and push it to every sample. |
+| `set_exclude_outliers` | `(self, exclude: bool)` | Exclude or include per-mass outliers and update the sigma in use. |
+| `_source_label_qss` | `(self) → str` | QSS for the small label that says where sigma comes from. |
+| `_source_text` | `(self) → str` | Short text describing where the sigma in the Sigma box comes from. |
+| `_refresh_source_label` | `(self)` | Update the label next to the SIA buttons. |
+| `_isotopes` | `(self)` | Natural isotopes of the periodic table, built once. |
+| `_selected_labels` | `(self)` | Labels such as ``'56Fe'`` for the isotopes selected for analysis. |
+| `mass_label` | `(self, mass: float) → str` | Label an m/z value with its isotopes, analysed isotopes first. |
+| `isotope_text` | `(self, mass: float) → str` | Plain isotope list for an m/z value, e.g. ``'58Ni / 58Fe'``. |
+| `history` | `(self)` | The SIA history store, opened on first use. |
+| `_record_history` | `(self)` | Add the loaded SIA to the history. |
+| `_history_message` | `(result) → str` | Sentence for the load message about how this SIA compares to earlier ones. |
+| `export_state` | `(self)` | SIA data to store in a project file. |
+| `import_state` | `(self, state)` | Restore SIA data saved with a project. |
 | `upload_single_ion_distribution` | `(self)` | Prompt the user to choose an instrument type, then open the |
 | `upload_overlay_distribution` | `(self)` | Load a second SIA dataset for overlay comparison. |
 | `_start_sia_processing` | `(self, data_path: str, file_type: str='nu')` | Spawn a QThread, move a SIAWorker onto it, and start processing. |
@@ -56,11 +72,11 @@ Unified SIA Manager — Nu Vitesse + TOFWERK.
 | `_on_error` | `(self, msg: str)` | Handle a processing error emitted by the worker. |
 | `_on_thread_cleanup` | `(self)` | Disconnect worker signals and nullify thread/worker references after |
 | `_reset_processing_state` | `(self)` | Restore the upload button and hide the progress bar. |
-| `_update_ui_after_load` | `(self)` | Update sigma spinbox and button states after a successful SIA load. |
+| `_update_ui_after_load` | `(self)` | Enable the SIA buttons and show where sigma comes from. |
 | `_apply_sia_to_all_samples` | `(self)` | Trigger a parameters-table refresh so all samples reflect the new SIA. |
-| `_show_success_message` | `(self)` | Display a QMessageBox summarising the loaded SIA. |
+| `_show_success_message` | `(self, history=None)` | Display a QMessageBox summarising the loaded SIA. |
 | `show_single_ion_info` | `(self)` | Open the SIA information dialog with plot and optional per-mass |
-| `_create_info_html` | `(self, info: dict) → str` | Build an HTML string for the information table in the dialog. |
+| `_create_info_html` | `(self, info: dict) → str` | Build the HTML shown in the information card of the dialog. |
 | `_annot` | `(text: str) → str` | Wrap a plain-text string in the standard annotation HTML style |
 | `_make_plot_widget` | `(left_label: str, bottom_label: str) → pg.PlotWidget` | Create a styled PlotWidget with shared axis and font settings. |
 | `_create_sia_plot` | `(self, info: dict, mass_key) → pg.PlotWidget` | Create a new SIA distribution plot widget and populate it. |
@@ -68,13 +84,14 @@ Unified SIA Manager — Nu Vitesse + TOFWERK.
 | `_create_qq_plot` | `(self, info: dict, mass_key) → pg.PlotWidget` | Create a new lognormal Q-Q plot widget and populate it. |
 | `_update_qq_plot` | `(self, pw: pg.PlotWidget, info: dict, mass_key)` | Draw a Q-Q plot: theoretical lognormal quantiles on x, |
 | `_show_qq_dialog` | `(self, info: dict, parent: QWidget)` | Open a separate dialog showing a lognormal Q-Q plot for the |
+| `show_history_dialog` | `(self, parent=None)` | Open the SIA history: σ and mean single-ion area per session. |
 | `_calc_quantile` | `(mean_signal: float, sigma: float, avg_sia: float, sig_vals: np.ndarra` | Compute the ``QUANTILE_TARGET`` quantile in normalised signal units. |
 | `_create_sigma_comparison_plot` | `(self, info: dict) → pg.PlotWidget` | Build the sigma-vs-mass scatter plot with mean and ±1 SD / ±2 SD |
 | `_update_sigma_comparison_plot` | `(self, pw: pg.PlotWidget, exclude_outliers: bool=False)` | Redraw the sigma comparison scatter plot in place. |
 | `_on_sigma_scatter_clicked` | `(self, points)` | Handle a click on a point in the sigma scatter plot. |
 | `_export_per_mass_csv` | `(self, parent: QWidget)` | Export per-mass sigma data to a CSV file via a save-file dialog. |
 | `_export_plot` | `(self, pw: pg.PlotWidget, parent: QWidget)` | Export a PlotWidget to SVG or PNG via a save-file dialog. |
-| `_assign_per_mass_sigma` | `(self)` | Assign each element's sigma from its closest matching per-mass SIA |
+| `_assign_per_mass_sigma` | `(self, quiet: bool=False)` | Assign each element's sigma from its closest per-mass SIA. |
 | `_clear_overlay` | `(self, dialog: QDialog)` | Clear the overlay SIA data and refresh the current dialog view. |
 | `clear_single_ion_distribution` | `(self)` | Prompt the user to confirm, then clear all SIA data and reset sigma. |
 | `_clear_sia_data` | `(self)` | Reset all stored SIA data (primary and overlay) and restore sigma to |
@@ -82,7 +99,7 @@ Unified SIA Manager — Nu Vitesse + TOFWERK.
 | `is_sia_loaded` | `(self) → bool` | Check whether a single-ion distribution is currently loaded. |
 | `get_sia_info` | `(self) → dict` | Return a copy of the current SIA info dictionary. |
 | `get_calculated_sigma` | `(self) → float` | Return the sigma value derived from the loaded SIA. |
-| `get_per_mass_sigma` | `(self, target_mass: float, tolerance: float=0.5) → float` | Look up the per-mass sigma for a given target mass. |
+| `get_per_mass_sigma` | `(self, target_mass: float, tolerance: float=sia_stats.MASS_MATCH_TOL) ` | Look up the per-mass sigma for a given target mass. |
 | `is_overlay_loaded` | `(self) → bool` | Check whether overlay SIA data is loaded. |
 | `stop_processing` | `(self)` | Request the background worker to stop and reset the UI. |
 | `cleanup` | `(self)` | Gracefully stop the worker thread and release all references. |

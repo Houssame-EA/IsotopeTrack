@@ -7,12 +7,17 @@ Instrument data readers: Nu Vitesse, TOFWERK, CSV, and background threads.
 ### [`SIA_manager.py`](sia-manager.md)
 
 
-**2** classes &nbsp;·&nbsp; **4** functions &nbsp;·&nbsp; **55** methods
+**2** classes &nbsp;·&nbsp; **4** functions &nbsp;·&nbsp; **74** methods
 
 ### [`data_thread.py`](data-thread.md)
 
 
 **1** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **8** methods
+
+### [`sia_stats.py`](sia-stats.md)
+Statistics and history for single-ion area (SIA) distributions.
+
+**1** classes &nbsp;·&nbsp; **16** functions &nbsp;·&nbsp; **6** methods
 
 ### [`tofwerk_loading.py`](tofwerk-loading.md)
 Loading data from TOFWERK ICP-ToF.

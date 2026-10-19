@@ -66,6 +66,8 @@ The saved setting can be ``'light'``, ``'dark'``, or ``'system'``
 | `theme_toggle_button_qss` | `(p: Palette) → str` |  |
 | `sidebar_toggle_button_qss` | `(p: Palette) → str` |  |
 | `primary_button_qss` | `(p: Palette) → str` | Used by batch_edit_button, show_all_signals_button, detect_button. |
+| `secondary_action_button_qss` | `(p: Palette) → str` | Neutral action button, as in the Figure Builder: the one main action |
+| `view_switch_qss` | `(p: Palette) → str` | Segmented two-way switch (e.g. Time \| m/z): one track, the active side |
 | `progress_bar_qss` | `(p: Palette) → str` |  |
 | `groupbox_qss` | `(p: Palette) → str` | Used by plot, control panel, summary group boxes. |
 | `summary_label_qss` | `(p: Palette) → str` |  |
@@ -81,3 +83,4 @@ The saved setting can be ``'light'``, ``'dark'``, or ``'system'``
 | `export_dialog_qss` | `(p: Palette) → str` | Styling for pyqtgraph's plot-export dialogs (item picker and Save As). |
 | `tier_colors` | `(p: Palette) → dict` | Returns a dict mapping tier name -> QColor-compatible hex string. |
 | `html_table_css` | `(p: Palette) → str` | CSS block for HTML tables rendered inside QLabel/QTextEdit via RichText. |
+| `app_qss` | `(p: Palette) → str` | The shared IsotopeTrack window stylesheet, in the Figure Builder's look. |

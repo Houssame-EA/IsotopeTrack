@@ -10,7 +10,7 @@ from PySide6.QtCore import (
     Qt, Signal, QPointF, QRectF, QMimeData, QPoint, QObject, QEvent, QRect,
     QTimer, QSize, QThread,
     QPropertyAnimation, QParallelAnimationGroup, QSequentialAnimationGroup,
-    QPauseAnimation, QEasingCurve,
+    QPauseAnimation, QEasingCurve, QVariantAnimation,
 )
 from PySide6.QtGui import (
     QPainter, QPen, QBrush, QColor, QDrag, QPixmap, QPainterPath, QCursor,
@@ -39,7 +39,7 @@ from results.results_correlation import CorrelationPlotDisplayDialog, Correlatio
 from results.results_isotope import IsotopicRatioDisplayDialog, IsotopicRatioPlotNode
 from results.cluster.dialog import ClusteringDisplayDialog, ClusteringPlotNode
 from results.results_triangle import TriangleDisplayDialog, TrianglePlotNode
-from results.results_AI import AIAssistantNode
+from results.ai.node import AIAssistantNode
 from results.results_box_plot import BoxPlotDisplayDialog, BoxPlotNode
 from results.results_molar_ratio import MolarRatioDisplayDialog, MolarRatioPlotNode
 from results.results_single_multiple import (
@@ -65,6 +65,7 @@ from tools.particle_classifier_node import (
 import qtawesome as qta
 
 from tools.theme import theme as _app_theme
+from widget import canvas_layout as _layout
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.widget.canvas_widgets")
 
@@ -1049,6 +1050,10 @@ def _dialog_base_style():
     }}
     QLineEdit:focus {{ border: 2px solid {p.accent}; }}
     QDialogButtonBox QPushButton {{ min-width: 90px; }}
+    QScrollArea#sampleScroll {{ border: 1px solid {p.border}; border-radius: 6px; background: {p.bg_secondary}; }}
+    QWidget#sampleList, QWidget#sampleViewport {{ background: {p.bg_secondary}; }}
+    QPushButton#sampleStep {{ padding: 0; font-size: 13px; }}
+    QPushButton#sampleAction {{ padding: 2px 12px; font-size: 12px; }}
     """
 
 
@@ -1112,12 +1117,247 @@ def _canvas_chrome_style():
     """
 
 
-class SampleSelectorDialog(QDialog):
-    """Simplified single-sample configurator: samples on left, isotope chips on right."""
+GROUP_TAG_COLORS = ['#0072B2', '#E69F00', '#009E73', '#D55E00', '#CC79A7', '#56B4E9', '#8C6D31', '#999999']
+
+
+def sample_particle_counts(parent_window, samples, batch_particle_data=None):
+    """Particles per sample, for showing next to each name in the selectors.
+
+    Args:
+        parent_window: Main window holding ``sample_particle_data``.
+        samples (list): Sample names.
+        batch_particle_data (list): Particles from a batch node, each with
+            ``source_sample``; used instead of the main window when given.
+
+    Returns:
+        dict: ``{sample: count}``, or an empty dict when no particle data is
+        available yet.
+    """
+    if batch_particle_data is not None:
+        counts = {}
+        for p in batch_particle_data:
+            s = p.get('source_sample')
+            counts[s] = counts.get(s, 0) + 1
+        return {s: counts.get(s, 0) for s in samples}
+    spd = getattr(parent_window, 'sample_particle_data', None)
+    if not isinstance(spd, dict) or not spd:
+        return {}
+    return {s: len(spd.get(s) or []) for s in samples}
+
+
+def suggest_group_name(names):
+    """A group name for several samples: their shared replicate root or common prefix.
+
+    Args:
+        names (list): Sample names.
+
+    Returns:
+        str: e.g. ``Influent_Day1`` for ``Influent_Day1_1`` .. ``_3``; ``Group``
+        when the names share nothing.
+    """
+    names = [str(n) for n in names if n]
+    if not names:
+        return ''
+    try:
+        from results.insights.replicates import replicate_root
+        roots = {replicate_root(n) for n in names}
+        if len(roots) == 1:
+            root = roots.pop()
+            if root:
+                return root
+    except Exception:
+        _itk_log.exception("Handled exception in suggest_group_name")
+    import os
+    prefix = os.path.commonprefix(names).rstrip(' _-.')
+    return prefix or 'Group'
+
+
+def _count_text(n):
+    """Short particle count for a sample row."""
+    return f"{n:,} particles" if n != 1 else "1 particle"
+
+
+def _shift_held():
+    """Whether Shift is held, for range selection in the sample lists."""
+    return bool(QApplication.keyboardModifiers() & Qt.ShiftModifier)
+
+
+def _checkbox_style(p):
+    """Checkbox look shared by both sample lists."""
+    return (f"QCheckBox {{ padding:6px 8px; border-radius:5px; color:{p.text_primary};"
+            f" background:transparent; }}"
+            f"QCheckBox:hover {{ background:{p.bg_hover}; }}"
+            f"QCheckBox::indicator {{ width:16px; height:16px; border-radius:3px; }}"
+            f"QCheckBox::indicator:unchecked {{ border:2px solid {p.border};"
+            f" background:{p.bg_secondary}; }}"
+            f"QCheckBox::indicator:checked {{ border:2px solid {p.accent};"
+            f" background:{p.accent}; }}")
+
+
+def _step_button(text, tip):
+    """A small arrow button for stepping through samples."""
+    b = QPushButton(text)
+    b.setObjectName("sampleStep")
+    b.setFixedSize(34, 34)
+    b.setToolTip(tip)
+    return b
+
+
+class _RowHighlight:
+    """Finder-style highlighting of sample rows, shared by both selector dialogs.
+
+    Click highlights a row, Shift-click a range, Cmd/Ctrl-click adds or
+    removes one, Cmd/Ctrl+A highlights every shown row and Esc clears. The
+    dialog then acts on the highlighted rows from its action bar or the
+    right-click menu. A dialog using it provides ``_visible_samples()``,
+    ``self._hl_row`` (``{sample: row widget}``) and ``_hl_actions()``.
+    """
+
+    def _hl_init(self):
+        """Start with nothing highlighted."""
+        self._highlighted = []
+        self._hl_anchor = None
+        self._hl_row = {}
+        self._hl_owner = {}
+
+    def _hl_track(self, sample, row_w, *parts):
+        """Make clicks on a row (outside its checkbox and fields) highlight it."""
+        row_w.setObjectName("sampleRow")
+        row_w.setAttribute(Qt.WA_StyledBackground, True)
+        row_w.setContextMenuPolicy(Qt.CustomContextMenu)
+        row_w.customContextMenuRequested.connect(
+            lambda pos, s=sample, w=row_w: self._hl_menu(s, w.mapToGlobal(pos)))
+        self._hl_row[sample] = row_w
+        for w in (row_w,) + parts:
+            self._hl_owner[w] = sample
+            w.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        """Highlight on a left click on a tracked row."""
+        sample = self._hl_owner.get(obj) if hasattr(self, '_hl_owner') else None
+        if (sample is not None and event.type() == QEvent.MouseButtonPress
+                and event.button() == Qt.LeftButton):
+            self._hl_click(sample, event.modifiers())
+        return super().eventFilter(obj, event)
+
+    def _hl_click(self, sample, modifiers):
+        """Apply one click with its modifier keys."""
+        shown = self._visible_samples()
+        if modifiers & Qt.ShiftModifier and self._hl_anchor in shown and sample in shown:
+            a, b = sorted((shown.index(self._hl_anchor), shown.index(sample)))
+            self._highlighted = shown[a:b + 1]
+        elif modifiers & Qt.ControlModifier:
+            if sample in self._highlighted:
+                self._highlighted.remove(sample)
+            else:
+                self._highlighted.append(sample)
+            self._hl_anchor = sample
+        else:
+            self._highlighted = [] if self._highlighted == [sample] else [sample]
+            self._hl_anchor = sample
+        self._hl_refresh()
+
+    def _hl_set(self, samples):
+        """Highlight exactly *samples*."""
+        self._highlighted = list(samples)
+        self._hl_refresh()
+
+    def _hl_ordered(self):
+        """Highlighted samples in list order."""
+        return [s for s in self.samples if s in self._highlighted]
+
+    def _hl_refresh(self):
+        """Repaint the rows and update the action bar."""
+        p = _app_theme.palette
+        for s, row_w in self._hl_row.items():
+            on = s in self._highlighted
+            row_w.setStyleSheet(
+                f"#sampleRow {{ border-radius:5px; background:{p.bg_selected if on else 'transparent'};"
+                f" border:1px solid {p.accent if on else 'transparent'}; }}"
+                f"#sampleRow:hover {{ background:{p.bg_selected if on else p.bg_hover}; }}")
+        n = len(self._highlighted)
+        self._hl_bar.setVisible(n > 0)
+        self._hl_label.setText(f"{n} highlighted")
+        self._hl_changed()
+
+    def _hl_changed(self):
+        """Hook for dialogs that update other text when the highlight changes."""
+
+    def _hl_build_bar(self):
+        """The action bar shown under the list while rows are highlighted."""
+        p = _app_theme.palette
+        bar = QFrame()
+        bar.setObjectName("sampleActions")
+        bar.setStyleSheet(
+            f"#sampleActions {{ background:{p.accent_soft}; border:1px solid {p.border_strong};"
+            f" border-radius:6px; }}")
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(8, 4, 6, 4)
+        lay.setSpacing(6)
+        self._hl_label = QLabel()
+        self._hl_label.setStyleSheet(
+            f"color:{p.text_primary}; font-weight:600; font-size:12px; background:transparent;")
+        lay.addWidget(self._hl_label)
+        lay.addStretch()
+        for text, slot, tip in self._hl_actions():
+            b = QPushButton(text)
+            b.setObjectName("sampleAction")
+            b.setFixedHeight(28)
+            b.setToolTip(tip)
+            b.clicked.connect(slot)
+            lay.addWidget(b)
+        clear = QPushButton("✕")
+        clear.setFixedSize(28, 28)
+        clear.setObjectName("sampleStep")
+        clear.setToolTip("Clear the highlight (Esc)")
+        clear.clicked.connect(lambda: self._hl_set([]))
+        lay.addWidget(clear)
+        self._hl_bar = bar
+        bar.setVisible(False)
+        return bar
+
+    def _hl_menu(self, sample, global_pos):
+        """Right-click menu with the same actions; a click outside the highlight highlights that row."""
+        if sample not in self._highlighted:
+            self._hl_set([sample])
+            self._hl_anchor = sample
+        menu = QMenu(self)
+        for text, slot, tip in self._hl_actions():
+            act = menu.addAction(f"{text} ({len(self._highlighted)})")
+            act.setToolTip(tip)
+            act.triggered.connect(slot)
+        menu.exec(global_pos)
+
+    def keyPressEvent(self, event):
+        """Cmd/Ctrl+A highlights every shown row; Esc clears the highlight before closing."""
+        if event.matches(QKeySequence.SelectAll) and not self._search.hasFocus():
+            self._hl_set(self._visible_samples())
+            return
+        if event.key() == Qt.Key_Escape and self._highlighted:
+            self._hl_set([])
+            return
+        super().keyPressEvent(event)
+
+
+def _style_sample_scroll(scroll, container):
+    """Let the sample list paint the themed background set in the dialog style."""
+    container.setAttribute(Qt.WA_StyledBackground, True)
+    scroll.viewport().setObjectName("sampleViewport")
+    scroll.viewport().setAttribute(Qt.WA_StyledBackground, True)
+
+
+class SampleSelectorDialog(_RowHighlight, QDialog):
+    """Single-sample configurator: samples on the left, isotope chips on the right.
+
+    Each sample shows its particle count. Shift-click ticks a range. The
+    arrow buttons step to the previous or next sample; when the node passes
+    ``on_step``, each step is applied at once so the connected plots update
+    while the dialog stays open.
+    """
 
     def __init__(self, parent, samples, current_selection=None,
                  current_isotopes=None, current_sum_replicates=False,
-                 current_replicate_samples=None):
+                 current_replicate_samples=None, counts=None, on_step=None):
         super().__init__(parent)
         self.setWindowTitle("Single Sample Configuration")
         self.setModal(True)
@@ -1128,8 +1368,13 @@ class SampleSelectorDialog(QDialog):
 
         self.parent_window = parent
         self.samples = samples
+        self.counts = counts or {}
+        self.on_step = on_step
         self.current_isotopes = current_isotopes or []
         self.current_replicate_samples = current_replicate_samples or []
+        self._last_clicked = None
+        self._stepped = None
+        self._hl_init()
 
         self.sample_config = {}
         for s in samples:
@@ -1142,7 +1387,6 @@ class SampleSelectorDialog(QDialog):
 
         self._build()
 
-    # ── build ──────────────────────────────────────────────────────────────
     def _build(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
@@ -1150,7 +1394,9 @@ class SampleSelectorDialog(QDialog):
 
         p = _app_theme.palette
         banner = QLabel(
-            "Check one sample for individual analysis, or multiple to sum/combine them.")
+            "Check one sample for individual analysis, or several to sum them. Click rows to highlight "
+            "them (Shift for a range, ⌘/Ctrl to add) and act on all of them at once. "
+            "◀ ▶ step through the samples one at a time, or through the highlighted ones.")
         banner.setWordWrap(True)
         banner.setStyleSheet(
             f"padding:10px; background:{p.accent_soft}; border:1px solid {p.border_strong};"
@@ -1167,21 +1413,33 @@ class SampleSelectorDialog(QDialog):
 
         lv.addWidget(self._make_section_label("Samples"))
 
+        top_row = QHBoxLayout()
         self._search = QLineEdit()
         self._search.setPlaceholderText("🔍  Search samples…")
         self._search.setClearButtonEnabled(True)
         self._search.textChanged.connect(self._filter_samples)
-        lv.addWidget(self._search)
+        top_row.addWidget(self._search, 1)
+        self._prev_btn = _step_button("◀", "Previous sample")
+        self._prev_btn.clicked.connect(lambda: self._step(-1))
+        self._next_btn = _step_button("▶", "Next sample")
+        self._next_btn.clicked.connect(lambda: self._step(1))
+        top_row.addWidget(self._prev_btn)
+        top_row.addWidget(self._next_btn)
+        lv.addLayout(top_row)
 
         self._scroll = QScrollArea()
+        self._scroll.setObjectName("sampleScroll")
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.NoFrame)
         self._sample_container = QWidget()
+        self._sample_container.setObjectName("sampleList")
         self._sample_layout = QVBoxLayout(self._sample_container)
-        self._sample_layout.setContentsMargins(0, 0, 0, 0)
+        self._sample_layout.setContentsMargins(4, 4, 4, 4)
         self._sample_layout.setSpacing(2)
         self._scroll.setWidget(self._sample_container)
+        _style_sample_scroll(self._scroll, self._sample_container)
         lv.addWidget(self._scroll)
+        lv.addWidget(self._hl_build_bar())
 
         btns = QHBoxLayout()
         for txt, slot in [("Select All", self._select_all), ("Clear", self._clear_all)]:
@@ -1220,6 +1478,7 @@ class SampleSelectorDialog(QDialog):
         root.addWidget(bb)
 
         self._checkboxes = {}
+        self._rows = {}
         self._build_sample_list(self.samples)
         self._load_isotopes()
         self._update_preview()
@@ -1237,23 +1496,35 @@ class SampleSelectorDialog(QDialog):
             if child.widget():
                 child.widget().deleteLater()
         self._checkboxes = {}
+        self._rows = {}
         p = _app_theme.palette
         for s in samples:
-            cb = QCheckBox(s)
+            row_w = QWidget()
+            row = QHBoxLayout(row_w)
+            row.setContentsMargins(0, 0, 6, 0)
+            row.setSpacing(6)
+            cb = QCheckBox()
             cb.setChecked(self.sample_config.get(s, False))
-            cb.setStyleSheet(
-                f"QCheckBox {{ padding:6px 8px; border-radius:5px; color:{p.text_primary}; }}"
-                f"QCheckBox:hover {{ background:{p.bg_hover}; }}"
-                f"QCheckBox::indicator {{ width:16px; height:16px; border-radius:3px; }}"
-                f"QCheckBox::indicator:unchecked {{ border:2px solid {p.border};"
-                f" background:{p.bg_secondary}; }}"
-                f"QCheckBox::indicator:checked {{ border:2px solid {p.accent};"
-                f" background:{p.accent}; }}"
-            )
+            cb.setStyleSheet(_checkbox_style(p))
             cb.stateChanged.connect(lambda _, s=s: self._on_check(s))
+            cb.clicked.connect(lambda checked, s=s: self._on_clicked(s, checked))
+            row.addWidget(cb)
+            name_lbl = QLabel(s)
+            name_lbl.setStyleSheet(f"color:{p.text_primary}; background:transparent;")
+            name_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            row.addWidget(name_lbl, 1)
+            parts = [name_lbl]
+            if s in self.counts:
+                cnt = QLabel(_count_text(self.counts[s]))
+                cnt.setStyleSheet(f"color:{p.text_muted}; font-size:11px; background:transparent;")
+                row.addWidget(cnt)
+                parts.append(cnt)
             self._checkboxes[s] = cb
-            self._sample_layout.addWidget(cb)
+            self._rows[s] = row_w
+            self._hl_track(s, row_w, *parts)
+            self._sample_layout.addWidget(row_w)
         self._sample_layout.addStretch()
+        self._hl_refresh()
 
     def _load_isotopes(self):
         if not (self.parent_window and hasattr(self.parent_window, 'selected_isotopes')):
@@ -1272,41 +1543,121 @@ class SampleSelectorDialog(QDialog):
         if self.current_isotopes:
             self._chip_selector.set_selected(self.current_isotopes)
 
+    def _visible_samples(self):
+        """Samples shown under the current search, in list order."""
+        return [s for s in self.samples if not self._rows[s].isHidden()]
+
     def _on_check(self, sample):
         self.sample_config[sample] = self._checkboxes[sample].isChecked()
         self._update_preview()
 
+    def _on_clicked(self, sample, checked):
+        """Tick or untick a range when Shift is held."""
+        if _shift_held() and self._last_clicked in self._rows and self._last_clicked != sample:
+            shown = self._visible_samples()
+            if sample in shown and self._last_clicked in shown:
+                a, b = sorted((shown.index(self._last_clicked), shown.index(sample)))
+                for s in shown[a:b + 1]:
+                    self._checkboxes[s].setChecked(checked)
+        self._last_clicked = sample
+
+    def _hl_actions(self):
+        """What the action bar and right-click menu can do with the highlighted samples."""
+        return [("Include", self._include_highlighted, "Tick the highlighted samples (several are summed)"),
+                ("Exclude", self._exclude_highlighted, "Untick the highlighted samples")]
+
+    def _include_highlighted(self):
+        """Tick the highlighted samples."""
+        for s in self._hl_ordered():
+            self._checkboxes[s].setChecked(True)
+
+    def _exclude_highlighted(self):
+        """Untick the highlighted samples."""
+        for s in self._hl_ordered():
+            self._checkboxes[s].setChecked(False)
+
+    def _step(self, delta):
+        """Show the previous or next sample on its own, and apply it when the node allows.
+
+        With two or more samples highlighted, the arrows step through those only.
+        """
+        shown = self._visible_samples()
+        lit = [s for s in shown if s in self._highlighted]
+        if len(lit) >= 2:
+            shown = lit
+        if not shown:
+            return
+        ticked = [s for s in shown if self._checkboxes[s].isChecked()]
+        here = self._stepped if self._stepped in shown else (ticked[0] if ticked else None)
+        if here is None:
+            target = shown[0] if delta > 0 else shown[-1]
+        else:
+            target = shown[(shown.index(here) + delta) % len(shown)]
+        previous = {s: cb.isChecked() for s, cb in self._checkboxes.items()}
+        for s, cb in self._checkboxes.items():
+            cb.blockSignals(True)
+            cb.setChecked(s == target)
+            cb.blockSignals(False)
+            self.sample_config[s] = (s == target)
+        self._stepped = target
+        self._last_clicked = target
+        self._scroll.ensureWidgetVisible(self._rows[target])
+        if self.on_step is not None:
+            try:
+                applied = self.on_step(self)
+            except Exception:
+                _itk_log.exception("Handled exception in _step")
+                applied = False
+            if applied is False:
+                for s, cb in self._checkboxes.items():
+                    cb.blockSignals(True)
+                    cb.setChecked(previous[s])
+                    cb.blockSignals(False)
+                    self.sample_config[s] = previous[s]
+                self._stepped = here
+        self._update_preview()
+
     def _filter_samples(self, text):
         q = text.lower()
-        for s, cb in self._checkboxes.items():
-            cb.setVisible(q in s.lower())
+        for s, row_w in self._rows.items():
+            row_w.setVisible(q in s.lower())
 
     def _select_all(self):
         for s, cb in self._checkboxes.items():
-            if cb.isVisible():
+            if not self._rows[s].isHidden():
                 cb.setChecked(True)
 
     def _clear_all(self):
-        for cb in self._checkboxes.values():
-            if cb.isVisible():
+        for s, cb in self._checkboxes.items():
+            if not self._rows[s].isHidden():
                 cb.setChecked(False)
 
     def _update_preview(self):
         p = _app_theme.palette
-        inc = [s for s, checked in self.sample_config.items() if checked]
+        inc = [s for s in self.samples if self.sample_config.get(s)]
+        total = sum(self.counts.get(s, 0) for s in inc)
+        count = f" — {total:,} particles" if self.counts and inc else ""
         if not inc:
             txt = "No samples selected"
         elif len(inc) == 1:
-            txt = f"Individual analysis of \"{inc[0]}\""
+            pos = ""
+            if self._stepped == inc[0]:
+                shown = self._visible_samples()
+                lit = [s for s in shown if s in self._highlighted]
+                if len(lit) >= 2 and inc[0] in lit:
+                    shown = lit
+                if inc[0] in shown:
+                    pos = f"  ({shown.index(inc[0]) + 1} of {len(shown)})"
+            txt = f"Individual analysis of \"{inc[0]}\"{count}{pos}"
         else:
-            txt = f"Summed analysis of {len(inc)} samples: {', '.join(inc)}"
+            txt = f"Summed analysis of {len(inc)} samples: {', '.join(inc)}{count}"
         self._preview.setText(txt)
         self._preview.setStyleSheet(
             f"padding:10px; background:{p.accent_soft}; border:1px solid {p.border_strong};"
             f" border-radius:6px; color:{p.text_primary}; font-size:12px; font-weight:600;")
 
     def get_selection(self):
-        selected = [s for s, c in self.sample_config.items() if c]
+        selected = [s for s in self.samples if self.sample_config.get(s)]
         raw_iso = self._chip_selector.get_selected()
         isotopes = []
         for sym, mass in raw_iso:
@@ -1319,13 +1670,19 @@ class SampleSelectorDialog(QDialog):
             return selected[0], isotopes, False
         else:
             return selected, isotopes, True
-        
-    
-class MultipleSampleSelectorDialog(QDialog):
-    """Simplified multi-sample configurator: sample list with inline group fields + isotope chips."""
+
+
+class MultipleSampleSelectorDialog(_RowHighlight, QDialog):
+    """Multi-sample configurator: sample list with group fields, plus isotope chips.
+
+    Each sample shows its particle count and, once grouped, a colour tag
+    shared by its group. Shift-click ticks a range; "Group Checked" gives
+    the ticked samples one group name, suggested from their shared name when
+    the field is empty.
+    """
 
     def __init__(self, parent, samples, current_selection=None,
-                 current_isotopes=None, current_sample_config=None):
+                 current_isotopes=None, current_sample_config=None, counts=None):
         super().__init__(parent)
         self.setWindowTitle("Multi-Sample Configuration")
         self.setModal(True)
@@ -1336,7 +1693,10 @@ class MultipleSampleSelectorDialog(QDialog):
 
         self.parent_window = parent
         self.samples = samples
+        self.counts = counts or {}
         self.current_isotopes = current_isotopes or []
+        self._last_clicked = None
+        self._hl_init()
 
         if current_sample_config:
             # Pruned to the node's CURRENT sample list — carrying the whole
@@ -1359,7 +1719,6 @@ class MultipleSampleSelectorDialog(QDialog):
 
         self._build()
 
-    # ── build ──────────────────────────────────────────────────────────────
     def _build(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
@@ -1367,8 +1726,9 @@ class MultipleSampleSelectorDialog(QDialog):
 
         p = _app_theme.palette
         banner = QLabel(
-            "Check samples to include. Assign the same Group name to combine samples "
-            "— leave blank for individual analysis.")
+            "Check samples to include; samples with the same Group name are combined. Click rows to "
+            "highlight them (Shift for a range, ⌘/Ctrl to add), then Include, Exclude or Group them "
+            "all at once — or right-click. Leave the group blank for individual analysis.")
         banner.setWordWrap(True)
         banner.setStyleSheet(
             f"padding:10px; background:{p.accent_soft}; border:1px solid {p.border_strong};"
@@ -1394,24 +1754,31 @@ class MultipleSampleSelectorDialog(QDialog):
 
         self._group_input = QLineEdit()
         self._group_input.setPlaceholderText("Group name…")
-        self._group_input.setFixedWidth(120)
+        self._group_input.setFixedWidth(170)
+        self._group_input.returnPressed.connect(self._apply_group_to_checked)
         top_row.addWidget(self._group_input)
 
-        apply_btn = QPushButton("Apply to Checked")
+        apply_btn = QPushButton("Group")
         apply_btn.setFixedHeight(32)
+        apply_btn.setToolTip("Give the highlighted samples (or the ticked ones when none are\n"
+                             "highlighted) this group name; the suggested name when the field is empty")
         apply_btn.clicked.connect(self._apply_group_to_checked)
         top_row.addWidget(apply_btn)
         lv.addLayout(top_row)
 
         self._scroll = QScrollArea()
+        self._scroll.setObjectName("sampleScroll")
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.NoFrame)
         self._sample_container = QWidget()
+        self._sample_container.setObjectName("sampleList")
         self._sample_layout = QVBoxLayout(self._sample_container)
-        self._sample_layout.setContentsMargins(0, 0, 0, 0)
+        self._sample_layout.setContentsMargins(4, 4, 4, 4)
         self._sample_layout.setSpacing(2)
         self._scroll.setWidget(self._sample_container)
+        _style_sample_scroll(self._scroll, self._sample_container)
         lv.addWidget(self._scroll)
+        lv.addWidget(self._hl_build_bar())
 
         btns = QHBoxLayout()
         for txt, slot in [
@@ -1455,6 +1822,7 @@ class MultipleSampleSelectorDialog(QDialog):
         root.addWidget(bb)
 
         self._row_widgets = {}
+        self._tags = {}
         self._build_sample_list(self.samples)
         self._load_isotopes()
         self._update_preview()
@@ -1472,55 +1840,56 @@ class MultipleSampleSelectorDialog(QDialog):
             if child.widget():
                 child.widget().deleteLater()
         self._row_widgets = {}
+        self._tags = {}
         p = _app_theme.palette
         for s in samples:
             cfg = self.current_sample_config.get(
                 s, {'included': False, 'sum_group': '', 'custom_name': s})
 
             row_w = QWidget()
-            row_w.setStyleSheet(
-                f"QWidget {{ border-radius:5px; }}"
-                f"QWidget:hover {{ background:{p.bg_hover}; }}")
             row = QHBoxLayout(row_w)
             row.setContentsMargins(4, 2, 4, 2)
             row.setSpacing(6)
 
             cb = QCheckBox()
             cb.setChecked(cfg.get('included', False))
-            cb.setStyleSheet(
-                f"QCheckBox::indicator {{ width:16px; height:16px; border-radius:3px; }}"
-                f"QCheckBox::indicator:unchecked {{ border:2px solid {p.border};"
-                f" background:{p.bg_secondary}; }}"
-                f"QCheckBox::indicator:checked {{ border:2px solid {p.accent};"
-                f" background:{p.accent}; }}"
-            )
+            cb.setStyleSheet(_checkbox_style(p))
             row.addWidget(cb)
 
             name_lbl = QLabel(s)
             name_lbl.setStyleSheet(f"color:{p.text_primary}; background:transparent;")
             name_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             row.addWidget(name_lbl, 1)
+            parts = [name_lbl]
+
+            if s in self.counts:
+                cnt = QLabel(_count_text(self.counts[s]))
+                cnt.setStyleSheet(f"color:{p.text_muted}; font-size:11px; background:transparent;")
+                row.addWidget(cnt)
+                parts.append(cnt)
+
+            tag = QLabel()
+            tag.setFixedSize(10, 10)
+            row.addWidget(tag)
+            self._tags[s] = tag
 
             group_edit = QLineEdit()
             group_edit.setPlaceholderText("Group…")
             group_edit.setText(cfg.get('sum_group', ''))
-            group_edit.setFixedWidth(100)
+            group_edit.setFixedWidth(120)
             group_edit.setFixedHeight(24)
-            group_edit.setStyleSheet(
-                f"QLineEdit {{ background:{p.bg_tertiary}; color:{p.text_primary};"
-                f" border:1px solid {p.border}; border-radius:4px; padding:2px 6px;"
-                f" font-size:11px; }}"
-                f"QLineEdit:focus {{ border-color:{p.accent}; }}"
-            )
             row.addWidget(group_edit)
 
             cb.stateChanged.connect(lambda _, s=s: self._on_change(s))
+            cb.clicked.connect(lambda checked, s=s: self._on_clicked(s, checked))
             group_edit.textChanged.connect(lambda _, s=s: self._on_change(s))
 
             self._row_widgets[s] = (row_w, cb, group_edit)
+            self._hl_track(s, row_w, *parts)
             self._sample_layout.addWidget(row_w)
 
         self._sample_layout.addStretch()
+        self._hl_refresh()
 
     def _load_isotopes(self):
         if not (self.parent_window and hasattr(self.parent_window, 'selected_isotopes')):
@@ -1539,6 +1908,10 @@ class MultipleSampleSelectorDialog(QDialog):
         if self.current_isotopes:
             self._chip_selector.set_selected(self.current_isotopes)
 
+    def _visible_samples(self):
+        """Samples shown under the current search, in list order."""
+        return [s for s in self.samples if s in self._row_widgets and not self._row_widgets[s][0].isHidden()]
+
     def _on_change(self, sample):
         row_w, cb, group_edit = self._row_widgets[sample]
         self.current_sample_config[sample] = {
@@ -1548,6 +1921,16 @@ class MultipleSampleSelectorDialog(QDialog):
         }
         self._update_preview()
 
+    def _on_clicked(self, sample, checked):
+        """Tick or untick a range when Shift is held."""
+        if _shift_held() and self._last_clicked in self._row_widgets and self._last_clicked != sample:
+            shown = self._visible_samples()
+            if sample in shown and self._last_clicked in shown:
+                a, b = sorted((shown.index(self._last_clicked), shown.index(sample)))
+                for s in shown[a:b + 1]:
+                    self._row_widgets[s][1].setChecked(checked)
+        self._last_clicked = sample
+
     def _filter_samples(self, text):
         q = text.lower()
         for s, (row_w, cb, ge) in self._row_widgets.items():
@@ -1555,25 +1938,73 @@ class MultipleSampleSelectorDialog(QDialog):
 
     def _select_all(self):
         for s, (row_w, cb, ge) in self._row_widgets.items():
-            if row_w.isVisible():
+            if not row_w.isHidden():
                 cb.setChecked(True)
 
     def _clear_all(self):
         for row_w, cb, ge in self._row_widgets.values():
-            if row_w.isVisible():
+            if not row_w.isHidden():
                 cb.setChecked(False)
 
     def _clear_groups(self):
         for row_w, cb, ge in self._row_widgets.values():
             ge.clear()
 
+    def _group_targets(self):
+        """The samples Group acts on: the highlighted ones, else the ticked shown ones."""
+        if self._highlighted:
+            return self._hl_ordered()
+        return [s for s, (row_w, cb, ge) in self._row_widgets.items() if cb.isChecked() and not row_w.isHidden()]
+
+    def _suggestion(self):
+        """Suggested group name for the samples Group would act on."""
+        if self._highlighted:
+            names = self._hl_ordered()
+        else:
+            names = [s for s, (row_w, cb, ge) in self._row_widgets.items()
+                     if cb.isChecked() and not row_w.isHidden() and not ge.text().strip()]
+        return suggest_group_name(names) if len(names) >= 2 else ''
+
     def _apply_group_to_checked(self):
-        g = self._group_input.text().strip()
-        if not g:
+        """Give the highlighted (or ticked) samples one group name and tick them."""
+        g = self._group_input.text().strip() or self._suggestion()
+        targets = self._group_targets()
+        if not g or not targets:
             return
-        for s, (row_w, cb, ge) in self._row_widgets.items():
-            if cb.isChecked() and row_w.isVisible():
-                ge.setText(g)
+        for s in targets:
+            row_w, cb, ge = self._row_widgets[s]
+            ge.setText(g)
+            cb.setChecked(True)
+        self._group_input.clear()
+
+    def _hl_actions(self):
+        """What the action bar and right-click menu can do with the highlighted samples."""
+        return [("Include", self._include_highlighted, "Tick the highlighted samples"),
+                ("Exclude", self._exclude_highlighted, "Untick the highlighted samples"),
+                ("Group", self._apply_group_to_checked,
+                 "Give the highlighted samples one group name (the name field, or the name they share)"),
+                ("Ungroup", self._ungroup_highlighted, "Clear the group of the highlighted samples")]
+
+    def _include_highlighted(self):
+        """Tick the highlighted samples."""
+        for s in self._hl_ordered():
+            self._row_widgets[s][1].setChecked(True)
+
+    def _exclude_highlighted(self):
+        """Untick the highlighted samples."""
+        for s in self._hl_ordered():
+            self._row_widgets[s][1].setChecked(False)
+
+    def _ungroup_highlighted(self):
+        """Clear the group of the highlighted samples."""
+        for s in self._hl_ordered():
+            self._row_widgets[s][2].clear()
+
+    def _hl_changed(self):
+        """Keep the suggested group name in step with the highlight."""
+        if hasattr(self, '_group_input'):
+            sugg = self._suggestion()
+            self._group_input.setPlaceholderText(f"e.g. {sugg}" if sugg else "Group name…")
 
     def _auto_group(self):
         """Detect sample groups by stripping common replicate suffixes and numeric endings.
@@ -1602,6 +2033,17 @@ class MultipleSampleSelectorDialog(QDialog):
                         ge.setText(root)
                         cb.setChecked(True)
 
+    def _group_colors(self):
+        """A colour per group name, in the order the groups first appear."""
+        out = {}
+        for s in self.samples:
+            if s not in self._row_widgets:
+                continue
+            g = self._row_widgets[s][2].text().strip()
+            if g and g not in out:
+                out[g] = GROUP_TAG_COLORS[len(out) % len(GROUP_TAG_COLORS)]
+        return out
+
     def _update_preview(self):
         p = _app_theme.palette
         for s, (row_w, cb, ge) in self._row_widgets.items():
@@ -1610,10 +2052,28 @@ class MultipleSampleSelectorDialog(QDialog):
                 'sum_group': ge.text().strip(),
                 'custom_name': s,
             }
-        inc = [s for s, c in self.current_sample_config.items() if c['included']]
+        colors = self._group_colors()
+        for s, (row_w, cb, ge) in self._row_widgets.items():
+            g = ge.text().strip()
+            c = colors.get(g)
+            self._tags[s].setStyleSheet(
+                f"background:{c}; border-radius:5px;" if c else "background:transparent;")
+            ge.setStyleSheet(
+                f"QLineEdit {{ background:{p.bg_tertiary}; color:{p.text_primary};"
+                f" border:1px solid {c or p.border}; border-radius:4px; padding:2px 6px;"
+                f" font-size:11px; }}"
+                f"QLineEdit:focus {{ border-color:{p.accent}; }}")
+        sugg = self._suggestion()
+        self._group_input.setPlaceholderText(f"e.g. {sugg}" if sugg else "Group name…")
+        inc = [s for s in self.samples if self.current_sample_config.get(s, {}).get('included')]
         if not inc:
             txt = "No samples selected"
         else:
+            def particles(names):
+                """Particle count text for some samples, when counts are known."""
+                if not self.counts:
+                    return ""
+                return f", {sum(self.counts.get(n, 0) for n in names):,} particles"
             indiv = [s for s in inc if not self.current_sample_config[s]['sum_group']]
             grps = {}
             for s in inc:
@@ -1621,7 +2081,7 @@ class MultipleSampleSelectorDialog(QDialog):
                 if g:
                     grps.setdefault(g, []).append(s)
             parts = [f"{len(indiv)} individual" if indiv else ""] + \
-                    [f'group "{g}" ({len(ss)} samples)' for g, ss in grps.items()]
+                    [f'group "{g}" ({len(ss)} samples{particles(ss)})' for g, ss in grps.items()]
             parts = [x for x in parts if x]
             txt = f"Will process: {', '.join(parts)}"
         self._preview.setText(txt)
@@ -1644,6 +2104,7 @@ class MultipleSampleSelectorDialog(QDialog):
             lbl = self.parent_window.get_formatted_label(key) if self.parent_window else key
             isotopes.append({'symbol': sym, 'mass': mass, 'key': key, 'label': lbl})
         return sel, isotopes, self.current_sample_config
+
 
 class SampleSelectorNode(WorkflowNode):
     def __init__(self, parent_window=None):
@@ -1764,56 +2225,101 @@ class SampleSelectorNode(WorkflowNode):
         return None
 
     def configure(self, parent_window):
+        """Open the dialog; arrow steps apply at once and Cancel restores the starting selection."""
         samples = (self.batch_samples if self.batch_samples
                    else list(getattr(parent_window, 'sample_to_folder_map', {}).keys()))
+        before = (self.selected_sample, list(self.selected_isotopes), self.sum_replicates,
+                  list(self.replicate_samples), self.dilution_resolution)
+        live = {'warned': False, 'applied': False}
+
+        def on_step(dlg):
+            """Apply the sample the arrows moved to, so connected plots update."""
+            if not live['warned']:
+                if not _warn_before_apply_changes(dlg, self):
+                    return False
+                live['warned'] = True
+            if self._apply_selection(dlg.get_selection(), parent_window) is False:
+                return False
+            live['applied'] = True
+            return True
+
         dlg = SampleSelectorDialog(
             parent_window, samples, self.selected_sample,
-            self.selected_isotopes, self.sum_replicates, self.replicate_samples)
+            self.selected_isotopes, self.sum_replicates, self.replicate_samples,
+            counts=sample_particle_counts(parent_window, samples, self.batch_particle_data),
+            on_step=on_step)
         if dlg.exec() == QDialog.Accepted:
-            if not _warn_before_apply_changes(parent_window, self):
+            if not live['warned'] and not _warn_before_apply_changes(parent_window, self):
+                self._restore(before, live['applied'])
                 return False
-            sample, isotopes, sr = dlg.get_selection()
-            if sample:
-                if sr and isinstance(sample, list):
-                    if len(sample) >= 2:
-                        from tools.particle_filter import (
-                            resolve_dilution_conflict)
-                        if self.batch_particle_data is not None:
-                            members = [
-                                (s, (self.batch_concentration_meta or {}).get(s))
-                                for s in sample]
-                        else:
-                            members = [
-                                (s, _sample_concentration_meta(parent_window, s))
-                                for s in sample]
-                        res = resolve_dilution_conflict(
-                            parent_window, f"Summed: {', '.join(sample)}",
-                            members)
-                        if res is False:
-                            return False
-                        self.dilution_resolution = res
-                    else:
-                        self.dilution_resolution = None
-                    self.replicate_samples = sample
-                    self.selected_sample = sample[0] if sample else None
-                    self.sum_replicates = True
-                else:
-                    self.selected_sample = sample
-                    self.replicate_samples = []
-                    self.sum_replicates = False
-                    self.dilution_resolution = None
-                self.selected_isotopes = isotopes
-                self.configuration_changed.emit()
-                ual = _ual()
-                if ual:
-                    ual.log_action('SAMPLE_SELECT',
-                                   f'Canvas node configured: {self.selected_sample}',
-                                   {'node': 'SampleSelector',
-                                    'sample': self.selected_sample,
-                                    'sum_replicates': self.sum_replicates,
-                                    'isotope_count': len(isotopes)})
-                return True
+            if self._apply_selection(dlg.get_selection(), parent_window) is False:
+                self._restore(before, live['applied'])
+                return False
+            return True
+        self._restore(before, live['applied'])
         return False
+
+    def _restore(self, before, applied):
+        """Put back the selection the dialog started from, after live steps were applied."""
+        if not applied:
+            return
+        (self.selected_sample, self.selected_isotopes, self.sum_replicates,
+         self.replicate_samples, self.dilution_resolution) = before
+        self.configuration_changed.emit()
+
+    def _apply_selection(self, selection, parent_window):
+        """Store a dialog selection on the node and tell the connected nodes.
+
+        Args:
+            selection (tuple): ``(sample, isotopes, summed)`` from the dialog.
+            parent_window: Main window, for the dilution check of summed samples.
+
+        Returns:
+            bool: True when applied, False when nothing was selected or the
+            user backed out of the dilution check.
+        """
+        sample, isotopes, sr = selection
+        if not sample:
+            return False
+        if sr and isinstance(sample, list):
+            if len(sample) >= 2:
+                from tools.particle_filter import (
+                    resolve_dilution_conflict)
+                if self.batch_particle_data is not None:
+                    members = [
+                        (s, (self.batch_concentration_meta or {}).get(s))
+                        for s in sample]
+                else:
+                    members = [
+                        (s, _sample_concentration_meta(parent_window, s))
+                        for s in sample]
+                res = resolve_dilution_conflict(
+                    parent_window, f"Summed: {', '.join(sample)}",
+                    members)
+                if res is False:
+                    return False
+                self.dilution_resolution = res
+            else:
+                self.dilution_resolution = None
+            self.replicate_samples = sample
+            self.selected_sample = sample[0] if sample else None
+            self.sum_replicates = True
+        else:
+            self.selected_sample = sample
+            self.replicate_samples = []
+            self.sum_replicates = False
+            self.dilution_resolution = None
+        self.selected_isotopes = isotopes
+        self.configuration_changed.emit()
+        ual = _ual()
+        if ual:
+            ual.log_action('SAMPLE_SELECT',
+                           f'Canvas node configured: {self.selected_sample}',
+                           {'node': 'SampleSelector',
+                            'sample': self.selected_sample,
+                            'sum_replicates': self.sum_replicates,
+                            'isotope_count': len(isotopes)})
+        return True
 
 
 class MultipleSampleSelectorNode(WorkflowNode):
@@ -1995,7 +2501,8 @@ class MultipleSampleSelectorNode(WorkflowNode):
                    else list(getattr(parent_window, 'sample_to_folder_map', {}).keys()))
         dlg = MultipleSampleSelectorDialog(
             parent_window, samples, self.selected_samples,
-            self.selected_isotopes, self.sample_config)
+            self.selected_isotopes, self.sample_config,
+            counts=sample_particle_counts(parent_window, samples, self.batch_particle_data))
         if dlg.exec() == QDialog.Accepted:
             if not _warn_before_apply_changes(parent_window, self):
                 return False
@@ -4065,7 +4572,7 @@ class NodePalette(QWidget):
         scroll.setWidget(content)
         root.addWidget(scroll)
 
-        self._hint_label = QLabel("Drag → Canvas  •  Del = delete  •  Ctrl+C = duplicate  •  Ctrl+Z = undo")
+        self._hint_label = QLabel("Drag → Canvas  •  Del = delete  •  Ctrl+C = duplicate  •  Ctrl+Z = undo  •  Ctrl+L = arrange")
         hint = self._hint_label
         hint.setWordWrap(True)
         root.addWidget(hint)
@@ -4176,8 +4683,31 @@ class EnhancedCanvasScene(QGraphicsScene):
         # flush_data_flow() pass replaces it (see project load).
         self._suppress_data_flow = False
 
-        self.setSceneRect(-2000, -2000, 4000, 4000)
+        self.setSceneRect(self.BASE_RECT)
         self.selectionChanged.connect(self._on_selection)
+        self._rect_timer = QTimer(self)
+        self._rect_timer.setSingleShot(True)
+        self._rect_timer.setInterval(40)
+        self._rect_timer.timeout.connect(self.fit_scene_rect)
+        self.changed.connect(lambda _regions: self._rect_timer.start())
+
+    BASE_RECT = QRectF(-2000, -2000, 4000, 4000)
+    SCENE_MARGIN = 1500
+
+    def fit_scene_rect(self):
+        """Grow or shrink the scrollable area so every item, wherever it is, can be reached.
+
+        The area always covers the default 4000 x 4000 square and every
+        item plus a margin, so nodes and notes placed far away stay within
+        reach of the scroll bars and the trackpad.
+        """
+        content = self.itemsBoundingRect()
+        rect = QRectF(self.BASE_RECT)
+        if not content.isNull():
+            m = self.SCENE_MARGIN
+            rect = rect.united(content.adjusted(-m, -m, m, m))
+        if rect != self.sceneRect():
+            self.setSceneRect(rect)
 
     def _on_selection(self):
         n = sum(1 for i in self.selectedItems() if isinstance(i, NodeItem))
@@ -4192,6 +4722,8 @@ class EnhancedCanvasScene(QGraphicsScene):
             self.duplicate_selected_nodes()
         elif event.key() == Qt.Key_A and event.modifiers() == Qt.ControlModifier:
             self.select_all_items()
+        elif event.key() == Qt.Key_L and event.modifiers() == Qt.ControlModifier:
+            self.arrange_nodes()
         elif event.key() == Qt.Key_Escape:
             self.clearSelection()
         else:
@@ -4228,6 +4760,9 @@ class EnhancedCanvasScene(QGraphicsScene):
             elif action_type == 'delete_link':
                 self.add_link(data['src_node'], data['src_ch'],
                               data['snk_node'], data['snk_ch'])
+            elif action_type == 'move_nodes':
+                self._animate_to({wn: pos for wn, pos in data['positions'].items()
+                                  if wn in self.node_items})
         finally:
             self._undoing = False
 
@@ -4426,6 +4961,94 @@ class EnhancedCanvasScene(QGraphicsScene):
                            {'node_type': wf.node_type,
                             'total_nodes': len(self.workflow_nodes)})
         return item
+
+    def node_box(self, item):
+        """The ``(left, top, right, bottom)`` a node item takes up on the canvas."""
+        pos = item.pos()
+        w = float(getattr(item, 'width', 0) or item.boundingRect().width() or DS.NODE_W)
+        h = float(getattr(item, 'height', 0) or item.boundingRect().height() or DS.NODE_H)
+        return (float(pos.x()), float(pos.y()), float(pos.x()) + w, float(pos.y()) + h)
+
+    def node_boxes(self, skip=()):
+        """Boxes of every node item, leaving out the workflow nodes in *skip*."""
+        return [self.node_box(it) for wn, it in self.node_items.items() if wn not in skip]
+
+    def arrange_nodes(self, animate=True):
+        """Tidy every node into columns by data flow; Ctrl+Z puts them back.
+
+        Each node moves one column right of its furthest upstream node and
+        branches are stacked beside their parent. Unconnected groups are
+        packed side by side in columns, shaped like the visible canvas, so
+        many groups fill the view instead of making one tall line. Sticky
+        notes stay where they are.
+
+        Args:
+            animate (bool): Glide the nodes to their places.
+
+        Returns:
+            int: How many nodes moved.
+        """
+        items = dict(self.node_items)
+        if not items:
+            return 0
+        keys = list(items)
+        size, current = {}, {}
+        for wn, it in items.items():
+            l, t, r, b = self.node_box(it)
+            size[wn] = (r - l, b - t)
+            current[wn] = (l, t)
+        edges = [(lk.source_node, lk.sink_node) for lk in self.workflow_links
+                 if lk.source_node in items and lk.sink_node in items]
+        aspect = 1.6
+        views = self.views()
+        if views:
+            vp = views[0].viewport()
+            if vp.width() > 50 and vp.height() > 50:
+                aspect = vp.width() / vp.height()
+        target = _layout.arrange(keys, edges, size, current, aspect=aspect)
+        moved = {wn: QPointF(*xy) for wn, xy in target.items()
+                 if abs(xy[0] - current[wn][0]) > 0.5 or abs(xy[1] - current[wn][1]) > 0.5}
+        if not moved:
+            return 0
+        if not self._undoing:
+            self._undo_stack.append(('move_nodes', {
+                'positions': {wn: QPointF(*current[wn]) for wn in moved}}))
+            ual = _ual()
+            if ual:
+                ual.log_action('CLICK', 'Arranged canvas', {'nodes_moved': len(moved)})
+        self._animate_to(moved, animate)
+        return len(moved)
+
+    def _animate_to(self, positions, animate=True, msec=320):
+        """Move node items to *positions* (``workflow node -> QPointF``), gliding when asked."""
+        pairs = [(self.node_items[wn], pos) for wn, pos in positions.items() if wn in self.node_items]
+        if not pairs:
+            return
+        old = getattr(self, '_arrange_anim', None)
+        if old is not None:
+            old.stop()
+        if not animate:
+            for item, pos in pairs:
+                item.setPos(pos)
+            self.fit_scene_rect()
+            return
+        start = [(item, QPointF(item.pos()), pos) for item, pos in pairs]
+        anim = QVariantAnimation(self)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setDuration(msec)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+
+        def step(t):
+            """Place every node a fraction *t* of the way to its target."""
+            t = float(t)
+            for item, a, b in start:
+                item.setPos(QPointF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t))
+
+        anim.valueChanged.connect(step)
+        anim.finished.connect(lambda: (step(1.0), self.fit_scene_rect()))
+        self._arrange_anim = anim
+        anim.start()
 
     def select_all_items(self):
         for i in self.items():
@@ -4801,6 +5424,9 @@ class EnhancedCanvasScene(QGraphicsScene):
         menu.setStyleSheet(NodeItem._ctx_menu_style())
         note_act = menu.addAction(
             qta.icon('fa6s.note-sticky', color=DS.WARNING), "  Add Note")
+        arrange_act = menu.addAction(
+            qta.icon('fa6s.wand-magic-sparkles', color=DS.ACCENT), "  Arrange  (Ctrl+L)")
+        arrange_act.setEnabled(len(self.node_items) > 1)
         menu.addSeparator()
         undo_act = menu.addAction(
             qta.icon('fa6s.rotate-left', color=DS.ACCENT), "  Undo  (Ctrl+Z)")
@@ -4810,6 +5436,8 @@ class EnhancedCanvasScene(QGraphicsScene):
             note = StickyNoteItem()
             note.setPos(event.scenePos())
             self.addItem(note)
+        elif result == arrange_act:
+            self.arrange_nodes()
         elif result == undo_act:
             self.undo()
 
@@ -4988,21 +5616,57 @@ class EnhancedCanvasView(QGraphicsView):
         QShortcut(QKeySequence.Undo, self).activated.connect(
             self.scene.undo)
 
+    MIN_ZOOM = 0.1
+    MAX_ZOOM = 5.0
+
+    @staticmethod
+    def _is_trackpad(event):
+        """Whether a wheel event comes from a trackpad swipe rather than a mouse wheel."""
+        try:
+            if event.phase() != Qt.NoScrollPhase:
+                return True
+        except Exception:
+            pass
+        return not event.pixelDelta().isNull()
+
     def wheelEvent(self, event: QWheelEvent):
-        factor = 1.15 if event.angleDelta().y() > 0 else 1.0 / 1.15
-        new_zoom = self._zoom * factor
-        if 0.15 < new_zoom < 5.0:
-            self._zoom = new_zoom
-            self.scale(factor, factor)
-            self.zoom_changed.emit(self._zoom)
+        """Swipe on a trackpad to move around; pinch, Cmd/Ctrl + scroll or a mouse wheel to zoom."""
+        mods = event.modifiers()
+        zoom_key = bool(mods & (Qt.ControlModifier | Qt.MetaModifier))
+        if self._is_trackpad(event) and not zoom_key:
+            super().wheelEvent(event)
+            return
+        dy = event.angleDelta().y() or event.pixelDelta().y()
+        if dy:
+            self._zoom_by(1.15 ** max(-3.0, min(3.0, dy / 120.0)))
+        event.accept()
+
+    def viewportEvent(self, event):
+        """Zoom on a trackpad pinch."""
+        if event.type() == QEvent.NativeGesture:
+            try:
+                if event.gestureType() == Qt.ZoomNativeGesture:
+                    self._zoom_by(1.0 + float(event.value()))
+                    return True
+            except Exception:
+                _itk_log.exception("Handled exception in pinch zoom")
+        return super().viewportEvent(event)
+
+    def _zoom_by(self, factor):
+        """Zoom by *factor*, kept between MIN_ZOOM and MAX_ZOOM."""
+        self.set_zoom(self._zoom * factor)
 
     def set_zoom(self, value):
+        value = max(self.MIN_ZOOM, min(self.MAX_ZOOM, float(value)))
         factor = value / self._zoom
+        if abs(factor - 1.0) < 1e-6:
+            return
         self._zoom = value
         self.scale(factor, factor)
         self.zoom_changed.emit(self._zoom)
 
     def fit_content(self):
+        self.scene.fit_scene_rect()
         items_rect = self.scene.itemsBoundingRect().adjusted(-60, -60, 60, 60)
         if items_rect.isNull():
             return
@@ -5297,7 +5961,36 @@ class CanvasResultsDialog(QDialog):
                            {'dialog': 'CanvasResultsDialog'})
 
     def _apply_chrome_theme(self):
-        self.setStyleSheet(_canvas_chrome_style())
+        """Re-style the dialog chrome and its header controls for the current theme.
+
+        The header buttons and title carry their own stylesheets, so they are
+        re-applied here too; otherwise they keep the colours of the theme
+        that was active when the window opened.
+        """
+        try:
+            self.setStyleSheet(_canvas_chrome_style())
+            for btn in getattr(self, '_tool_buttons', []):
+                btn.setStyleSheet(self._tool_btn_style())
+            for btn, icon in getattr(self, '_zoom_icons', []):
+                btn.setIcon(qta.icon(icon, color=_app_theme.palette.text_primary))
+            arr = getattr(self, '_arrange_btn', None)
+            if arr is not None:
+                arr.setStyleSheet(self._tool_btn_style() + "QPushButton { font-size: 12px; padding: 0 10px; }")
+                arr.setIcon(qta.icon('fa6s.wand-magic-sparkles', color=_app_theme.palette.text_primary))
+            logo = getattr(self, '_logo', None)
+            if logo is not None:
+                logo.setStyleSheet(self._logo_style())
+            sep = getattr(self, '_header_sep', None)
+            if sep is not None:
+                sep.setStyleSheet(f"background: {_app_theme.palette.border}; margin: 8px 12px;")
+        except RuntimeError:
+            pass
+
+    @staticmethod
+    def _logo_style():
+        return (f"color: {_app_theme.palette.text_primary};"
+                f" font-size: 16px; font-weight: 700;"
+                f" font-family: '{DS.FONT_FAMILY}';")
 
     def _build(self):                          
         root = QVBoxLayout(self)
@@ -5312,11 +6005,8 @@ class CanvasResultsDialog(QDialog):
         hl.setContentsMargins(16, 0, 16, 0)
     
         logo = QLabel("◆  Workflow Builder")
-        logo.setStyleSheet(
-            f"color: {_app_theme.palette.text_primary};"
-            f" font-size: 16px; font-weight: 700;"
-            f" font-family: '{DS.FONT_FAMILY}';"
-        )
+        self._logo = logo
+        logo.setStyleSheet(self._logo_style())
         hl.addWidget(logo)
         hl.addStretch()
     
@@ -5327,7 +6017,9 @@ class CanvasResultsDialog(QDialog):
         def _fit():
             self.canvas.fit_content()
     
-        zm = QPushButton("−")
+        zm = QPushButton()
+        zm.setIcon(qta.icon('fa6s.minus', color=_app_theme.palette.text_primary))
+        zm.setToolTip("Zoom out (Cmd/Ctrl + scroll, or pinch)")
         zm.setFixedSize(30, 30)
         zm.setStyleSheet(self._tool_btn_style())
         zm.clicked.connect(_zoom_out)
@@ -5338,7 +6030,9 @@ class CanvasResultsDialog(QDialog):
         self.zoom_label.setAlignment(Qt.AlignCenter)
         hl.addWidget(self.zoom_label)
     
-        zp = QPushButton("+")
+        zp = QPushButton()
+        zp.setIcon(qta.icon('fa6s.plus', color=_app_theme.palette.text_primary))
+        zp.setToolTip("Zoom in (Cmd/Ctrl + scroll, or pinch)")
         zp.setFixedSize(30, 30)
         zp.setStyleSheet(self._tool_btn_style())
         zp.clicked.connect(_zoom_in)
@@ -5349,11 +6043,30 @@ class CanvasResultsDialog(QDialog):
         fit.setStyleSheet(self._tool_btn_style())
         fit.clicked.connect(_fit)
         hl.addWidget(fit)
+
+        def _arrange():
+            """Tidy the canvas, then frame the result once the nodes have settled."""
+            if self.canvas.scene.arrange_nodes():
+                QTimer.singleShot(360, self.canvas.fit_content)
+
+        arr = QPushButton(" Arrange")
+        arr.setObjectName("canvasArrange")
+        arr.setIcon(qta.icon('fa6s.wand-magic-sparkles', color=_app_theme.palette.text_primary))
+        arr.setFixedHeight(30)
+        arr.setMinimumWidth(92)
+        arr.setToolTip("Tidy the canvas into columns by data flow (Ctrl+L).\nCtrl+Z puts every node back.")
+        arr.setStyleSheet(self._tool_btn_style() + "QPushButton { font-size: 12px; padding: 0 10px; }")
+        arr.clicked.connect(_arrange)
+        hl.addWidget(arr)
+        self._arrange_btn = arr
     
         sep = QFrame()
         sep.setFixedWidth(1)
-        sep.setStyleSheet(f"background: {DS.BORDER}; margin: 8px 12px;")
+        self._header_sep = sep
+        sep.setStyleSheet(f"background: {_app_theme.palette.border}; margin: 8px 12px;")
         hl.addWidget(sep)
+        self._tool_buttons = [zm, zp, fit]
+        self._zoom_icons = [(zm, 'fa6s.minus'), (zp, 'fa6s.plus')]
     
   
         self._insights_btn = None  

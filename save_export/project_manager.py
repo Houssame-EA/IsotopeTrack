@@ -95,7 +95,7 @@ class ProjectManager:
             main_window (object): Reference to the MainWindow instance
         """
         self.main_window: MainWindow = main_window
-        self.project_version = '1.11.0'
+        self.project_version = '1.11.1'
         
         if getattr(sys, 'frozen', False):
             base_path = sys._MEIPASS
@@ -245,7 +245,7 @@ class ProjectManager:
             desktop_file = Path(file_path).with_suffix('.desktop')
             
             desktop_content = f"""[Desktop Entry]
-Version=1.11.0
+Version=1.11.1
 Type=Application
 Name=IsotopeTrack Project
 Icon={self.icon_path}
@@ -531,6 +531,9 @@ Terminal=false
             mw.sigma_spinbox.blockSignals(True)
             mw.sigma_spinbox.setValue(mw._global_sigma)
             mw.sigma_spinbox.blockSignals(False)
+            sia_manager = getattr(mw, 'sia_manager', None)
+            if sia_manager is not None and hasattr(sia_manager, '_refresh_source_label'):
+                sia_manager._refresh_source_label()
         sigma_mode = getattr(mw, '_sigma_mode', 'global')
         if hasattr(mw, 'sigma_global_radio') and hasattr(mw, 'sigma_per_isotope_radio'):
 
@@ -667,7 +670,7 @@ Terminal=false
             
             'version': self.project_version,
             'save_timestamp': datetime.datetime.now().isoformat(),
-            'application_version': '1.11.0',
+            'application_version': '1.11.1',
         }
     
     def _restore_project_data(self, project_data):

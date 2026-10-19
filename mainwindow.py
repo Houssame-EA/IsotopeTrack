@@ -17,7 +17,7 @@ from PySide6.QtGui import QGuiApplication
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtGui import QColor, QBrush, QAction, QActionGroup, QKeySequence
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QWidget, QFrame
 import tools.dilution_utils
 import utils.dilution
 import utils.signal_stats
@@ -39,6 +39,7 @@ from save_export.project_manager import ProjectManager
 from widget.canvas_widgets import CanvasResultsDialog
 from loading.SIA_manager import SingleIonDistributionManager
 import qtawesome as qta
+from widget.theme_switch import ThemeSwitch
 from tools.signal_selector_dialog import SignalSelectorDialog
 import utils.isobaric_correction as isobaric
 from tools.logging_utils import logging_manager, log_user_action, set_current_window
@@ -58,6 +59,8 @@ from tools.theme import (
     theme_toggle_button_qss,
     sidebar_toggle_button_qss,
     primary_button_qss,
+    secondary_action_button_qss,
+    view_switch_qss,
     progress_bar_qss,
     groupbox_qss,
     summary_label_qss,
@@ -316,6 +319,9 @@ class MainWindow(QMainWindow):
         if auto_check_enabled() and not getattr(_app, '_update_check_done', False):
             _app._update_check_done = True
             QTimer.singleShot(4000, lambda: self._update_checker.check(silent=True))
+        if not getattr(_app, '_crash_consent_done', False):
+            _app._crash_consent_done = True
+            QTimer.singleShot(2500, self._maybe_ask_crash_consent)
 
         from save_export.autosave import AutosaveManager
         self._autosave = AutosaveManager(self)
@@ -1103,6 +1109,12 @@ class MainWindow(QMainWindow):
                                  self.show_calibration_methods)
         about_action = _ma('fa6s.circle-info', "About IsotopeTrack",
                            self.show_about_dialog)
+        bug_action = _ma('fa6s.bug', "Report a Bug…", self.show_bug_report)
+        self._crash_reports_action = QAction("Send Anonymous Crash Reports", self)
+        self._crash_reports_action.setCheckable(True)
+        from tools.crash_reporting import reports_enabled
+        self._crash_reports_action.setChecked(reports_enabled())
+        self._crash_reports_action.toggled.connect(self._on_crash_reports_toggled)
         update_action = _ma('fa6s.cloud-arrow-down', "Check for Updates…",
                             lambda: self._update_checker.check(silent=False))
         self._auto_update_action = QAction("Check for Updates on Startup", self)
@@ -1119,7 +1131,42 @@ class MainWindow(QMainWindow):
         help_menu.addSeparator()
         help_menu.addAction(update_action)
         help_menu.addAction(self._auto_update_action)
+        help_menu.addSeparator()
+        help_menu.addAction(bug_action)
+        help_menu.addAction(self._crash_reports_action)
+        help_menu.addSeparator()
         help_menu.addAction(about_action)
+
+    def show_bug_report(self):
+        """Open the anonymous Report a Bug form."""
+        from tools.bug_report_dialog import show_bug_report_dialog
+        show_bug_report_dialog(self)
+
+    def _maybe_ask_crash_consent(self):
+        """Ask once, after the window is on screen, whether crash reports may be sent."""
+        if not self.isVisible():
+            QTimer.singleShot(1500, self._maybe_ask_crash_consent)
+            return
+        from tools.bug_report_dialog import ask_crash_consent_once
+        answer = ask_crash_consent_once(self)
+        if answer is not None:
+            self._sync_crash_reports_actions(answer)
+
+    def _on_crash_reports_toggled(self, enabled):
+        """Store the crash report choice and mirror it in every open window."""
+        from tools.crash_reporting import set_reports_enabled
+        set_reports_enabled(enabled)
+        self._sync_crash_reports_actions(enabled)
+
+    @staticmethod
+    def _sync_crash_reports_actions(enabled):
+        """Set the Help menu tick of every open window without re-triggering it."""
+        for w in getattr(QApplication.instance(), 'main_windows', []):
+            action = getattr(w, '_crash_reports_action', None)
+            if action is not None and action.isChecked() != bool(enabled):
+                action.blockSignals(True)
+                action.setChecked(bool(enabled))
+                action.blockSignals(False)
 
     def open_new_window(self):
         self.user_action_logger.log_action('NEW_WINDOW', 'Opened new analysis window')
@@ -1229,12 +1276,10 @@ class MainWindow(QMainWindow):
         for item, icon_name in getattr(self, '_menu_icon_items', []):
             item.setIcon(qta.icon(icon_name, color=p.text_primary))
 
-        # --- Theme toggle button (sun / moon) ------------------------------
+        # --- Theme switch (sliding sun / moon) -----------------------------
         if hasattr(self, 'theme_toggle_button'):
-            icon_name = 'fa6s.sun' if theme.is_dark else 'fa6s.moon'
-            self.theme_toggle_button.setIcon(qta.icon(icon_name, color=p.accent))
-            self.theme_toggle_button.setIconSize(QSize(18, 18))
-            self.theme_toggle_button.setStyleSheet(theme_toggle_button_qss(p))
+            self.theme_toggle_button.set_palette(p)
+            self.theme_toggle_button.set_dark(theme.is_dark)
             self.theme_toggle_button.setToolTip(
                 "Switch to light mode" if theme.is_dark else "Switch to dark mode"
             )
@@ -1248,18 +1293,8 @@ class MainWindow(QMainWindow):
             self.info_button.setStyleSheet(info_button_qss(p))
 
         if hasattr(self, '_view_btn_time') and hasattr(self, '_view_btn_mz'):
-            _toggle_qss = (
-                f"QPushButton{{"
-                f"background:{p.bg_tertiary};color:{p.text_primary};"
-                f"border:1px solid {p.border};border-radius:4px;"
-                f"padding:3px 14px;font-weight:500;}}"
-                f"QPushButton:hover{{background:{p.bg_hover};"
-                f"border-color:{p.accent};}}"
-                f"QPushButton:checked{{background:{p.accent};"
-                f"color:{p.text_inverse};border:none;font-weight:600;}}"
-            )
-            self._view_btn_time.setStyleSheet(_toggle_qss)
-            self._view_btn_mz.setStyleSheet(_toggle_qss)
+            if hasattr(self, '_view_switch'):
+                self._view_switch.setStyleSheet(view_switch_qss(p))
             if hasattr(self, '_mz_pg_widget'):
                 self._mz_pg_widget.setBackground(p.plot_bg)
                 if getattr(self, '_current_plot_mode', 'time') == 'mz':
@@ -1275,9 +1310,15 @@ class MainWindow(QMainWindow):
             self.parameters_table.setStyleSheet(parameters_table_qss(p))
 
         primary_style = primary_button_qss(p)
+        secondary_style = secondary_action_button_qss(p)
+        main_action = getattr(self, 'detect_button', None)
         for btn, icon_name in getattr(self, '_primary_buttons', []):
-            btn.setStyleSheet(primary_style)
-            btn.setIcon(qta.icon(icon_name, color=p.text_inverse))
+            if btn is main_action:
+                btn.setStyleSheet(primary_style)
+                btn.setIcon(qta.icon(icon_name, color=p.text_inverse))
+            else:
+                btn.setStyleSheet(secondary_style)
+                btn.setIcon(qta.icon(icon_name, color=p.text_primary))
 
         if hasattr(self, 'summary_label'):
             self.summary_label.setStyleSheet(summary_label_qss(p))
@@ -1383,17 +1424,23 @@ class MainWindow(QMainWindow):
                          0,
                          Qt.AlignmentFlag.AlignVCenter)
 
+        self._view_switch = QFrame()
+        self._view_switch.setObjectName("viewSwitch")
+        self._view_switch.setFixedHeight(30)
+        view_switch_layout = QHBoxLayout(self._view_switch)
+        view_switch_layout.setContentsMargins(2, 2, 2, 2)
+        view_switch_layout.setSpacing(2)
         self._view_btn_time = QPushButton("Time")
         self._view_btn_mz = QPushButton("m/z")
         for btn in (self._view_btn_time, self._view_btn_mz):
             btn.setCheckable(True)
-            btn.setFixedHeight(28)
+            btn.setFixedHeight(24)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            view_switch_layout.addWidget(btn)
         self._view_btn_time.setChecked(True)
         self._view_btn_time.clicked.connect(lambda: self.switch_plot_view('time'))
         self._view_btn_mz.clicked.connect(lambda: self.switch_plot_view('mz'))
-        header.addWidget(self._view_btn_time)
-        header.addWidget(self._view_btn_mz)
+        header.addWidget(self._view_switch, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.info_button = QPushButton()
         self.info_button.setIcon(qta.icon('fa6s.circle-info', color=theme.palette.accent))
@@ -1403,12 +1450,12 @@ class MainWindow(QMainWindow):
         self.info_button.clicked.connect(self.toggle_info)
         header.addWidget(self.info_button)
 
-        self.theme_toggle_button = QPushButton()
-        self.theme_toggle_button.setFixedSize(28, 28)
-        self.theme_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.theme_toggle_button = ThemeSwitch()
+        self.theme_toggle_button.set_palette(theme.palette)
+        self.theme_toggle_button.set_dark(theme.is_dark)
         self.theme_toggle_button.setToolTip("Toggle light / dark mode")
         self.theme_toggle_button.clicked.connect(theme.toggle)
-        header.addWidget(self.theme_toggle_button)
+        header.addWidget(self.theme_toggle_button, 0, Qt.AlignmentFlag.AlignVCenter)
 
         wrapper_layout.addLayout(header)
 
@@ -6665,7 +6712,8 @@ class MainWindow(QMainWindow):
             thresholds = threshold_data.get(element_key, {})
 
             r_squared = method_data.get('r_squared', 0) if method_data else 0
-            row_class = ' class="warning"' if r_squared < 0.9 else ''
+            r_squared_known = r_squared == r_squared
+            row_class = ' class="warning"' if r_squared_known and r_squared < 0.9 else ''
 
             display_text += f"<tr{row_class}>"
             display_text += f"<td>{display_label}</td>"
@@ -6675,7 +6723,7 @@ class MainWindow(QMainWindow):
                 display_text += f"<td>{method_data.get('bec', 'N/A'):.2e}</td>"
                 display_text += f"<td>{method_data.get('lod', 'N/A'):.2e}</td>"
                 display_text += f"<td>{method_data.get('loq', 'N/A'):.2e}</td>"
-                display_text += f"<td>{r_squared:.4f}</td>"
+                display_text += f"<td>{r_squared:.4f}</td>" if r_squared_known else "<td>—</td>"
             else:
                 display_text += "<td>Not calibrated</td>" * 5
 

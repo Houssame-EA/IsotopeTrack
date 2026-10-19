@@ -6,6 +6,7 @@
 
 | Name | Value |
 |------|-------|
+| `GROUP_TAG_COLORS` | `['#0072B2', '#E69F00', '#009E73', '#D55E00', '#CC79A7', '…` |
 | `_PENDING_DRAG_NODE_TYPE` | `None` |
 | `_NODE_IO_FAMILIES` | `{'batch_sample_selector': (None, 'batch'), 'sample_select…` |
 | `_NODE_FACTORIES` | `{'sample_selector': SampleSelectorNode, 'multiple_sample_…` |
@@ -108,9 +109,38 @@
 | `itemChange` | `(self, change, value)` |  |
 | `mouseDoubleClickEvent` | `(self, event)` |  |
 
-### `SampleSelectorDialog` *(extends `QDialog`)*
+### `_RowHighlight`
 
-Simplified single-sample configurator: samples on left, isotope chips on right.
+Finder-style highlighting of sample rows, shared by both selector dialogs.
+
+Click highlights a row, Shift-click a range, Cmd/Ctrl-click adds or
+removes one, Cmd/Ctrl+A highlights every shown row and Esc clears. The
+dialog then acts on the highlighted rows from its action bar or the
+right-click menu. A dialog using it provides ``_visible_samples()``,
+``self._hl_row`` (``{sample: row widget}``) and ``_hl_actions()``.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `_hl_init` | `(self)` | Start with nothing highlighted. |
+| `_hl_track` | `(self, sample, row_w, *parts)` | Make clicks on a row (outside its checkbox and fields) highlight it. |
+| `eventFilter` | `(self, obj, event)` | Highlight on a left click on a tracked row. |
+| `_hl_click` | `(self, sample, modifiers)` | Apply one click with its modifier keys. |
+| `_hl_set` | `(self, samples)` | Highlight exactly *samples*. |
+| `_hl_ordered` | `(self)` | Highlighted samples in list order. |
+| `_hl_refresh` | `(self)` | Repaint the rows and update the action bar. |
+| `_hl_changed` | `(self)` | Hook for dialogs that update other text when the highlight changes. |
+| `_hl_build_bar` | `(self)` | The action bar shown under the list while rows are highlighted. |
+| `_hl_menu` | `(self, sample, global_pos)` | Right-click menu with the same actions; a click outside the highlight highlights that row. |
+| `keyPressEvent` | `(self, event)` | Cmd/Ctrl+A highlights every shown row; Esc clears the highlight before closing. |
+
+### `SampleSelectorDialog` *(extends `_RowHighlight, QDialog`)*
+
+Single-sample configurator: samples on the left, isotope chips on the right.
+
+Each sample shows its particle count. Shift-click ticks a range. The
+arrow buttons step to the previous or next sample; when the node passes
+``on_step``, each step is applied at once so the connected plots update
+while the dialog stays open.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -119,16 +149,27 @@ Simplified single-sample configurator: samples on left, isotope chips on right.
 | `_make_section_label` | `(self, text)` |  |
 | `_build_sample_list` | `(self, samples)` |  |
 | `_load_isotopes` | `(self)` |  |
+| `_visible_samples` | `(self)` | Samples shown under the current search, in list order. |
 | `_on_check` | `(self, sample)` |  |
+| `_on_clicked` | `(self, sample, checked)` | Tick or untick a range when Shift is held. |
+| `_hl_actions` | `(self)` | What the action bar and right-click menu can do with the highlighted samples. |
+| `_include_highlighted` | `(self)` | Tick the highlighted samples. |
+| `_exclude_highlighted` | `(self)` | Untick the highlighted samples. |
+| `_step` | `(self, delta)` | Show the previous or next sample on its own, and apply it when the node allows. |
 | `_filter_samples` | `(self, text)` |  |
 | `_select_all` | `(self)` |  |
 | `_clear_all` | `(self)` |  |
 | `_update_preview` | `(self)` |  |
 | `get_selection` | `(self)` |  |
 
-### `MultipleSampleSelectorDialog` *(extends `QDialog`)*
+### `MultipleSampleSelectorDialog` *(extends `_RowHighlight, QDialog`)*
 
-Simplified multi-sample configurator: sample list with inline group fields + isotope chips.
+Multi-sample configurator: sample list with group fields, plus isotope chips.
+
+Each sample shows its particle count and, once grouped, a colour tag
+shared by its group. Shift-click ticks a range; "Group Checked" gives
+the ticked samples one group name, suggested from their shared name when
+the field is empty.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -137,13 +178,23 @@ Simplified multi-sample configurator: sample list with inline group fields + iso
 | `_make_section_label` | `(self, text)` |  |
 | `_build_sample_list` | `(self, samples)` |  |
 | `_load_isotopes` | `(self)` |  |
+| `_visible_samples` | `(self)` | Samples shown under the current search, in list order. |
 | `_on_change` | `(self, sample)` |  |
+| `_on_clicked` | `(self, sample, checked)` | Tick or untick a range when Shift is held. |
 | `_filter_samples` | `(self, text)` |  |
 | `_select_all` | `(self)` |  |
 | `_clear_all` | `(self)` |  |
 | `_clear_groups` | `(self)` |  |
-| `_apply_group_to_checked` | `(self)` |  |
+| `_group_targets` | `(self)` | The samples Group acts on: the highlighted ones, else the ticked shown ones. |
+| `_suggestion` | `(self)` | Suggested group name for the samples Group would act on. |
+| `_apply_group_to_checked` | `(self)` | Give the highlighted (or ticked) samples one group name and tick them. |
+| `_hl_actions` | `(self)` | What the action bar and right-click menu can do with the highlighted samples. |
+| `_include_highlighted` | `(self)` | Tick the highlighted samples. |
+| `_exclude_highlighted` | `(self)` | Untick the highlighted samples. |
+| `_ungroup_highlighted` | `(self)` | Clear the group of the highlighted samples. |
+| `_hl_changed` | `(self)` | Keep the suggested group name in step with the highlight. |
 | `_auto_group` | `(self)` | Detect sample groups by stripping common replicate suffixes and numeric endings. |
+| `_group_colors` | `(self)` | A colour per group name, in the order the groups first appear. |
 | `_update_preview` | `(self)` |  |
 | `get_selection` | `(self)` |  |
 
@@ -157,7 +208,9 @@ Simplified multi-sample configurator: sample list with inline group fields + iso
 | `_get_particles` | `(self)` |  |
 | `_filter` | `(self, particles)` |  |
 | `_sample_data` | `(self)` |  |
-| `configure` | `(self, parent_window)` |  |
+| `configure` | `(self, parent_window)` | Open the dialog; arrow steps apply at once and Cancel restores the starting selection. |
+| `_restore` | `(self, before, applied)` | Put back the selection the dialog started from, after live steps were applied. |
+| `_apply_selection` | `(self, selection, parent_window)` | Store a dialog selection on the node and tell the connected nodes. |
 
 ### `MultipleSampleSelectorNode` *(extends `WorkflowNode`)*
 
@@ -432,6 +485,7 @@ AI sparkle icon.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, parent_window=None)` |  |
+| `fit_scene_rect` | `(self)` | Grow or shrink the scrollable area so every item, wherever it is, can be reached. |
 | `_on_selection` | `(self)` |  |
 | `keyPressEvent` | `(self, event)` |  |
 | `undo` | `(self)` | Reverse the last tracked action (add/delete node or link). |
@@ -443,6 +497,10 @@ AI sparkle icon.
 | `_clear_node_data` | `(self, node)` |  |
 | `duplicate_selected_nodes` | `(self)` |  |
 | `duplicate_node` | `(self, ni)` |  |
+| `node_box` | `(self, item)` | The ``(left, top, right, bottom)`` a node item takes up on the canvas. |
+| `node_boxes` | `(self, skip=())` | Boxes of every node item, leaving out the workflow nodes in *skip*. |
+| `arrange_nodes` | `(self, animate=True)` | Tidy every node into columns by data flow; Ctrl+Z puts them back. |
+| `_animate_to` | `(self, positions, animate=True, msec=320)` | Move node items to *positions* (``workflow node -> QPointF``), gliding when asked. |
 | `select_all_items` | `(self)` |  |
 | `add_node` | `(self, wf_node, pos)` |  |
 | `_reaches` | `(self, start, target)` | True if ``target`` is reachable downstream from ``start``. |
@@ -470,7 +528,10 @@ AI sparkle icon.
 | `_safe_apply_view_theme` | `(self)` |  |
 | `_view_disconnect_theme` | `(self)` |  |
 | `_setup_shortcuts` | `(self)` |  |
-| `wheelEvent` | `(self, event: QWheelEvent)` |  |
+| `_is_trackpad` | `(event)` | Whether a wheel event comes from a trackpad swipe rather than a mouse wheel. |
+| `wheelEvent` | `(self, event: QWheelEvent)` | Swipe on a trackpad to move around; pinch, Cmd/Ctrl + scroll or a mouse wheel to zoom. |
+| `viewportEvent` | `(self, event)` | Zoom on a trackpad pinch. |
+| `_zoom_by` | `(self, factor)` | Zoom by *factor*, kept between MIN_ZOOM and MAX_ZOOM. |
 | `set_zoom` | `(self, value)` |  |
 | `fit_content` | `(self)` |  |
 | `mousePressEvent` | `(self, event)` |  |
@@ -489,7 +550,8 @@ AI sparkle icon.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, parent=None)` |  |
-| `_apply_chrome_theme` | `(self)` |  |
+| `_apply_chrome_theme` | `(self)` | Re-style the dialog chrome and its header controls for the current theme. |
+| `_logo_style` | `()` |  |
 | `_build` | `(self)` |  |
 | `_update_sel` | `(self, count)` |  |
 | `_tool_btn_style` | `()` |  |
@@ -506,6 +568,13 @@ AI sparkle icon.
 | `_warn_before_apply_changes` | `(parent, node)` | Remind the user that applying this node's configuration now may |
 | `_dialog_base_style` | `()` | Dialog stylesheet synced to the current app theme. The canvas itself |
 | `_canvas_chrome_style` | `()` | Stylesheet for the canvas dialog chrome (header, palette, statusbar). |
+| `sample_particle_counts` | `(parent_window, samples, batch_particle_data=None)` | Particles per sample, for showing next to each name in the selectors. |
+| `suggest_group_name` | `(names)` | A group name for several samples: their shared replicate root or common prefix. |
+| `_count_text` | `(n)` | Short particle count for a sample row. |
+| `_shift_held` | `()` | Whether Shift is held, for range selection in the sample lists. |
+| `_checkbox_style` | `(p)` | Checkbox look shared by both sample lists. |
+| `_step_button` | `(text, tip)` | A small arrow button for stepping through samples. |
+| `_style_sample_scroll` | `(scroll, container)` | Let the sample list paint the themed background set in the dialog style. |
 | `_make_viz_icon_node` | `(grad_colors, icon_name, label, dialog_class, multi_figure=False)` | Factory: creates a circular icon node for each visualization type. |
 | `_io_families` | `(node)` | Return (input_family, output_family) for a node. |
 | `validate_classifier_link` | `(src_node, snk_node)` | Check a proposed link against Particle Classifier connectivity rules. |

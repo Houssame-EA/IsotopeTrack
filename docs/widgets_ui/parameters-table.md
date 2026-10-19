@@ -59,10 +59,16 @@ No Qt widgets are ever created here.
 
 ### `ParametersDelegate` *(extends `QStyledItemDelegate`)*
 
+Paints the parameters table with the application palette.
+
+Row backgrounds, text and the check boxes are drawn here from
+:mod:`tools.theme` rather than by the platform style, so the table
+reads the same on every platform and in light and dark mode.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `paint` | `(self, painter, option, index)` |  |
-| `_paint_check` | `(painter, rect, checked, option)` |  |
+| `_paint_check` | `(painter, rect, checked, option)` | Draw a rounded check box centred in the cell. |
 | `editorEvent` | `(self, event, model, option, index)` |  |
 | `createEditor` | `(self, parent, option, index)` |  |
 | `setEditorData` | `(self, editor, index)` |  |

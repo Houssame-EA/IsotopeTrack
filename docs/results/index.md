@@ -1,13 +1,8 @@
 # Results
 
-All plot/analysis result modules (bar charts, isotope ratios, AI, …).
+All plot/analysis result modules (bar charts, isotope ratios, …).
 
 ---
-
-### [`results_AI.py`](results-ai.md)
-
-
-**21** classes &nbsp;·&nbsp; **54** functions &nbsp;·&nbsp; **181** methods
 
 ### [`results_bar_charts.py`](results-bar-charts.md)
 

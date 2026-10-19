@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QColor, QDoubleValidator
 from PySide6.QtCore import Qt
 
-from tools.theme import theme, LIGHT
+from tools.theme import theme, LIGHT, app_qss
 from processing import detection_registry
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.calibration_methods.te_common")
@@ -20,316 +20,95 @@ _itk_log = logging.getLogger("IsotopeTrack.calibration_methods.te_common")
 # ──────────────────────────────────────────────────────────────────────────────
 
 def base_stylesheet(p) -> str:
-    """Full base stylesheet for calibration/TE windows, built from a
-    theme Palette.  Covers main window, group boxes, buttons, inputs,
-    tables, labels, tabs, tab bar, and list widgets.
+    """Stylesheet for the calibration and transport-rate windows.
 
-    Call from a window's apply_theme() method so the whole window
-    restyles on light/dark toggle:
+    It is the shared application sheet (:func:`tools.theme.app_qss`, the
+    Figure Builder look) plus the text and banner roles these windows use
+    through object names. Call it from a window's ``apply_theme`` so the
+    window restyles on the light/dark switch::
 
         self.setStyleSheet(base_stylesheet(theme.palette))
     """
-    return f"""
-        QMainWindow, QWidget {{
-            background-color: {p.bg_primary};
-            color: {p.text_primary};
-        }}
-        QGroupBox {{
-            color: {p.text_primary};
-            font-weight: bold;
-            border: 1px solid {p.border};
-            border-radius: 6px;
-            margin-top: 12px;
-            padding-top: 10px;
-            background-color: {p.bg_secondary};
-        }}
-        QGroupBox::title {{
-            subcontrol-origin: margin;
-            subcontrol-position: top left;
-            left: 10px;
-            padding: 0 5px;
-        }}
-        QPushButton {{
-            background-color: {p.accent};
-            color: {p.text_inverse};
-            border: none;
-            border-radius: 4px;
-            padding: 6px 12px;
-            font-weight: bold;
-        }}
-        QPushButton:hover {{
-            background-color: {p.accent_hover};
-        }}
-        QPushButton:pressed {{
-            background-color: {p.accent_pressed};
-        }}
-        QPushButton:disabled {{
-            background-color: {p.disabled};
-            color: {p.text_muted};
-        }}
-        QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
-            background-color: {p.bg_tertiary};
-            color: {p.text_primary};
-            border: 1px solid {p.border};
-            border-radius: 4px;
-            padding: 6px;
-            selection-background-color: {p.accent};
-            selection-color: {p.text_inverse};
-        }}
-        QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{
-            border: 1px solid {p.accent};
-        }}
-        QComboBox::drop-down {{ border: none; width: 20px; }}
-        QComboBox QAbstractItemView {{
-            background-color: {p.bg_secondary};
-            color: {p.text_primary};
-            selection-background-color: {p.accent_soft};
-            selection-color: {p.text_primary};
-            border: 1px solid {p.border};
-            outline: 0;
-        }}
-        QTableWidget {{
-            background-color: {p.bg_secondary};
-            alternate-background-color: {p.bg_tertiary};
-            color: {p.text_primary};
-            gridline-color: {p.border};
-            border: 1px solid {p.border};
-            selection-background-color: {p.accent_soft};
-            selection-color: {p.text_primary};
-        }}
-        QHeaderView::section {{
-            background-color: {p.bg_tertiary};
-            color: {p.text_primary};
-            padding: 6px;
-            border: none;
-            border-right: 1px solid {p.border};
-            border-bottom: 1px solid {p.border};
-            font-weight: bold;
-        }}
-        QTableCornerButton::section {{
-            background-color: {p.bg_tertiary};
-            border: none;
-            border-right: 1px solid {p.border};
-            border-bottom: 1px solid {p.border};
-        }}
-        QLabel {{
-            color: {p.text_primary};
-            background-color: transparent;
-        }}
-        QTabWidget::pane {{
-            border: 1px solid {p.border};
-            border-radius: 4px;
-            background-color: {p.bg_secondary};
-            top: -1px;
-        }}
-        /* QTabBar itself — without this the strip after the last tab
-           shows the OS default (white on macOS). */
-        QTabBar {{
-            background-color: {p.bg_primary};
-            qproperty-drawBase: 0;
-        }}
-        QTabWidget::tab-bar {{ alignment: left; }}
-        QTabBar::tab {{
-            background-color: {p.bg_tertiary};
-            color: {p.text_secondary};
-            border: 1px solid {p.border};
-            border-bottom: none;
-            border-top-left-radius: 4px;
-            border-top-right-radius: 4px;
-            padding: 8px 16px;
-            margin-right: 2px;
-        }}
-        QTabBar::tab:selected {{
-            background-color: {p.bg_secondary};
-            color: {p.text_primary};
-            border-bottom: 1px solid {p.bg_secondary};
-        }}
-        QTabBar::tab:hover:!selected {{
-            background-color: {p.bg_hover};
-            color: {p.text_primary};
-        }}
-        QListWidget {{
-            background-color: {p.bg_secondary};
-            alternate-background-color: {p.bg_tertiary};
-            color: {p.text_primary};
-            border: 1px solid {p.border};
-            border-radius: 4px;
-        }}
-        QListWidget::item:selected {{
-            background-color: {p.accent_soft};
-            color: {p.text_primary};
-        }}
-        /* Scrollbars — consistent across themes */
-        QScrollBar:vertical {{
-            background: {p.bg_primary};
-            width: 10px;
-            border: none;
-            margin: 0;
-        }}
-        QScrollBar::handle:vertical {{
-            background: {p.border};
-            border-radius: 5px;
-            min-height: 20px;
-        }}
-        QScrollBar::handle:vertical:hover {{ background: {p.text_muted}; }}
-        QScrollBar::add-line:vertical,
-        QScrollBar::sub-line:vertical {{ height: 0; }}
-        QScrollBar:horizontal {{
-            background: {p.bg_primary};
-            height: 10px;
-            border: none;
-        }}
-        QScrollBar::handle:horizontal {{
-            background: {p.border};
-            border-radius: 5px;
-            min-width: 20px;
-        }}
-        QScrollBar::handle:horizontal:hover {{ background: {p.text_muted}; }}
-        QScrollBar::add-line:horizontal,
-        QScrollBar::sub-line:horizontal {{ width: 0; }}
-
-        /* ────────────────────────────────────────────────────────────
-           Helper object names — widgets can just setObjectName() to
-           pick up these styles instead of hardcoding per-widget QSS.
-           Using these keeps label styling consistent across modules
-           and means dark mode "just works" for every label.
-           ──────────────────────────────────────────────────────────── */
-
-        /* Italic muted instruction/hint text — used for "Click to..."
-           messages, subtitles, explanatory captions. */
-        QLabel#hintLabel {{
-            color: {p.text_muted};
-            font-style: italic;
-            background-color: transparent;
-        }}
-
-        /* Status label in its neutral/idle state — bold, muted. */
-        QLabel#statusMuted {{
-            color: {p.text_muted};
-            font-weight: bold;
-            background-color: transparent;
-        }}
-
-        /* Status label when something succeeded / loaded. */
-        QLabel#statusOk {{
-            color: {p.success};
-            font-weight: bold;
-            background-color: transparent;
-        }}
-
-        /* Large section title at the top of a window. */
-        QLabel#titleLabel {{
-            color: {p.text_primary};
-            font-size: 20px;
-            font-weight: bold;
-        }}
-
-        /* Even larger dialog-heading title. */
-        QLabel#dialogTitle {{
-            color: {p.text_primary};
-            font-size: 24px;
-            font-weight: bold;
-            margin-bottom: 10px;
-        }}
-
-        /* Emphasised bold label inside a dialog (e.g. "Choose..." prompt). */
-        QLabel#dialogInstruction {{
-            color: {p.text_primary};
-            font-size: 14px;
-            font-weight: bold;
-            margin: 10px;
-        }}
-
-        /* Small muted description text under a radio button etc. */
-        QLabel#helpMuted {{
-            color: {p.text_muted};
-            margin-left: 20px;
-            font-size: 11px;
-            background-color: transparent;
-        }}
-
-        /* Blue info banner. */
-        QLabel#helpInfo {{
-            background-color: {p.accent_soft};
-            color: {p.text_primary};
-            padding: 10px;
-            border-radius: 4px;
-        }}
-
-        /* Yellow warning banner. */
-        QLabel#helpWarning {{
-            background-color: {p.warning_bg};
-            color: {p.text_primary};
-            border: 1px solid {p.warning_border};
-            padding: 10px;
-            border-radius: 4px;
-        }}
-
-        /* Boxed instruction panel with a light background. */
-        QFrame#instructionBox {{
-            background-color: {p.bg_tertiary};
-            border: 1px solid {p.border};
-            border-radius: 4px;
-            padding: 10px;
-        }}
-
-        /* Summary panel (e.g. "N samples, M particles detected"). */
-        QLabel#summaryPanel {{
-            background-color: {p.accent_soft};
-            color: {p.text_primary};
-            border: 1px solid {p.border};
-            border-radius: 4px;
-            padding: 12px;
-        }}
-
-        /* Primary call-to-action button (green accent). */
-        QPushButton#primaryBtn {{
-            background-color: {p.success};
-            color: {p.text_inverse};
-            border: none;
-            border-radius: 4px;
-            padding: 8px 16px;
-            font-weight: bold;
-            min-width: 80px;
-        }}
-        QPushButton#primaryBtn:hover {{ background-color: {p.accent_hover}; }}
-
-        /* Neutral secondary button. */
-        QPushButton#secondaryBtn {{
-            background-color: {p.bg_tertiary};
-            color: {p.text_primary};
-            border: 1px solid {p.border};
-            border-radius: 4px;
-            padding: 8px 16px;
-            font-weight: bold;
-            min-width: 80px;
-        }}
-        QPushButton#secondaryBtn:hover {{
-            background-color: {p.bg_hover};
-            border-color: {p.accent};
-        }}
-
-        /* Warning-style button (orange/yellow). */
-        QPushButton#warningBtn {{
-            background-color: {p.warning};
-            color: {p.text_primary};
-            border: none;
-            border-radius: 4px;
-            padding: 6px 12px;
-            font-weight: bold;
-        }}
-        QPushButton#warningBtn:hover {{
-            background-color: {p.accent_hover};
-            color: {p.text_inverse};
-        }}
-
-        /* Bordered table frame wrapper. */
-        QFrame#tableFrame {{
-            background-color: {p.bg_secondary};
-            border: 1px solid {p.border};
-            border-radius: 4px;
-        }}
+    return app_qss(p) + f"""
+    QScrollArea {{ background: transparent; border: none; }}
+    QScrollArea > QWidget#qt_scrollarea_viewport,
+    QScrollArea > QWidget#qt_scrollarea_viewport > QWidget {{ background: transparent; }}
+    QLabel#hintLabel {{ color: {p.text_muted}; font-size: 11px; }}
+    QLabel#statusMuted {{ color: {p.text_muted}; font-weight: 600; }}
+    QLabel#statusOk {{ color: {p.success}; font-weight: 600; }}
+    QLabel#titleLabel {{ color: {p.text_primary}; font-size: 15px; font-weight: 700; }}
+    QLabel#dialogTitle {{
+        color: {p.text_primary};
+        font-size: 18px;
+        font-weight: 700;
+        margin-bottom: 6px;
+    }}
+    QLabel#dialogInstruction {{
+        color: {p.text_primary};
+        font-size: 13px;
+        font-weight: 600;
+        margin: 6px 0;
+    }}
+    QLabel#helpMuted {{ color: {p.text_muted}; margin-left: 22px; font-size: 11px; }}
+    QLabel#helpInfo, QLabel#helpWarning {{
+        background: {p.bg_secondary};
+        color: {p.text_secondary};
+        border: 1px solid {p.border_subtle};
+        border-left: 3px solid {p.accent};
+        border-radius: 6px;
+        padding: 8px 10px;
+    }}
+    QLabel#helpWarning {{ border-left-color: {p.warning}; }}
+    QFrame#instructionBox {{
+        background: {p.bg_secondary};
+        border: 1px solid {p.border_subtle};
+        border-radius: 8px;
+        padding: 8px;
+    }}
+    QLabel#summaryPanel {{
+        background: {p.bg_secondary};
+        color: {p.text_primary};
+        border: 1px solid {p.border_subtle};
+        border-left: 3px solid {p.accent};
+        border-radius: 6px;
+        padding: 10px;
+    }}
+    QPushButton#secondaryBtn {{ min-width: 80px; }}
+    QPushButton#warningBtn {{
+        background: {p.warning_bg};
+        color: {p.text_primary};
+        border: 1px solid {p.warning};
+    }}
+    QPushButton#warningBtn:hover {{ border-color: {p.accent}; }}
+    QFrame#tableFrame {{ background: transparent; border: none; }}
     """
+
+
+def section_stylesheet(p) -> str:
+    """Rules for the collapsible sections and panel headers of the TE windows.
+
+    Each section header is a white card with an accent arrow, matching the
+    toolbar cards of the Figure Builder.
+    """
+    return f"""
+    QWidget#collapsibleHeader {{
+        background: {p.bg_secondary};
+        border: 1px solid {p.border_subtle};
+        border-radius: 8px;
+    }}
+    QWidget#collapsibleHeader:hover {{ border-color: {p.accent}; }}
+    QLabel#collapsibleArrow {{ color: {p.accent}; font-size: 10px; font-weight: 700; }}
+    QLabel#collapsibleTitle {{ color: {p.text_primary}; font-weight: 700; font-size: 13px; }}
+    QLabel#collapsibleStatus {{ color: {p.text_muted}; font-size: 11px; }}
+    QLabel#panelHeader {{
+        color: {p.text_secondary};
+        font-weight: 700;
+        font-size: 12px;
+        padding-bottom: 4px;
+        border-bottom: 1px solid {p.border_subtle};
+    }}
+    """
+
 
 BASE_STYLESHEET = base_stylesheet(LIGHT)
 
@@ -339,28 +118,19 @@ BASE_STYLESHEET = base_stylesheet(LIGHT)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def preview_styles(p) -> dict:
-    """Return the four preview-label stylesheet strings tinted for the
-    given palette.  Keys: 'default', 'error', 'warning', 'success'.
+    """Stylesheets for the result-preview label, keyed 'default', 'error',
+    'warning' and 'success'.
 
-    In dark mode the pastel backgrounds are replaced with muted tones
-    from the palette so text stays readable.
+    Each is a white card like the Figure Builder's; the state is carried by
+    a coloured left edge and the text colour, which read well in both themes.
     """
-    if p.name == "dark":
-        default_bg, default_fg = p.bg_tertiary,  p.text_secondary
-        error_bg,   error_fg   = "#4a2326",      "#f48771"   # muted red
-        warning_bg, warning_fg = p.warning_bg,   p.warning
-        success_bg, success_fg = "#1e3a28",      p.success   # muted green
-    else:
-        default_bg, default_fg = "#f0f0f0", "#6c757d"
-        error_bg,   error_fg   = "#f8d7da", "#721c24"
-        warning_bg, warning_fg = "#fff3cd", "#856404"
-        success_bg, success_fg = "#d4edda", "#155724"
-    base = "padding: 15px; border-radius: 5px; font-size: 14px;"
+    card = (f"background-color: {p.bg_secondary}; border: 1px solid {p.border_subtle}; "
+            "border-radius: 8px; padding: 12px; font-size: 14px;")
     return {
-        "default": f"background-color: {default_bg}; color: {default_fg}; {base}",
-        "error":   f"background-color: {error_bg};   color: {error_fg};   {base}",
-        "warning": f"background-color: {warning_bg}; color: {warning_fg}; {base}",
-        "success": f"background-color: {success_bg}; color: {success_fg}; font-weight: bold; {base}",
+        "default": f"{card} color: {p.text_muted};",
+        "error":   f"{card} color: {p.danger}; border-left: 3px solid {p.danger};",
+        "warning": f"{card} color: {p.text_primary}; border-left: 3px solid {p.warning};",
+        "success": f"{card} color: {p.success}; font-weight: 600; border-left: 3px solid {p.success};",
     }
 
 
@@ -373,55 +143,32 @@ PREVIEW_STYLES = preview_styles(LIGHT)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def return_button_style(p) -> str:
-    """Stylesheet for the 'Back to Main' button.  In light mode it keeps
-    the original warm pink/orange gradient.  In dark mode it switches to
-    a solid, muted accent so it doesn't blind the user.
+    """Stylesheet for the 'Back to Main' button of the calibration windows.
+
+    A quiet tool-style button in the Figure Builder look: no frame until
+    hovered, so the window's single accent button stays the call to action.
     """
-    if p.name == "dark":
-        return f"""
-            QPushButton {{
-                background-color: {p.danger};
-                color: {p.text_inverse};
-                border: 2px solid {p.danger};
-                border-radius: 22px;
-                padding: 8px 16px;
-                font-size: 14px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: {p.accent_hover};
-                border: 2px solid {p.accent_hover};
-            }}
-            QPushButton:pressed {{
-                background-color: {p.accent_pressed};
-                border: 2px solid {p.accent_pressed};
-            }}
-        """
-    # Light mode — preserve the original warm gradient.
-    return """
-        QPushButton {
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 #FF6B6B, stop:0.5 #FF8E53, stop:1 #FF6B9D);
-            color: white;
-            border: 3px solid #FF4081;
-            padding: 8px 16px;
-            text-align: center;
-            font-size: 14px;
-            font-weight: bold;
-            border-radius: 22px;
-        }
-        QPushButton:hover {
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 #FF5252, stop:0.5 #FF7043, stop:1 #FF4081);
-            border: 3px solid #E91E63;
-        }
-        QPushButton:pressed {
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 #E53935, stop:0.5 #FF5722, stop:1 #E91E63);
-            border: 3px solid #AD1457;
-            padding: 9px 15px 7px 17px;
-        }
+    return f"""
+        QPushButton {{
+            background: transparent;
+            color: {p.text_secondary};
+            border: 1px solid transparent;
+            border-radius: 6px;
+            padding: 4px 10px;
+            font-weight: 600;
+        }}
+        QPushButton:hover {{
+            background: {p.accent_soft};
+            color: {p.text_primary};
+            border-color: {p.border};
+        }}
+        QPushButton:pressed {{ background: {p.bg_selected}; border-color: {p.accent}; }}
     """
+
+
+def return_button_icon_color(p) -> str:
+    """Colour of the house icon on the 'Back to Main' button."""
+    return p.text_secondary
 
 
 RETURN_BUTTON_STYLE = return_button_style(LIGHT)
@@ -1336,6 +1083,14 @@ def run_all_fits_on_subset(x, y, y_std, included_mask, density):
     fom_weighted = compute_figures_of_merit(
         f_weighted["slope"], f_weighted["intercept"], sigma_blank)
 
+    from calibration_methods.sensitivity_checks import slope_uncertainty
+    unc_zero = slope_uncertainty(xi, yi, method='zero')
+    unc_simple = slope_uncertainty(xi, yi, method='simple')
+    unc_weighted = slope_uncertainty(xi, yi, si, method='weighted')
+    fom_zero.update(slope_se=unc_zero['se'], slope_ci95=unc_zero['ci95'])
+    fom_simple.update(slope_se=unc_simple['se'], slope_ci95=unc_simple['ci95'])
+    fom_weighted.update(slope_se=unc_weighted['se'], slope_ci95=unc_weighted['ci95'])
+
     return {
         'zero': {
             'slope':     f_zero["slope"],
@@ -1398,3 +1153,94 @@ def compute_outlier_indices(y, y_fit, included_mask, z_threshold=1.5):
         i for i in included_idx
         if abs(residuals[i] / s) > z_threshold
     }
+
+def standards_in_sample_name(sample_name, presets):
+    """
+    Named multi-element standards (preset lists) found in a sample name.
+
+    A preset such as ``71A``, ``68A-B`` or ``CMS-1 Rare Earth`` matches in
+    any case, with ``-``, ``_``, ``.`` or a space (or nothing) between its
+    characters, and not inside a longer word or number: ``71A_2ppb`` and
+    ``68a_b 1 ppb`` match, ``171A`` does not. For a preset with spaces its
+    first word alone (``CMS-1``) also matches.
+
+    Args:
+        sample_name: The sample (file or folder) name.
+        presets: {preset name: [element symbols]}.
+
+    Returns:
+        (set of element symbols of the matched presets,
+         sample name with the matched text blanked out).
+    """
+    import re
+    found = set()
+    remaining = sample_name
+    names = []
+    for preset in presets:
+        names.append((preset, preset))
+        head = preset.split(' ')[0]
+        if head != preset:
+            names.append((head, preset))
+    names.sort(key=lambda item: -len(item[0]))
+    for text, preset in names:
+        chars = [re.escape(c) for c in text if c.isalnum()]
+        if not chars:
+            continue
+        pattern = r'(?<![A-Za-z0-9])' + r'[-_. ]?'.join(chars) + r'(?![A-Za-z0-9])'
+        if re.search(pattern, remaining, flags=re.IGNORECASE):
+            found.update(presets[preset])
+            remaining = re.sub(pattern, ' ', remaining, flags=re.IGNORECASE)
+    return found, remaining
+
+
+def elements_in_sample_name(sample_name, elements, presets=None):
+    """
+    Elements named in a calibration sample name.
+
+    A name is cut into letter runs (digits, spaces and punctuation separate
+    them). A run counts when it spells one or more element symbols with
+    their exact capitalisation (``Fe``, ``FeCe``, the ``Ce`` of ``140Ce``),
+    so lower-case unit text such as ``ppb`` is never read as ``Pb``, and
+    all-capital words of three letters or more (``PPB``, ``ICP``, ``STD``)
+    are ignored. Full
+    element names (``Iron``, ``cerium``) are recognised in any case. When
+    *presets* is given, named standards such as ``71A`` contribute all
+    their elements (see :func:`standards_in_sample_name`), and their text
+    is not read again as symbols (``68B-C`` is not boron and carbon).
+
+    Args:
+        sample_name: The sample (file or folder) name.
+        elements: Periodic-table entries, each with ``symbol`` and ``name``.
+        presets: Optional {standard name: [element symbols]}.
+
+    Returns:
+        set of element symbols found in the name.
+    """
+    import re
+    symbols = {e['symbol'] for e in elements}
+    names = {str(e.get('name', '')).lower(): e['symbol'] for e in elements if e.get('name')}
+    found = set()
+    if presets:
+        found, sample_name = standards_in_sample_name(sample_name, presets)
+
+    def split_symbols(run):
+        if not run:
+            return []
+        for size in (2, 1):
+            head = run[:size]
+            if len(head) == size and head in symbols:
+                rest = split_symbols(run[size:])
+                if rest is not None:
+                    return [head] + rest
+        return None
+
+    for run in re.findall(r'[A-Za-z]+', sample_name):
+        if run.lower() in names:
+            found.add(names[run.lower()])
+            continue
+        if len(run) >= 3 and run.isupper():
+            continue
+        parts = split_symbols(run) if run[0].isupper() else None
+        if parts:
+            found.update(parts)
+    return found

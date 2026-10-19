@@ -7,6 +7,7 @@
 | Name | Value |
 |------|-------|
 | `PRESET_LISTS` | `{'71A': ['Ag', 'Al', 'As', 'B', 'Ba', 'Be', 'Ca', 'Cd', '…` |
+| `_LOADED_LISTS_KEY` | `'periodic_table/loaded_lists'` |
 
 ## Classes
 
@@ -88,3 +89,11 @@
 | `clear_all_selections` | `(self)` | Clear all selected isotopes and highlights, respecting available mass range. |
 | `clear_selections_in_range_only` | `(self)` | Clear only selections for elements within the available mass range. |
 | `get_elements` | `(self)` | Return cached elements list using O(1) operation. |
+
+## Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `loaded_lists` | `()` | Element lists loaded from files in the periodic table, by name. |
+| `remember_loaded_list` | `(name, symbols)` | Remember the element list *name* (see :func:`loaded_lists`). |
+| `named_element_lists` | `()` | Built-in presets and the lists loaded from files, by name. |

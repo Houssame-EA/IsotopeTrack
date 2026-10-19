@@ -121,11 +121,11 @@ class Palette:
 LIGHT = Palette(
     name="light",
     bg_primary="#e8edf3",
-    bg_secondary="#ffffff",
-    bg_tertiary="#f6f8fb",
+    bg_secondary="#f6f8fb",
+    bg_tertiary="#eef2f6",
     bg_sidebar="#2c3e50",
     bg_sidebar_alt="#34495e",
-    bg_hover="#f0f4f8",
+    bg_hover="#e9eef4",
     bg_selected="#e3f2fd",
     text_primary="#2c3e50",
     text_secondary="#5a6c7d",
@@ -383,11 +383,11 @@ def main_window_qss(p: Palette) -> str:
             color: {p.text_primary};
         }}
         QGroupBox {{
-            color: {p.text_primary};
-            font-weight: bold;
-            border: 1px solid {p.border};
-            border-radius: 6px;
-            margin-top: 12px;
+            color: {p.text_secondary};
+            font-weight: 600;
+            border: 1px solid {p.border_subtle};
+            border-radius: 8px;
+            margin-top: 14px;
             padding-top: 10px;
             background-color: {p.bg_secondary};
         }}
@@ -398,29 +398,46 @@ def main_window_qss(p: Palette) -> str:
             padding: 0 5px;
         }}
         QPushButton {{
-            background-color: {p.accent};
-            color: {p.text_inverse};
-            border: none;
-            border-radius: 6px;
-            padding: 6px 12px;
-            font-weight: bold;
-        }}
-        QPushButton:hover {{
-            background-color: {p.accent_hover};
-        }}
-        QPushButton:pressed {{
-            background-color: {p.accent_pressed};
-        }}
-        QPushButton:disabled {{
-            background-color: {p.disabled};
-            color: {p.text_muted};
-        }}
-        QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
             background-color: {p.bg_tertiary};
             color: {p.text_primary};
             border: 1px solid {p.border};
             border-radius: 6px;
-            padding: 6px;
+            padding: 6px 12px;
+            font-weight: 600;
+        }}
+        QPushButton:hover {{
+            background-color: {p.accent_soft};
+            border-color: {p.accent};
+        }}
+        QPushButton:pressed {{
+            background-color: {p.bg_selected};
+        }}
+        QPushButton:checked {{
+            background-color: {p.accent_soft};
+            border-color: {p.accent};
+        }}
+        QPushButton:disabled {{
+            background-color: {p.bg_tertiary};
+            color: {p.text_muted};
+            border-color: {p.border_subtle};
+        }}
+        QPushButton:default, QPushButton#fbPrimary {{
+            background-color: {p.accent};
+            color: {p.text_inverse};
+            border: 1px solid {p.accent};
+        }}
+        QPushButton:default:hover, QPushButton#fbPrimary:hover {{
+            background-color: {p.accent_hover};
+        }}
+        QPushButton:default:pressed, QPushButton#fbPrimary:pressed {{
+            background-color: {p.accent_pressed};
+        }}
+        QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
+            background-color: {p.bg_secondary};
+            color: {p.text_primary};
+            border: 1px solid {p.border};
+            border-radius: 5px;
+            padding: 4px 6px;
             selection-background-color: {p.accent};
             selection-color: {p.text_inverse};
         }}
@@ -454,7 +471,7 @@ def main_window_qss(p: Palette) -> str:
             border: 1px solid {p.border};
             outline: 0;
         }}
-        QTableWidget {{
+        QTableWidget, QTableView {{
             background-color: {p.bg_secondary};
             alternate-background-color: {p.bg_tertiary};
             color: {p.text_primary};
@@ -482,6 +499,29 @@ def main_window_qss(p: Palette) -> str:
             color: {p.text_primary};
             background-color: transparent;
         }}
+        QCheckBox, QRadioButton {{
+            color: {p.text_primary};
+            background-color: transparent;
+            spacing: 6px;
+        }}
+        QRadioButton::indicator {{
+            width: 14px;
+            height: 14px;
+            border-radius: 8px;
+            border: 1px solid {p.text_muted};
+            background: {p.bg_secondary};
+        }}
+        QRadioButton::indicator:hover {{
+            border-color: {p.accent};
+        }}
+        QRadioButton::indicator:checked {{
+            border: 1px solid {p.accent};
+            background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0 {p.accent}, stop:0.5 {p.accent}, stop:0.6 {p.bg_secondary}, stop:1 {p.bg_secondary});
+        }}
+        QRadioButton::indicator:disabled {{
+            border-color: {p.border};
+            background: {p.bg_tertiary};
+        }}
         QTabWidget::pane {{
             border: 1px solid {p.border};
             border-radius: 4px;
@@ -496,22 +536,19 @@ def main_window_qss(p: Palette) -> str:
         }}
         QTabWidget::tab-bar {{ alignment: left; }}
         QTabBar::tab {{
-            background-color: {p.bg_tertiary};
+            background-color: transparent;
             color: {p.text_secondary};
-            border: 1px solid {p.border};
-            border-bottom: none;
-            border-top-left-radius: 4px;
-            border-top-right-radius: 4px;
-            padding: 8px 16px;
+            border: none;
+            border-bottom: 2px solid transparent;
+            padding: 7px 14px;
             margin-right: 2px;
+            font-weight: 600;
         }}
         QTabBar::tab:selected {{
-            background-color: {p.bg_secondary};
-            color: {p.text_primary};
-            border-bottom: 1px solid {p.bg_secondary};
+            color: {p.accent};
+            border-bottom: 2px solid {p.accent};
         }}
         QTabBar::tab:hover:!selected {{
-            background-color: {p.bg_hover};
             color: {p.text_primary};
         }}
         QListWidget {{
@@ -810,7 +847,7 @@ def sample_table_qss(p: Palette) -> str:
 
 def parameters_table_qss(p: Palette) -> str:
     return f"""
-        QTableWidget {{
+        QTableWidget, QTableView {{
             gridline-color: {p.border};
             background-color: {p.bg_secondary};
             color: {p.text_primary};
@@ -818,8 +855,10 @@ def parameters_table_qss(p: Palette) -> str:
             border-radius: 5px;
             font-size: 14px;
             alternate-background-color: {p.bg_tertiary};
+            selection-background-color: {p.accent_soft};
+            selection-color: {p.text_primary};
         }}
-        QTableWidget::item {{
+        QTableWidget::item, QTableView::item {{
             padding: 5px;
             min-height: 20px;
         }}
@@ -832,7 +871,7 @@ def parameters_table_qss(p: Palette) -> str:
             font-size: 12px;
             min-height: 25px;
         }}
-        QTableWidget::item:selected {{
+        QTableWidget::item:selected, QTableView::item:selected {{
             background-color: {p.accent_soft};
             color: {p.text_primary};
         }}
@@ -842,9 +881,9 @@ def parameters_table_qss(p: Palette) -> str:
 def info_button_qss(p: Palette) -> str:
     return f"""
         QPushButton {{
-            background-color: {p.bg_secondary};
-            border: 1px solid {p.border_subtle};
-            border-radius: 16px;
+            background-color: transparent;
+            border: 1px solid transparent;
+            border-radius: 14px;
             padding: 4px;
         }}
         QPushButton:hover {{
@@ -910,6 +949,68 @@ def primary_button_qss(p: Palette) -> str:
     """
 
 
+def secondary_action_button_qss(p: Palette) -> str:
+    """Neutral action button, as in the Figure Builder: the one main action
+    of a window stays blue (:func:`primary_button_qss`), the rest use this."""
+    return f"""
+        QPushButton {{
+            padding: 8px 15px;
+            background-color: {p.bg_tertiary};
+            color: {p.text_primary};
+            border: 1px solid {p.border};
+            border-radius: 6px;
+            font-weight: 600;
+        }}
+        QPushButton:hover {{
+            background-color: {p.accent_soft};
+            border-color: {p.accent};
+        }}
+        QPushButton:pressed {{
+            background-color: {p.bg_selected};
+        }}
+        QPushButton:disabled {{
+            background-color: {p.bg_tertiary};
+            color: {p.text_muted};
+            border-color: {p.border_subtle};
+        }}
+        QPushButton:checked {{
+            background-color: {p.accent_soft};
+            color: {p.accent_pressed if p.name == 'light' else p.text_primary};
+            border-color: {p.accent};
+        }}
+    """
+
+
+def view_switch_qss(p: Palette) -> str:
+    """Segmented two-way switch (e.g. Time | m/z): one track, the active side
+    raised. Applied to a ``QFrame#viewSwitch`` holding checkable buttons."""
+    track = p.bg_tertiary if p.name == 'light' else '#1b1b1c'
+    raised = '#ffffff' if p.name == 'light' else '#3a3a3d'
+    return f"""
+        QFrame#viewSwitch {{
+            background-color: {track};
+            border: 1px solid {p.border};
+            border-radius: 8px;
+        }}
+        QFrame#viewSwitch QPushButton {{
+            background-color: transparent;
+            color: {p.text_secondary};
+            border: 1px solid transparent;
+            border-radius: 6px;
+            padding: 0 14px;
+            font-weight: 600;
+        }}
+        QFrame#viewSwitch QPushButton:hover {{
+            color: {p.text_primary};
+        }}
+        QFrame#viewSwitch QPushButton:checked {{
+            background-color: {raised};
+            color: {p.text_primary};
+            border: 1px solid {p.border};
+        }}
+    """
+
+
 def progress_bar_qss(p: Palette) -> str:
     return f"""
         QProgressBar {{
@@ -931,8 +1032,8 @@ def groupbox_qss(p: Palette) -> str:
         QGroupBox {{
             font-weight: bold;
             font-size: 14px;
-            border: none;
-            border-radius: 10px;
+            border: 1px solid {p.border_subtle};
+            border-radius: 8px;
             margin-top: 1.4em;
             padding: 16px 10px 10px 10px;
             color: {p.text_secondary};
@@ -1187,24 +1288,33 @@ def dialog_qss(p: Palette) -> str:
             spacing: 6px;
         }}
         QDialog QRadioButton::indicator {{
-            width: 16px;
-            height: 16px;
+            width: 14px;
+            height: 14px;
+            border-radius: 8px;
+            border: 1px solid {p.text_muted};
+            background: {p.bg_secondary};
         }}
-        QDialog QRadioButton::indicator:unchecked {{
-            border: 2px solid {p.border};
-            border-radius: 9px;
-            background-color: {p.bg_secondary};
+        QDialog QRadioButton::indicator:hover {{
+            border-color: {p.accent};
         }}
         QDialog QRadioButton::indicator:checked {{
-            border: 2px solid {p.accent};
-            border-radius: 9px;
-            background-color: {p.bg_secondary};
+            border: 1px solid {p.accent};
+            background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0 {p.accent}, stop:0.5 {p.accent}, stop:0.6 {p.bg_secondary}, stop:1 {p.bg_secondary});
+        }}
+        QDialog QRadioButton::indicator:disabled {{
+            border-color: {p.border};
+            background: {p.bg_tertiary};
+        }}
+        QDialog QRadioButton::indicator:checked:disabled {{
+            border-color: {p.border};
+            background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0 {p.text_muted}, stop:0.5 {p.text_muted}, stop:0.6 {p.bg_tertiary}, stop:1 {p.bg_tertiary});
         }}
         QDialog QPushButton {{
             background-color: {p.bg_tertiary};
             color: {p.text_primary};
             border: 1px solid {p.border};
-            border-radius: 4px;
+            border-radius: 6px;
+            font-weight: 600;
             padding: 6px 16px;
             min-width: 80px;
         }}
@@ -1228,10 +1338,10 @@ def dialog_qss(p: Palette) -> str:
         QDialog QComboBox,
         QDialog QSpinBox,
         QDialog QDoubleSpinBox {{
-            background-color: {p.bg_tertiary};
+            background-color: {p.bg_secondary};
             color: {p.text_primary};
             border: 1px solid {p.border};
-            border-radius: 4px;
+            border-radius: 5px;
             padding: 4px 8px;
             selection-background-color: {p.accent};
             selection-color: {p.text_inverse};
@@ -1397,17 +1507,24 @@ def export_dialog_qss(p: Palette) -> str:
             color: {p.text_primary};
         }}
         QPushButton {{
-            background-color: {p.accent};
-            color: {p.text_inverse};
-            border: none;
-            border-radius: 4px;
+            background-color: {p.bg_tertiary};
+            color: {p.text_primary};
+            border: 1px solid {p.border};
+            border-radius: 6px;
             padding: 5px 14px;
+            font-weight: 600;
         }}
         QPushButton:hover {{
-            background-color: {p.accent_hover};
+            background-color: {p.accent_soft};
+            border-color: {p.accent};
         }}
         QPushButton:pressed {{
-            background-color: {p.accent_pressed};
+            background-color: {p.bg_selected};
+        }}
+        QPushButton:default {{
+            background-color: {p.accent};
+            color: {p.text_inverse};
+            border: 1px solid {p.accent};
         }}
         QPushButton:disabled {{
             background-color: {p.disabled};
@@ -1484,4 +1601,220 @@ def html_table_css(p: Palette) -> str:
             background-color: {p.accent_soft};
             color: {p.text_primary};
         }}
+    """
+
+def app_qss(p: Palette) -> str:
+    """The shared IsotopeTrack window stylesheet, in the Figure Builder's look.
+
+    Flat white cards on the window background, underline tabs, neutral
+    buttons with a single accent call-to-action (object name ``fbPrimary``,
+    also accepted as ``primaryBtn``), and icon tool buttons that only show a
+    frame on hover. Every colour comes from *p*, so a window styled with this
+    follows the light/dark switch when it re-applies the sheet on
+    ``themeChanged``.
+
+    Object names understood by the sheet:
+
+    * ``fbRoot`` / ``appRoot`` – a top-level container painted with the window colour
+    * ``fbToolbar`` / ``appToolbar`` – the rounded toolbar card at the top of a window
+    * ``fbSep`` – a thin vertical separator inside a toolbar
+    * ``fbPreview`` – a tinted card that holds a plot or preview
+    * ``fbPrimary`` / ``primaryBtn`` – the one accent button of a window
+    * ``fbHint``, ``fbStatus``, ``fbError``, ``fbEmpty``, ``appTitle`` – text roles
+    """
+    return f"""
+    QDialog, QMainWindow, QWidget#fbRoot, QWidget#appRoot {{
+        background: {p.bg_primary};
+        color: {p.text_primary};
+    }}
+    QLabel {{ color: {p.text_primary}; background: transparent; }}
+    QLabel#fbHint {{ color: {p.text_muted}; font-size: 11px; }}
+    QLabel#fbStatus {{ color: {p.text_muted}; }}
+    QLabel#fbError {{ color: {p.danger}; font-weight: 600; padding: 2px 4px; }}
+    QLabel#fbEmpty {{ color: {p.text_muted}; padding: 12px; }}
+    QLabel#appTitle {{ color: {p.text_primary}; font-size: 15px; font-weight: 700; padding: 0 6px; }}
+    QFrame#fbToolbar, QFrame#appToolbar {{
+        background: {p.bg_secondary};
+        border: 1px solid {p.border_subtle};
+        border-radius: 8px;
+    }}
+    QFrame#fbSep {{ color: {p.border}; }}
+    QFrame#fbPreview {{
+        background: {p.bg_tertiary};
+        border: 1px solid {p.border_subtle};
+        border-radius: 8px;
+    }}
+    QToolBar {{ background: transparent; border: none; spacing: 2px; padding: 2px; }}
+    QToolButton {{
+        background: transparent;
+        color: {p.text_primary};
+        border: 1px solid transparent;
+        border-radius: 6px;
+        padding: 4px 8px;
+    }}
+    QToolButton:hover {{ background: {p.accent_soft}; border-color: {p.border}; }}
+    QToolButton:pressed, QToolButton:checked {{ background: {p.bg_selected}; border-color: {p.accent}; }}
+    QToolButton:disabled {{ color: {p.text_muted}; }}
+    QToolButton::menu-indicator {{ image: none; width: 0; }}
+    QPushButton {{
+        background: {p.bg_tertiary};
+        color: {p.text_primary};
+        border: 1px solid {p.border};
+        border-radius: 6px;
+        padding: 5px 12px;
+        font-weight: 600;
+    }}
+    QPushButton:hover {{ background: {p.accent_soft}; border-color: {p.accent}; }}
+    QPushButton:pressed {{ background: {p.bg_selected}; }}
+    QPushButton:disabled {{
+        background: {p.bg_tertiary};
+        color: {p.text_muted};
+        border-color: {p.border_subtle};
+    }}
+    QPushButton#fbPrimary, QPushButton#primaryBtn {{
+        background: {p.accent};
+        color: {p.text_inverse};
+        border: none;
+        padding: 6px 14px;
+    }}
+    QPushButton#fbPrimary:hover, QPushButton#primaryBtn:hover {{ background: {p.accent_hover}; }}
+    QPushButton#fbPrimary:pressed, QPushButton#primaryBtn:pressed {{ background: {p.accent_pressed}; }}
+    QPushButton#fbPrimary:disabled, QPushButton#primaryBtn:disabled {{
+        background: {p.disabled};
+        color: {p.text_inverse};
+    }}
+    QTabWidget::pane {{
+        border: 1px solid {p.border_subtle};
+        border-radius: 6px;
+        background: {p.bg_secondary};
+        top: -1px;
+    }}
+    QTabBar::tab {{
+        background: transparent;
+        color: {p.text_secondary};
+        padding: 5px 10px;
+        border-bottom: 2px solid transparent;
+        font-weight: 600;
+    }}
+    QTabBar::tab:selected {{ color: {p.accent}; border-bottom: 2px solid {p.accent}; }}
+    QTabBar::tab:hover {{ color: {p.text_primary}; }}
+    QGroupBox {{
+        background: {p.bg_secondary};
+        border: 1px solid {p.border_subtle};
+        border-radius: 8px;
+        margin-top: 14px;
+        padding: 8px 6px 4px 6px;
+        font-weight: 600;
+        color: {p.text_secondary};
+    }}
+    QGroupBox::title {{
+        subcontrol-origin: margin;
+        left: 10px;
+        padding: 0 4px;
+        color: {p.text_secondary};
+    }}
+    QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QFontComboBox {{
+        background: {p.bg_secondary};
+        color: {p.text_primary};
+        border: 1px solid {p.border};
+        border-radius: 5px;
+        padding: 3px 6px;
+        min-height: 20px;
+    }}
+    QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
+        border: 1px solid {p.accent};
+    }}
+    QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {{
+        background: {p.bg_tertiary};
+        color: {p.text_muted};
+        border-color: {p.border_subtle};
+    }}
+    QLineEdit[invalid="true"] {{ border: 1.5px solid {p.danger}; background: {p.danger_bg}; }}
+    QComboBox QAbstractItemView {{
+        background: {p.bg_secondary};
+        color: {p.text_primary};
+        selection-background-color: {p.accent_soft};
+        selection-color: {p.text_primary};
+    }}
+    QPlainTextEdit, QTextEdit, QTextBrowser, QTableView, QTableWidget,
+    QListView, QListWidget, QTreeView, QTreeWidget {{
+        background: {p.bg_secondary};
+        color: {p.text_primary};
+        border: 1px solid {p.border_subtle};
+        border-radius: 6px;
+        gridline-color: {p.border_subtle};
+        selection-background-color: {p.accent_soft};
+        selection-color: {p.text_primary};
+        alternate-background-color: {p.bg_tertiary};
+    }}
+    QHeaderView {{ background: {p.bg_tertiary}; border: none; }}
+    QTableView#frozenColumn {{
+        border: none;
+        border-right: 2px solid {p.border};
+        border-radius: 0;
+    }}
+    QHeaderView::section {{
+        background: {p.bg_tertiary};
+        color: {p.text_secondary};
+        border: none;
+        border-right: 1px solid {p.border_subtle};
+        border-bottom: 1px solid {p.border_subtle};
+        padding: 4px 6px;
+        font-weight: 600;
+    }}
+    QTableCornerButton::section {{
+        background: {p.bg_tertiary};
+        border: none;
+        border-right: 1px solid {p.border_subtle};
+        border-bottom: 1px solid {p.border_subtle};
+    }}
+    QCheckBox, QRadioButton {{ color: {p.text_primary}; spacing: 6px; background: transparent; }}
+    QCheckBox::indicator {{
+        width: 15px; height: 15px; border-radius: 4px;
+        border: 1.5px solid {p.border_strong}; background: {p.bg_secondary};
+    }}
+    QCheckBox::indicator:checked {{ background: {p.accent}; border-color: {p.accent}; }}
+    QCheckBox::indicator:indeterminate {{ background: {p.accent_soft}; border-color: {p.accent}; }}
+    QCheckBox::indicator:disabled {{ border-color: {p.border}; background: {p.bg_tertiary}; }}
+    QRadioButton::indicator {{
+        width: 14px; height: 14px; border-radius: 8px;
+        border: 1.5px solid {p.border_strong}; background: {p.bg_secondary};
+    }}
+    QRadioButton::indicator:checked {{ background: {p.accent}; border-color: {p.accent}; }}
+    QMenu {{
+        background: {p.bg_secondary};
+        color: {p.text_primary};
+        border: 1px solid {p.border};
+        border-radius: 6px;
+        padding: 4px;
+    }}
+    QMenu::item {{ padding: 5px 22px 5px 12px; border-radius: 4px; }}
+    QMenu::item:selected {{ background: {p.accent_soft}; color: {p.text_primary}; }}
+    QMenu::item:disabled {{ color: {p.text_muted}; }}
+    QMenu::separator {{ height: 1px; background: {p.border_subtle}; margin: 4px 8px; }}
+    QSplitter::handle {{ background: transparent; }}
+    QSplitter::handle:hover {{ background: {p.accent_soft}; }}
+    QScrollBar:vertical {{ background: transparent; width: 8px; margin: 2px; }}
+    QScrollBar::handle:vertical {{ background: {p.border}; border-radius: 4px; min-height: 24px; }}
+    QScrollBar::handle:vertical:hover {{ background: {p.text_muted}; }}
+    QScrollBar:horizontal {{ background: transparent; height: 8px; margin: 2px; }}
+    QScrollBar::handle:horizontal {{ background: {p.border}; border-radius: 4px; min-width: 24px; }}
+    QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
+    QProgressBar {{
+        background: {p.bg_tertiary};
+        border: 1px solid {p.border_subtle};
+        border-radius: 5px;
+        text-align: center;
+        color: {p.text_primary};
+        min-height: 14px;
+    }}
+    QProgressBar::chunk {{ background: {p.accent}; border-radius: 4px; }}
+    QStatusBar {{ background: {p.bg_primary}; color: {p.text_muted}; border: none; }}
+    QStatusBar::item {{ border: none; }}
+    QToolTip {{
+        background: {p.bg_secondary};
+        color: {p.text_primary};
+        border: 1px solid {p.border};
+        padding: 4px 6px;
+    }}
     """

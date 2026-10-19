@@ -50,10 +50,6 @@ class InputMethodCalibration(QMainWindow):
                 self._preview_styles.get(self._preview_key,
                                          self._preview_styles["default"])
             )
-        if hasattr(self, "calc_btn"):
-            self.calc_btn.setStyleSheet(
-                "QPushButton { font-size: 16px; font-weight: bold; }"
-            )
 
     # ── UI construction ──────────────────────────────────────────────────
 
@@ -159,6 +155,7 @@ class InputMethodCalibration(QMainWindow):
         group_layout.addWidget(self.result_preview)
 
         self.calc_btn = QPushButton("Calculate Transport Rate")
+        self.calc_btn.setObjectName("fbPrimary")
         self.calc_btn.setMinimumHeight(40)
         self.calc_btn.clicked.connect(self._calculate)
         group_layout.addWidget(self.calc_btn)

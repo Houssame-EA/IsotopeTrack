@@ -105,6 +105,7 @@ nav:
     - Overview: loading/index.md
     - "SIA_manager.py": loading/sia-manager.md
     - "data_thread.py": loading/data-thread.md
+    - "sia_stats.py": loading/sia-stats.md
     - "tofwerk_loading.py": loading/tofwerk-loading.md
     - "vitesse_loading.py": loading/vitesse-loading.md
 - Project & I/O:
@@ -127,6 +128,7 @@ nav:
     - "TE_number.py": calibration/te-number.md
     - "calibration_registry.py": calibration/calibration-registry.md
     - "ionic_CAL.py": calibration/ionic-cal.md
+    - "sensitivity_checks.py": calibration/sensitivity-checks.md
     - "te_common.py": calibration/te-common.md
 - Canvas & Shared:
     - Overview: canvas_shared/index.md
@@ -138,7 +140,6 @@ nav:
     - "classifier_view.py": canvas_shared/classifier-view.md
 - Results:
     - Overview: results/index.md
-    - "results_AI.py": results/results-ai.md
     - "results_bar_charts.py": results/results-bar-charts.md
     - "results_box_plot.py": results/results-box-plot.md
     - "results_composition_wheel.py": results/results-composition-wheel.md
@@ -171,15 +172,41 @@ nav:
     - "palette.py": cluster/palette.md
     - "prep.py": cluster/prep.md
     - "tools.py": cluster/tools.md
+- AI Assistant:
+    - Overview: ai/index.md
+    - "acquisition.py": ai/acquisition.md
+    - "analysis.py": ai/analysis.md
+    - "attachments.py": ai/attachments.md
+    - "benchmark.py": ai/benchmark.md
+    - "crust.py": ai/crust.md
+    - "data.py": ai/data.md
+    - "dialog.py": ai/dialog.md
+    - "exploration.py": ai/exploration.md
+    - "figures.py": ai/figures.md
+    - "memory.py": ai/memory.md
+    - "node.py": ai/node.md
+    - "prompts.py": ai/prompts.md
+    - "report.py": ai/report.md
+    - "sandbox.py": ai/sandbox.md
+    - "servers.py": ai/servers.md
+    - "settings.py": ai/settings.md
+    - "streaming.py": ai/streaming.md
+    - "synthetic.py": ai/synthetic.md
+    - "theme.py": ai/theme.md
+    - "training.py": ai/training.md
+    - "widgets.py": ai/widgets.md
 - Widgets & UI:
     - Overview: widgets_ui/index.md
     - "batch_parameters.py": widgets_ui/batch-parameters.md
     - "calibration_info.py": widgets_ui/calibration-info.md
+    - "canvas_layout.py": widgets_ui/canvas-layout.md
     - "drag_table.py": widgets_ui/drag-table.md
+    - "frozen_column.py": widgets_ui/frozen-column.md
     - "interference_database.py": widgets_ui/interference-database.md
     - "isobaric_correction_dialog.py": widgets_ui/isobaric-correction-dialog.md
     - "numeric_table.py": widgets_ui/numeric-table.md
     - "periodic_table_widget.py": widgets_ui/periodic-table-widget.md
+    - "theme_switch.py": widgets_ui/theme-switch.md
     - "help_dialogs.py": widgets_ui/help-dialogs.md
     - "tutorial.py": widgets_ui/tutorial.md
     - "element_picker.py": widgets_ui/element-picker.md
@@ -189,6 +216,8 @@ nav:
     - "signal_selector_dialog.py": widgets_ui/signal-selector-dialog.md
 - Tools & Utilities:
     - Overview: tools_utilities/index.md
+    - "bug_report_dialog.py": tools_utilities/bug-report-dialog.md
+    - "crash_reporting.py": tools_utilities/crash-reporting.md
     - "dilution_utils.py": tools_utilities/dilution-utils.md
     - "equations_reference.py": tools_utilities/equations-reference.md
     - "guide_content.py": tools_utilities/guide-content.md
@@ -207,6 +236,8 @@ nav:
     - "particle_classifier_expr.py": tools_utilities/particle-classifier-expr.md
     - "particle_classifier_node.py": tools_utilities/particle-classifier-node.md
     - "particle_classifier_relabel.py": tools_utilities/particle-classifier-relabel.md
+    - "particle_classifier_rules.py": tools_utilities/particle-classifier-rules.md
+    - "particle_classifier_simple_dialog.py": tools_utilities/particle-classifier-simple-dialog.md
     - "particle_filter.py": tools_utilities/particle-filter.md
     - "periodic_table_info.py": tools_utilities/periodic-table-info.md
     - "render_settings.py": tools_utilities/render-settings.md

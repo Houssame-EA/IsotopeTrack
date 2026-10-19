@@ -18,6 +18,7 @@ from processing.peak_detection import PeakDetection
 
 
 from calibration_methods.te_common import (
+    section_stylesheet,
     HISTOGRAM_COLORS,
     DETECTION_METHODS, DEFAULT_DETECTION_PARAMS,
     NumericDelegate,
@@ -164,22 +165,7 @@ class MassMethodWidget(QMainWindow):
     def apply_theme(self, *_):
         """Re-apply themed stylesheet; refresh plots and dynamic labels."""
         p = theme.palette
-        section_qss = f"""
-            QWidget#collapsibleHeader {{
-                background-color: {p.accent}18;
-                border-radius: 6px;
-                border-left: 3px solid {p.accent};
-            }}
-            QWidget#collapsibleHeader:hover {{ background-color: {p.accent}28; }}
-            QLabel#collapsibleArrow {{ color: {p.accent}; font-size: 10px; font-weight: bold; }}
-            QLabel#collapsibleTitle {{ color: {p.text_primary}; font-weight: 700; font-size: 13px; }}
-            QLabel#collapsibleStatus {{ color: {p.accent}; font-size: 11px; }}
-            QLabel#panelHeader {{
-                color: {p.text_primary}; font-weight: 700; font-size: 12px;
-                padding-bottom: 4px; border-bottom: 1px solid {p.accent}40;
-            }}
-        """
-        self.setStyleSheet(base_stylesheet(p) + section_qss)
+        self.setStyleSheet(base_stylesheet(p) + section_stylesheet(p))
         for attr in (
             "plot_widget", "regression_plot", "calibration_raw_plot",
             "diameter_distribution_plot",
@@ -209,9 +195,11 @@ class MassMethodWidget(QMainWindow):
         if button is None:
             return
         if modified:
+            if button.objectName() != "warningBtn":
+                button.setProperty("restingName", button.objectName())
             button.setObjectName("warningBtn")
         else:
-            button.setObjectName("")
+            button.setObjectName(button.property("restingName") or "")
         button.style().unpolish(button)
         button.style().polish(button)
 
@@ -386,6 +374,7 @@ class MassMethodWidget(QMainWindow):
         layout.addWidget(self.detection_params_table)
 
         self.detect_button = QPushButton("Detect Particles for All Samples")
+        self.detect_button.setObjectName("fbPrimary")
         self.detect_button.clicked.connect(self.detect_particles_all_samples)
         self.detect_button.setMinimumHeight(40)
         self.detect_button.setEnabled(False)
@@ -508,6 +497,7 @@ class MassMethodWidget(QMainWindow):
         layout.addWidget(self.regression_plot)
 
         self.calculate_button = QPushButton("Calculate Mass and Regression")
+        self.calculate_button.setObjectName("fbPrimary")
         self.calculate_button.clicked.connect(self.calculate_mass_and_regression)
         self.calculate_button.setMinimumHeight(40)
         layout.addWidget(self.calculate_button)
@@ -528,6 +518,7 @@ class MassMethodWidget(QMainWindow):
         layout.addWidget(self.transport_rate_table)
 
         calc_tr_btn = QPushButton("Calculate Transport Rate")
+        calc_tr_btn.setObjectName("fbPrimary")
         calc_tr_btn.clicked.connect(self.calculate_transport_rate)
         calc_tr_btn.setMinimumHeight(40)
         layout.addWidget(calc_tr_btn)
@@ -603,6 +594,7 @@ class MassMethodWidget(QMainWindow):
         layout.addLayout(method_row)
 
         calibrate_btn = QPushButton("Calculate Calibration")
+        calibrate_btn.setObjectName("fbPrimary")
         calibrate_btn.clicked.connect(self.calculate_calibration)
         calibrate_btn.setMinimumHeight(40)
         layout.addWidget(calibrate_btn)

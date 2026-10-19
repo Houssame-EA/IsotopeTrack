@@ -14,7 +14,7 @@ from __future__ import annotations
 import copy
 import re
 
-from PySide6.QtCore import QPointF, Qt, QTimer
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QMenu, QProgressBar, QPushButton, QScrollArea,
     QSplitter, QToolButton, QVBoxLayout, QWidget,
@@ -142,6 +142,61 @@ def _free_position(scene, preferred):
             return QPointF(x, y)
 
     return QPointF(start_x + 65 * _NODE_SLOT_W, start_y)
+
+
+def _item_box(scene, item) -> tuple[float, float, float, float]:
+    """The ``(left, top, right, bottom)`` of a node item, by the scene's own rule when it has one."""
+    if hasattr(scene, "node_box"):
+        return scene.node_box(item)
+    pos = item.pos()
+    left, top = float(pos.x()), float(pos.y())
+    width = float(getattr(item, "width", 0) or _NODE_SLOT_W)
+    height = float(getattr(item, "height", 0) or _NODE_SLOT_H)
+    return (left, top, left + width, top + height)
+
+
+def _place_branch(scene, nodes, source=None) -> None:
+    """Put a freshly added branch on the first free row beside its source.
+
+    The nodes, already on the canvas, are laid left to right in the column
+    right of *source*, on the first row nothing else uses, so branches stack
+    under each other beside their source and no link crosses another
+    branch. The branch is then selected and scrolled into view; the canvas
+    Arrange button re-centres the source on all its branches.
+
+    Args:
+        scene: The canvas scene.
+        nodes: Workflow nodes of the branch, left to right.
+        source: Workflow node the branch hangs off, or ``None``.
+    """
+    from widget.canvas_layout import branch_slot
+    items = [scene.node_items[n] for n in nodes if n in scene.node_items]
+    if not items:
+        return
+    boxes = [_item_box(scene, it) for n, it in scene.node_items.items() if n not in nodes]
+    src_item = scene.node_items.get(source) if source is not None else None
+    src_box = _item_box(scene, src_item) if src_item is not None else (
+        (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes),
+         min(b[1] for b in boxes)) if boxes else None)
+    own = [_item_box(scene, it) for it in items]
+    widths = [b[2] - b[0] for b in own]
+    height = max(b[3] - b[1] for b in own)
+    slots = branch_slot(src_box, widths, height, boxes, max_height=float('inf'))
+    for item, (x, y) in zip(items, slots):
+        item.setPos(QPointF(x, y))
+    if hasattr(scene, "fit_scene_rect"):
+        scene.fit_scene_rect()
+    try:
+        scene.clearSelection()
+        for item in items:
+            item.setSelected(True)
+        view = scene.views()[0]
+        lefts = [_item_box(scene, it) for it in items]
+        view.ensureVisible(QRectF(min(b[0] for b in lefts), min(b[1] for b in lefts),
+                                  max(b[2] for b in lefts) - min(b[0] for b in lefts),
+                                  max(b[3] for b in lefts) - min(b[1] for b in lefts)), 60, 60)
+    except Exception:
+        pass
 
 
 def _raw_pool_for(scene, parent_window) -> dict:
@@ -1558,25 +1613,21 @@ class SmartInsightsPanel(QWidget):
 
         selector = self._build_scoped_selector(s, _NODE_FACTORIES, narrow_elements)
         source = selector or _find_source_node(scene)
-
-        anchor = QPointF(300, 200)
-        if source is not None:
-            item = scene.node_items.get(source)
-            if item is not None:
-                anchor = QPointF(item.pos().x() + _NODE_SLOT_W,
-                                 item.pos().y())
-
+        parked = QPointF(-1900, -1900)
+        branch = [plot_node]
+        anchor_node = source
         if selector is not None:
-            base = _free_position(scene, anchor)
-            scene.add_node(selector, base)
+            scene.add_node(selector, parked)
             upstream = _find_batch_node(scene)
             if upstream is not None:
                 scene.add_link(upstream, "output", selector, "input")
-            anchor = QPointF(base.x() + _NODE_SLOT_W, base.y())
+            branch = [selector, plot_node]
+            anchor_node = upstream
 
-        scene.add_node(plot_node, _free_position(scene, anchor))
+        scene.add_node(plot_node, parked)
         if source is not None and getattr(source, "_has_output", False):
             scene.add_link(source, "output", plot_node, "input")
+        _place_branch(scene, branch, anchor_node)
 
         if selector is not None:
             units = selection_units(s, self._scope)

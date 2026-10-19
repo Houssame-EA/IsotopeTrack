@@ -14,10 +14,20 @@ Reusable dialogs, tables, and UI widgets.
 
 **1** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **33** methods
 
+### [`canvas_layout.py`](canvas-layout.md)
+Automatic layout of the Workflow Builder canvas.
+
+**0** classes &nbsp;·&nbsp; **8** functions &nbsp;·&nbsp; **0** methods
+
 ### [`drag_table.py`](drag-table.md)
 
 
 **1** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **9** methods
+
+### [`frozen_column.py`](frozen-column.md)
+Keep the first columns of a table in place while it scrolls sideways.
+
+**2** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **11** methods
 
 ### [`interference_database.py`](interference-database.md)
 ICP-MS Interference Database for spICP-ToF-MS
@@ -37,7 +47,12 @@ Isobaric Correction dialog — calculator-style equation editor.
 ### [`periodic_table_widget.py`](periodic-table-widget.md)
 
 
-**4** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **59** methods
+**4** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **59** methods
+
+### [`theme_switch.py`](theme-switch.md)
+Sliding light/dark switch for window headers.
+
+**1** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **8** methods
 
 ### [`help_dialogs.py`](help-dialogs.md)
 

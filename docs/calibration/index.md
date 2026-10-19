@@ -32,9 +32,14 @@ Single source of truth for IsotopeTrack's calibration methods.
 ### [`ionic_CAL.py`](ionic-cal.md)
 
 
-**1** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **93** methods
+**1** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **116** methods
+
+### [`sensitivity_checks.py`](sensitivity-checks.md)
+Quality checks on an ionic calibration.
+
+**1** classes &nbsp;·&nbsp; **6** functions &nbsp;·&nbsp; **5** methods
 
 ### [`te_common.py`](te-common.md)
 
 
-**1** classes &nbsp;·&nbsp; **24** functions &nbsp;·&nbsp; **1** methods
+**1** classes &nbsp;·&nbsp; **28** functions &nbsp;·&nbsp; **1** methods

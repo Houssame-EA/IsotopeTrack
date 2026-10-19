@@ -274,6 +274,12 @@ def build_metadata(mw: MainWindow):
         'saturation_excluded_time_s': getattr(mw, 'saturation_excluded_time_s', {}),
     }
 
+    sia_manager = getattr(mw, 'sia_manager', None)
+    if sia_manager is not None and hasattr(sia_manager, 'export_state'):
+        sia_state = sia_manager.export_state()
+        if sia_state is not None:
+            metadata['sia_state'] = sia_state
+
     if hasattr(mw, 'canvas_results_dialog') and mw.canvas_results_dialog is not None:
         try:
             canvas = mw.canvas_results_dialog
@@ -587,6 +593,10 @@ def _restore_metadata(mw: MainWindow, metadata):
 
     if 'canvas_workflow' in metadata and metadata['canvas_workflow']:
         mw._pending_canvas_workflow = metadata['canvas_workflow']
+
+    sia_manager = getattr(mw, 'sia_manager', None)
+    if metadata.get('sia_state') and sia_manager is not None and hasattr(sia_manager, 'import_state'):
+        sia_manager.import_state(metadata['sia_state'])
 
 
 # ---------------------------------------------------------------------------
