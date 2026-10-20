@@ -406,7 +406,7 @@ def exploration_rules(max_turns):
 - Turn 1: start with a line "PLAN:" followed by 3 to 6 numbered hypotheses worth testing for the user's question. Take them from the FIRST LOOK leads when a screen is given, most surprising first, keeping those that bear on the question. Then ONE python block testing the first.
 - Hunt for what would surprise an analyst: molar ratios that differ between samples or are fixed, isotope ratios away from natural, element pairs whose ratio changes with particle size, element ratios far from the upper crust, combinations found in one sample only. Use molar_ratio, isotope_ratio, crust_ratio and element_correlation for these.
 - The screen is a lead, not a result: confirm each lead with your own test, then dig into it: which particles carry it, their sizes, which samples, whether it holds at every size. Skip what the screen lists as nothing unusual.
-- Look at outliers, time bursts or detection-limit truncation only when the question asks about them or about one element's unusual behaviour.
+- Look at outliers, time bursts or detection-limit truncation only when the question asks about them or about one element's unusual behaviour. When the FIRST LOOK lists a burst or outlier lead for the element the question asks about, test it.
 - Every later turn: one line naming the hypothesis you test, then ONE python block under 50 lines.
 - Show the evidence for each hypothesis as a figure you design for it, plus a short table of the key numbers.
 - In the code, call record_finding(claim, n=..., p=..., effect=...) whenever a result supports or rejects a hypothesis. Write the claim in plain words with its key numbers, and record negative results too.

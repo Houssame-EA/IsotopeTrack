@@ -764,10 +764,10 @@ class AIChatDialog(QDialog):
         self._busy("Exploring…")
         holder = {}
 
-        def screen(ds=self._ds):
+        def screen(ds=self._ds, question=question):
             """Compute the first look off the GUI thread."""
             try:
-                holder['look'] = first_look(ds)
+                holder['look'] = first_look(ds, question)
             except Exception:
                 _itk_log.exception("First look failed")
                 holder['look'] = ''

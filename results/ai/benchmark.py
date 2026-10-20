@@ -785,7 +785,7 @@ def _add_explore(add, S, s0, largest_ti, burst_sample, b0, b1, truth):
         'Fe burst': ([_name_pattern(burst_sample, S), r'\bbursts?\b|\bspikes?\b|\bsurges?\b|\bpeaks?\b|\bsudden|\btransient|\bepisod|\banomal'], ''),
         'Ag+Au sample': ([E['Ag'], E['Au'], _name_pattern(truth.alloy_sample, S)], ''),
         f'larger Ti in {largest_ti}': ([_name_pattern(largest_ti, S), E['Ti'],
-                                         r'larg|bigger|greater|higher|coarser'], ''),
+                                         r'larg|bigger|greater|higher|coarser|heav|massive'], ''),
         'Ag+Au real': ([E['Ag'], E['Au'], real], not_real),
     }
     forbidden = {'Ti+Fe called real': ([E['Ti'], E['Fe'],
@@ -1623,7 +1623,7 @@ def _ask_explore(question, ds, model, num_ctx):
                   category=question.category)
     t0 = time.time()
     st = ExplorationState(question=question.text, max_turns=question.max_turns)
-    st.messages = [{"role": "user", "content": first_exploration_message(question.text, first_look(ds))}]
+    st.messages = [{"role": "user", "content": first_exploration_message(question.text, first_look(ds, question.text))}]
     out.transcript = st.messages
     system = build_system_prompt(ds, num_ctx, 'explore', question.max_turns)
     summary = ''

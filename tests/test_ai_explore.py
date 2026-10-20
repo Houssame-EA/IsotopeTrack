@@ -9,7 +9,7 @@ import pytest
 
 from results.ai.data import Dataset
 from results.ai.exploration import (
-    MAX_EXPLORE_FIXES, ExplorationState, compact_messages, first_look,
+    MAX_EXPLORE_FIXES, ExplorationState, compact_messages, elements_named, first_look,
 )
 from results.ai.prompts import build_system_prompt
 from results.ai.sandbox import execute
@@ -60,6 +60,55 @@ def test_first_look_single_sample():
     text = first_look(ds)
     assert 'differs between samples' not in text and 'heavier in' not in text
     assert 'Ce/La molar ratio is tight in the sample' in text
+
+
+def _leads(text):
+    """The numbered lead lines of a first look."""
+    return [ln for ln in text.splitlines() if ln.strip()[:2] in {f'{i}.' for i in range(1, 10)}]
+
+
+@pytest.mark.parametrize('question, expected', [
+    ("Is there anything unusual about iron in this data?", ['Fe']),
+    ("Anything odd with 56Fe?", ['Fe']),
+    ("Look at Fe-56 and Fe56 over time", ['Fe']),
+    ("Tell me about lead", ['Pb']),
+    ("Compare Ce and La", ['Ce', 'La']),
+    ("Explore the dataset and tell me what is interesting.", []),
+    ("In River_A, is aluminum fine?", ['Al']),
+    ("Is there any uranium?", []),
+])
+def test_elements_named(planted, question, expected):
+    """Symbols, isotope labels and English names count; absent elements and English words do not."""
+    ds, _ = planted
+    assert elements_named(ds, question) == expected
+
+
+def test_first_look_screens_the_named_element(planted):
+    """A question about one element puts that element's time burst first."""
+    ds, truth = planted
+    smp, t0, t1 = truth.burst
+    for q in ("Is there anything unusual about iron in this data?", "Is Fe unusual?", "What about 56Fe?"):
+        lead = _leads(first_look(ds, q))[0].strip()
+        assert lead.startswith('1. 56Fe particles arrive in a burst in ' + smp)
+        start, end = (float(x) for x in lead.split(' from ')[1].split(' s:')[0].split(' to '))
+        assert t0 - 0.5 <= start <= t0 + 0.5 and t1 - 0.5 <= end <= t1 + 0.5
+
+
+def test_first_look_says_when_the_named_element_is_quiet(planted):
+    """A named element without bursts or outliers is listed as checked."""
+    ds, _ = planted
+    text = first_look(ds, "Is anything unusual with titanium?")
+    assert 'arrive in a burst' not in text
+    quiet = [ln for ln in text.splitlines() if ln.startswith('Checked, nothing unusual')][0]
+    assert '48Ti arrival in time (no bursts)' in quiet and '48Ti particle mass (no outliers)' in quiet
+
+
+@pytest.mark.parametrize('question', ["Explore the dataset and tell me what is interesting.",
+                                      "Do Fe and Ti occur together?"])
+def test_first_look_skips_bursts_for_open_and_pair_questions(planted, question):
+    """Open questions and questions about several elements are screened as before."""
+    ds, _ = planted
+    assert first_look(ds, question) == first_look(ds)
 
 
 def test_fix_does_not_use_a_turn():
@@ -310,6 +359,35 @@ def test_benchmark_explore_does_not_rerun_repeated_code(planted):
     out = _ask_explore(q, ds, model, 16384)
     assert out.attempts == 1
     assert any(m.startswith('[REPEATED CODE] This is the same code you ran in turn 1') for m in sent)
+
+
+def test_benchmark_iron_question_gets_the_burst_lead(planted):
+    """The benchmark passes the question to the first look."""
+    from results.ai.benchmark import _ask_explore, build_questions
+    ds, truth = planted
+    dc, _, _ = make_dataset(seed=11)
+    q = next(x for x in build_questions('rivers', dc, truth) if x.qid.endswith('explore_iron'))
+    sent = []
+
+    def model(messages, system):
+        """Stop at once and keep what was sent."""
+        sent.append(messages[-1]['content'])
+        return "EXPLORATION DONE"
+    _ask_explore(q, ds, model, 16384)
+    assert f"56Fe particles arrive in a burst in {truth.burst[0]}" in sent[0]
+
+
+@pytest.mark.parametrize('text', ["Ti is 3.3x heavier in Spiked_C (median 1.86 fg vs 0.558 fg in River_A).",
+                                  "Spiked_C carries larger Ti particles than River_A.",
+                                  "Ti particles in Spiked_C are more massive."])
+def test_explore_compare_accepts_heavier(planted, text):
+    """Heavier and more massive Ti count as the larger-Ti finding."""
+    from results.ai.benchmark import build_questions, score_exploration
+    _, truth = planted
+    dc, _, _ = make_dataset(seed=11)
+    q = next(x for x in build_questions('rivers', dc, truth) if x.qid.endswith('explore_compare'))
+    assert score_exploration(q, text)[0]
+    assert not score_exploration(q, "Ti is the same in both samples.")[0]
 
 
 def test_rules_for_p_values_and_truncation(planted):

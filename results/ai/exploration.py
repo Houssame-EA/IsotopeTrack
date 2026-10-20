@@ -20,6 +20,24 @@ MAX_REPEATS = 2
 """Times the model may send code it already ran before the exploration ends."""
 KEEP_FULL_TURNS = 2
 
+ELEMENT_NAMES = dict(pair.split(':') for pair in (
+    'H:hydrogen He:helium Li:lithium Be:beryllium B:boron C:carbon N:nitrogen O:oxygen F:fluorine '
+    'Ne:neon Na:sodium Mg:magnesium Al:aluminium Si:silicon P:phosphorus S:sulfur Cl:chlorine Ar:argon '
+    'K:potassium Ca:calcium Sc:scandium Ti:titanium V:vanadium Cr:chromium Mn:manganese Fe:iron '
+    'Co:cobalt Ni:nickel Cu:copper Zn:zinc Ga:gallium Ge:germanium As:arsenic Se:selenium Br:bromine '
+    'Kr:krypton Rb:rubidium Sr:strontium Y:yttrium Zr:zirconium Nb:niobium Mo:molybdenum '
+    'Tc:technetium Ru:ruthenium Rh:rhodium Pd:palladium Ag:silver Cd:cadmium In:indium Sn:tin '
+    'Sb:antimony Te:tellurium I:iodine Xe:xenon Cs:caesium Ba:barium La:lanthanum Ce:cerium '
+    'Pr:praseodymium Nd:neodymium Pm:promethium Sm:samarium Eu:europium Gd:gadolinium Tb:terbium '
+    'Dy:dysprosium Ho:holmium Er:erbium Tm:thulium Yb:ytterbium Lu:lutetium Hf:hafnium Ta:tantalum '
+    'W:tungsten Re:rhenium Os:osmium Ir:iridium Pt:platinum Au:gold Hg:mercury Tl:thallium Pb:lead '
+    'Bi:bismuth Po:polonium At:astatine Rn:radon Fr:francium Ra:radium Ac:actinium Th:thorium '
+    'Pa:protactinium U:uranium Np:neptunium Pu:plutonium Am:americium').split())
+"""English element names by symbol, for questions that name an element in words."""
+ELEMENT_NAME_VARIANTS = {'aluminum': 'Al', 'cesium': 'Cs', 'sulphur': 'S', 'wolfram': 'W'}
+WORD_SYMBOLS = frozenset({'I', 'In', 'As', 'At', 'Be', 'He', 'No', 'Am'})
+"""Symbols that are also English words; written alone they count only inside a sentence."""
+
 DONE_RE = re.compile(r'^\s*\**\s*EXPLORATION\s+DONE\b', re.IGNORECASE | re.MULTILINE)
 _PLAN_RE = re.compile(r'PLAN\s*:\s*(.*?)(?:```|\Z)', re.IGNORECASE | re.DOTALL)
 _ITEM_RE = re.compile(r'^\s*(?:\d+[.)]|[-*•])\s+(.+?)\s*$', re.MULTILINE)
@@ -596,7 +614,108 @@ def _mass_leads(ds):
     return leads, quiet
 
 
-def first_look(ds, max_items=7):
+def elements_named(ds, question):
+    """The dataset's elements that a question names.
+
+    An element counts when the question writes its isotope label
+    (``56Fe``, ``Fe56``, ``Fe-56``), its symbol with the exact case
+    (``Fe``) or its English name in any case (``iron``). Symbols that are
+    also English words (``In``, ``As``, ``I``...) count alone only when they
+    do not open a sentence, and ``I`` never counts alone.
+
+    Args:
+        ds (Dataset): The dataset.
+        question (str): The user's question.
+
+    Returns:
+        list: Element symbols, in the dataset's order, each listed once.
+    """
+    text = str(question or '')
+    present = {}
+    for lab in ds.elements:
+        present.setdefault(element_symbol(lab), lab)
+    if not text or not present:
+        return []
+    found = set()
+    for mass, sym in re.findall(r'(?<![A-Za-z\d])(\d{1,3})\s?-?([A-Z][a-z]?)(?![a-z])', text):
+        found.add(sym)
+    for sym, mass in re.findall(r'(?<![A-Za-z\d])([A-Z][a-z]?)-?(\d{1,3})(?![\d])', text):
+        found.add(sym)
+    for m in re.finditer(r'(?<![A-Za-z\d])([A-Z][a-z]?)(?![A-Za-z\d])', text):
+        sym = m.group(1)
+        if sym in WORD_SYMBOLS:
+            before = text[:m.start()].rstrip()
+            if sym == 'I' or not before or before[-1] in '.!?:;':
+                continue
+        found.add(sym)
+    words = {name: sym for sym, name in ELEMENT_NAMES.items()}
+    words.update(ELEMENT_NAME_VARIANTS)
+    for word in re.findall(r'[A-Za-z]+', text.lower()):
+        if word in words:
+            found.add(words[word])
+    return [sym for sym in present if sym in found]
+
+
+def _burst_stretches(table):
+    """Join flagged time bins that touch into stretches, one row per stretch."""
+    out = []
+    for run, g in table.sort_values(['run', 't_from']).groupby('run', sort=False):
+        cur = None
+        for _, r in g.iterrows():
+            width = r['t_to'] - r['t_from']
+            if cur and r['t_from'] - cur['t_to'] <= 0.01 * width:
+                cur['t_to'] = r['t_to']
+                cur['count'] += int(r['count'])
+                cur['expected'] += float(r['expected'])
+                cur['p'] = min(cur['p'], float(r['p']))
+            else:
+                cur = {'run': run, 't_from': float(r['t_from']), 't_to': float(r['t_to']),
+                       'count': int(r['count']), 'expected': float(r['expected']), 'p': float(r['p'])}
+                out.append(cur)
+    return sorted(out, key=lambda c: -(c['count'] - c['expected']))
+
+
+def _element_leads(ds, label):
+    """Time bursts and outliers of one element, for a question about that element."""
+    from results.ai import analysis as A
+    leads, quiet = [], []
+    run_sample = dict(zip(ds.df['run'], ds.df['sample'])) if 'sample' in ds.df.columns else {}
+    try:
+        table = A.time_bursts(ds, label)
+        stretches = _burst_stretches(table) if len(table) else []
+    except Exception:
+        stretches = None
+    if stretches:
+        for c in stretches[:3]:
+            smp = run_sample.get(c['run'], c['run'])
+            where = smp if smp == c['run'] else f"run {c['run']} ({smp})"
+            leads.append((40 + min(c['count'] / max(c['expected'], 1.0), 50) / 5,
+                          f"{label} particles arrive in a burst in {where} from {_fmt(c['t_from'])} to "
+                          f"{_fmt(c['t_to'])} s: {c['count']} particles where about {_fmt(c['expected'])} are "
+                          f"expected (x{_fmt(c['count'] / max(c['expected'], 1e-9))}, p {_p(c['p'])}). "
+                          f"Contamination or a nebuliser spike?"))
+        if len(stretches) > 3:
+            leads.append((39, f"{label} has {len(stretches) - 3} smaller burst(s) in time as well."))
+    elif stretches is not None:
+        quiet.append(f"{label} arrival in time (no bursts)")
+    try:
+        out = A.find_outliers(ds, element=label)
+    except Exception:
+        out = None
+    col = f'mass_fg_{label}'
+    if out is not None and len(out) and col in ds.df.columns:
+        med = float(ds.df[col][ds.df[col] > 0].median())
+        by = out['sample'].value_counts()
+        top = out.iloc[0]
+        leads.append((38, f"{len(out)} {label} particle(s) lie far outside the usual mass range (robust z >= 5), "
+                          f"most in {by.index[0]} ({int(by.iloc[0])}); the most extreme is {_fmt(top['value'])} fg "
+                          f"against a median of {_fmt(med)} fg, in {top['sample']}."))
+    elif out is not None and col in ds.df.columns:
+        quiet.append(f"{label} particle mass (no outliers)")
+    return leads, quiet
+
+
+def first_look(ds, question='', max_items=7):
     """A silent deep screen of the data, given before the first turn.
 
     Looks for what would surprise an analyst: molar ratios that differ
@@ -605,10 +724,13 @@ def first_look(ds, max_items=7):
     away from natural, and, with low priority, large mass differences and
     missing elements. Only the leads are reported, most surprising first,
     with one line naming what was checked and found unremarkable. Bursts,
-    outliers and truncation are left to the user's questions.
+    outliers and truncation are left to the user's questions, except when
+    the question names exactly one element: that element's time bursts and
+    mass outliers are then screened too and lead the list.
 
     Args:
         ds (Dataset): The dataset.
+        question (str): The user's question, or empty.
         max_items (int): Most leads to report.
 
     Returns:
@@ -617,6 +739,12 @@ def first_look(ds, max_items=7):
     from results.ai import analysis as A
     multi = len(ds.samples) > 1
     leads, quiet = [], []
+    named = elements_named(ds, question)
+    if len(named) == 1:
+        label = next(lab for lab in ds.elements if element_symbol(lab) == named[0])
+        found, flat = _element_leads(ds, label)
+        leads.extend(found)
+        quiet.extend(flat)
     try:
         co = A.co_occurrence(ds)
         real = co[co['verdict'].str.contains('real', case=False)]
