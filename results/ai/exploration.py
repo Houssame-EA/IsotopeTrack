@@ -715,6 +715,54 @@ def _element_leads(ds, label):
     return leads, quiet
 
 
+def samples_named(ds, question):
+    """The dataset's samples that a question names.
+
+    A name matches in any case, with underscores, spaces and hyphens
+    interchangeable (``River_A``, ``river a``, ``River-A``).
+
+    Args:
+        ds (Dataset): The dataset.
+        question (str): The user's question.
+
+    Returns:
+        list: Sample names, in the dataset's order.
+    """
+    text = str(question or '')
+    found = []
+    for smp in ds.samples:
+        parts = [re.escape(x) for x in re.split(r'[_\s-]+', str(smp)) if x]
+        if parts and re.search(r'(?<![A-Za-z\d])' + r'[_\s-]?'.join(parts) + r'(?![A-Za-z\d])', text, re.I):
+            found.append(smp)
+    return found
+
+
+def _focus_on_samples(leads, named, others):
+    """Order leads for a question about some samples.
+
+    Leads naming more of the asked samples come first, keeping the screen's
+    order within each group; leads that name only other samples are dropped.
+
+    Args:
+        leads (list): ``(priority, text)`` pairs.
+        named (list): Samples the question names.
+        others (list): The dataset's other samples.
+
+    Returns:
+        list: The kept leads, most relevant first.
+    """
+    def mentions(text, smp):
+        return re.search(r'(?<![A-Za-z\d])' + re.escape(smp) + r'(?![A-Za-z\d])', text) is not None
+    kept = []
+    for prio, text in leads:
+        hits = sum(mentions(text, smp) for smp in named)
+        if not hits and any(mentions(text, smp) for smp in others):
+            continue
+        kept.append((hits, prio, text))
+    kept.sort(key=lambda t: (-t[0], -t[1]))
+    return [(prio, text) for _, prio, text in kept]
+
+
 def first_look(ds, question='', max_items=7):
     """A silent deep screen of the data, given before the first turn.
 
@@ -726,7 +774,9 @@ def first_look(ds, question='', max_items=7):
     with one line naming what was checked and found unremarkable. Bursts,
     outliers and truncation are left to the user's questions, except when
     the question names exactly one element: that element's time bursts and
-    mass outliers are then screened too and lead the list.
+    mass outliers are then screened too and lead the list. When the question
+    names samples, the leads about those samples come first and leads about
+    other samples only are left out.
 
     Args:
         ds (Dataset): The dataset.
@@ -780,6 +830,9 @@ def first_look(ds, question='', max_items=7):
     if not leads and not quiet:
         return ''
     leads.sort(key=lambda t: -t[0])
+    named_samples = samples_named(ds, question) if multi else []
+    if named_samples:
+        leads = _focus_on_samples(leads, named_samples, [x for x in ds.samples if x not in named_samples])
     lines = ["FIRST LOOK (an automatic screen, most surprising first; confirm each lead with your own "
              "tests and dig into it):"]
     if leads:

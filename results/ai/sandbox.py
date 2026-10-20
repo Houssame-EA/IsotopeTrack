@@ -548,6 +548,43 @@ def build_namespace(ds, collector, tables, findings):
     return ns
 
 
+NAN_ON_CATEGORY = ("a point has no value (NaN, not detected) on a category axis, such as a sample "
+                   "without that element. Leave out the samples with no value, or use .dropna(), "
+                   "before plotting.")
+"""What the model is told when matplotlib cannot place a NaN point on a text axis."""
+
+
+def _nan_on_category(fig):
+    """Whether a figure puts a NaN point on a category (text) axis.
+
+    Matplotlib cannot draw such a point and fails with an unhelpful
+    ``ConversionError``, or a ``TypeError`` about ``bbox`` and ``renderer``
+    when the axes also carry a legend.
+
+    Args:
+        fig (matplotlib.figure.Figure): The figure that failed to draw.
+
+    Returns:
+        bool: True when an axis is categorical and a scatter on it has a
+        missing coordinate.
+    """
+    from matplotlib.category import StrCategoryConverter
+    for ax in fig.axes:
+        conv = [a.get_converter() if hasattr(a, 'get_converter') else a.converter for a in (ax.xaxis, ax.yaxis)]
+        if not any(isinstance(c, StrCategoryConverter) for c in conv):
+            continue
+        for coll in ax.collections:
+            offs = coll.get_offsets()
+            if np.ma.is_masked(offs):
+                return True
+            try:
+                if np.isnan(np.asarray(offs, dtype=float)).any():
+                    return True
+            except (TypeError, ValueError):
+                continue
+    return False
+
+
 def _has_content(fig):
     """Whether any panel of a figure has something drawn on it."""
     return any(_axis_has_content(ax) for ax in fig.axes)
@@ -602,7 +639,8 @@ def _finish_figures(collector, result):
             desc, warns = describe_figure(fig, i)
         except Exception as e:
             _itk_log.warning("Figure %d failed to draw: %s: %s", i, type(e).__name__, e)
-            result.error = result.error or f"Figure {i} could not be drawn — {type(e).__name__}: {e}"
+            why = NAN_ON_CATEGORY if _nan_on_category(fig) else f"{type(e).__name__}: {e}"
+            result.error = result.error or f"Figure {i} could not be drawn — {why}"
             continue
         title = fig._suptitle.get_text() if getattr(fig, '_suptitle', None) else ''
         if not title:

@@ -9,10 +9,10 @@ import pytest
 
 from results.ai.data import Dataset
 from results.ai.exploration import (
-    MAX_EXPLORE_FIXES, ExplorationState, compact_messages, elements_named, first_look,
+    MAX_EXPLORE_FIXES, ExplorationState, compact_messages, elements_named, first_look, samples_named,
 )
 from results.ai.prompts import build_system_prompt
-from results.ai.sandbox import execute
+from results.ai.sandbox import NAN_ON_CATEGORY, execute
 from results.ai.synthetic import make_dataset
 from results.ai.theme import strip_thinking
 
@@ -109,6 +109,28 @@ def test_first_look_skips_bursts_for_open_and_pair_questions(planted, question):
     """Open questions and questions about several elements are screened as before."""
     ds, _ = planted
     assert first_look(ds, question) == first_look(ds)
+
+
+@pytest.mark.parametrize('question, expected', [
+    ("Compare River_A and Spiked_C.", ['River_A', 'Spiked_C']),
+    ("compare river a with spiked-c", ['River_A', 'Spiked_C']),
+    ("What is special about Spiked_C?", ['Spiked_C']),
+    ("Explore the dataset and tell me what is interesting.", []),
+])
+def test_samples_named(planted, question, expected):
+    """Sample names match in any case, with underscores, spaces or hyphens."""
+    ds, _ = planted
+    assert samples_named(ds, question) == expected
+
+
+def test_first_look_puts_the_compared_samples_first(planted):
+    """A comparison question gets the leads about both samples first and none about other samples only."""
+    ds, _ = planted
+    leads = [ln.strip() for ln in _leads(first_look(ds, "Compare River_A and Spiked_C."))]
+    both = [ln for ln in leads if 'River_A' in ln and 'Spiked_C' in ln]
+    assert leads[:len(both)] == both
+    assert any('48Ti particles are heavier in Spiked_C' in ln for ln in leads[:3])
+    assert all('River_A' in ln or 'Spiked_C' in ln for ln in leads)
 
 
 def test_fix_does_not_use_a_turn():
@@ -388,6 +410,18 @@ def test_explore_compare_accepts_heavier(planted, text):
     q = next(x for x in build_questions('rivers', dc, truth) if x.qid.endswith('explore_compare'))
     assert score_exploration(q, text)[0]
     assert not score_exploration(q, "Ti is the same in both samples.")[0]
+
+
+@pytest.mark.parametrize('legend', [True, False])
+def test_nan_on_a_category_axis_gets_a_clear_error(planted, legend):
+    """A NaN point on a text axis is explained instead of matplotlib's internal error."""
+    ds, _ = planted
+    code = ("fig, ax = plt.subplots()\n"
+            "ax.scatter(['River_A'], [1.0], label='River_A')\n"
+            "ax.scatter(['Spiked_C'], [float('nan')], label='Spiked_C')\n"
+            "ax.set_ylabel('Ce/La')\n" + ("ax.legend()\n" if legend else ""))
+    res = execute(code, ds)
+    assert res.error == f"Figure 1 could not be drawn — {NAN_ON_CATEGORY}"
 
 
 def test_rules_for_p_values_and_truncation(planted):
