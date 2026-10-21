@@ -759,6 +759,21 @@ def execute(code, ds, timeout=CODE_EXEC_TIMEOUT, stop_event=None):
     return result
 
 
+def output_numbers(result):
+    """Numbers the code printed or put in tables, without those of its findings.
+
+    Args:
+        result (ExecResult): A run.
+
+    Returns:
+        list: Floats.
+    """
+    nums = floats_in_text(result.text)
+    for t in result.tables:
+        nums.extend(_numbers_in_table(t))
+    return nums
+
+
 def compact_table(tbl, max_rows=15):
     """Plain-text rendering of a result table for the model.
 

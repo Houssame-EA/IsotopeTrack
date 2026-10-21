@@ -410,7 +410,8 @@ def exploration_rules(max_turns):
 - Every later turn: one line naming the hypothesis you test, then ONE python block under 50 lines.
 - Show the evidence for each hypothesis as a figure you design for it, plus a short table of the key numbers.
 - In the code, call record_finding(claim, n=..., p=..., effect=...) whenever a result supports or rejects a hypothesis. Write the claim in plain words with its key numbers, and record negative results too.
-- p is the p-value of the test behind the finding, e.g. the smallest p or p_adj in the table you used; p=None for a descriptive finding with no test. Never pass p=1.0 as a placeholder: a finding with p >= 0.05 is listed as not supported.
+- A finding's numbers must come from a result you have seen. For the test in this block, build the claim from the computed values with an f-string; findings about an earlier turn's result, typed by hand, go at the top of the block. Never type a number you have not been shown.
+- p is the p-value of the test behind the finding, e.g. the smallest p or p_adj in the table you used; p=None for a descriptive finding with no test. Never pass p=1.0 or p=1e-300 as a placeholder: a finding with p >= 0.05 is listed as not supported.
 - After each turn you see the results and the findings so far. Do not repeat a test you already ran.
 - If your code fails you get the error back; fixing it does not use a turn.
 - When the plan is covered or nothing new appears, reply with the line EXPLORATION DONE and no code."""

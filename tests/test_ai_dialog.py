@@ -131,7 +131,7 @@ def test_explore_runs_after_a_question(dialog):
         "No code needed: spICP-ToF-MS measures single particles.",
         "PLAN:\n1. Ce+La is real\n2. Ti+Fe is chance\nTesting 1.\n```python\n"
         "c = coincidence('Ce', 'La')\nshow_table(c)\n"
-        "record_finding('Ce+La far above chance', n=int(c['observed_both'].iloc[-1]), p=1e-20, effect=100)\n```",
+        "record_finding('Ce+La far above chance', n=int(c['observed_both'].iloc[-1]), p=float(c['p'].iloc[-1]), effect=100)\n```",
         "Testing 2.\n```python\nt = coincidence('Ti', 'Fe')\n"
         "record_finding('Ti+Fe explained by chance', p=float(t['p'].iloc[-1]))\n```",
         "EXPLORATION DONE",
@@ -159,7 +159,7 @@ def test_explore_fixes_failed_code_without_using_a_turn(dialog):
     ScriptedWorker.script += [
         "PLAN:\n1. Ce+La is real\nTesting 1.\n```python\nprint(df['nope'])\n```",
         "Fixed.\n```python\nc = coincidence('Ce', 'La')\n"
-        "record_finding('Ce+La far above chance', p=1e-20)\n```",
+        "record_finding('Ce+La far above chance', p=float(c['p'].iloc[-1]))\n```",
         "EXPLORATION DONE",
         "**Supported**\n- Ce+La far above chance.",
     ]
@@ -384,7 +384,7 @@ def test_stopped_exploration_keeps_its_findings(dialog):
     """Stopping after a turn keeps the findings in the export and the history."""
     ScriptedWorker.script += [
         "PLAN:\n1. Ce+La is real\nTesting 1.\n```python\nc = coincidence('Ce', 'La')\n"
-        "record_finding('Ce+La far above chance', p=1e-20)\n```",
+        "record_finding('Ce+La far above chance', p=float(c['p'].iloc[-1]))\n```",
     ]
     dialog._cfg['explore_max_turns'] = 4
     dialog._explore()
@@ -405,7 +405,7 @@ def test_explore_shows_only_the_fixed_attempt(dialog):
     """A turn whose first attempt failed shows one step, the fixed one."""
     ScriptedWorker.script += [
         "PLAN:\n1. Ce+La is real\nTesting 1.\n```python\nfig, ax = plt.subplots()\nax.plot([1, 2])\nprint(df['nope'])\n```",
-        "Fixed.\n```python\nc = coincidence('Ce', 'La')\nrecord_finding('Ce+La far above chance', p=1e-20)\n```",
+        "Fixed.\n```python\nc = coincidence('Ce', 'La')\nrecord_finding('Ce+La far above chance', p=float(c['p'].iloc[-1]))\n```",
         "EXPLORATION DONE",
         "**Supported**\n- Ce+La far above chance.",
     ]

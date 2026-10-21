@@ -7,6 +7,7 @@ and the final summary is written from this record rather than from memory.
 """
 from __future__ import annotations
 
+import ast
 import itertools
 import math
 import re
@@ -37,6 +38,21 @@ ELEMENT_NAMES = dict(pair.split(':') for pair in (
 ELEMENT_NAME_VARIANTS = {'aluminum': 'Al', 'cesium': 'Cs', 'sulphur': 'S', 'wolfram': 'W'}
 WORD_SYMBOLS = frozenset({'I', 'In', 'As', 'At', 'Be', 'He', 'No', 'Am'})
 """Symbols that are also English words; written alone they count only inside a sentence."""
+
+TYPED_NUMBER_RE = re.compile(r'(?<![\w.%])\d+\.\d+|(?<![\w.%])\d+(?:\.\d+)?[eE][-+]?\d+')
+"""A decimal or scientific number written into the code by hand."""
+FOLD_RE = re.compile(r'[-+]?\d[\d.,]*(?:[eE][-+]?\d+)?\s*(?:x|×|-?fold)(?![A-Za-z])', re.IGNORECASE)
+"""Fold changes such as ``35.8x``, which the model derives from two results."""
+PREMATURE_FINDING = (
+    "record_finding on line {line} types numbers by hand after this block computes a new result, so "
+    "they cannot come from that result: you have not seen it yet. Build the claim from the computed "
+    "values with an f-string, e.g. f\"median {{res['median_ratio'].iloc[0]:.3g}}\", and pass p from the "
+    "table, or record the finding next turn once you have seen the result. A finding about an earlier "
+    "turn's result goes at the top of the block, before any new code.")
+UNBACKED_FINDING = (
+    "record_finding quotes {numbers}, which no result you have seen contains. Quote the numbers of the "
+    "tables you were shown, or compute them in the code; pass p from the test you ran, and p=None for a "
+    "descriptive finding with no test.")
 
 DONE_RE = re.compile(r'^\s*\**\s*EXPLORATION\s+DONE\b', re.IGNORECASE | re.MULTILINE)
 _PLAN_RE = re.compile(r'PLAN\s*:\s*(.*?)(?:```|\Z)', re.IGNORECASE | re.DOTALL)
@@ -163,6 +179,95 @@ class FindingsLedger:
         return out
 
 
+def _is_record_call(node):
+    """Whether an AST node calls ``record_finding``."""
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == 'record_finding')
+
+
+def _typed_numbers(call):
+    """Whether a ``record_finding`` call holds numbers written by hand.
+
+    A float literal (``p=1e-300``) or a decimal inside a string literal
+    (``'median 0.18'``) counts; values inside the braces of an f-string are
+    computed, and whole numbers such as isotope masses or ``95%`` are ignored.
+
+    Args:
+        call (ast.Call): The call.
+
+    Returns:
+        bool: True when a hand-written number is found.
+    """
+    def walk(node):
+        if isinstance(node, ast.FormattedValue):
+            return False
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, float):
+                return True
+            return isinstance(node.value, str) and bool(TYPED_NUMBER_RE.search(node.value))
+        return any(walk(child) for child in ast.iter_child_nodes(node))
+    return any(walk(a) for a in list(call.args) + [k.value for k in call.keywords])
+
+
+def finding_layout(code):
+    """Where a turn's code records its findings.
+
+    Findings typed by hand may only describe results the model has already
+    seen, so they belong before any new computation in the block. One that
+    comes after it was written before its result existed.
+
+    Args:
+        code (str): One turn's code.
+
+    Returns:
+        tuple: ``(leading, premature)``: how many ``record_finding`` calls
+        open the block before any other code, and the lines where a call
+        with hand-written numbers follows new code. ``(0, [])`` when the
+        code does not parse.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return 0, []
+    leading, lines, at_top = 0, [], True
+    for stmt in tree.body:
+        if at_top and isinstance(stmt, ast.Expr) and _is_record_call(stmt.value):
+            leading += 1
+            continue
+        at_top = False
+        lines.extend(node.lineno for node in ast.walk(stmt) if _is_record_call(node) and _typed_numbers(node))
+    return leading, sorted(lines)
+
+
+def premature_finding_lines(code):
+    """Lines where a finding with hand-written numbers follows new code, see :func:`finding_layout`."""
+    return finding_layout(code)[1]
+
+
+def unbacked_numbers(finding, pool):
+    """Numbers in a finding that no result the model saw contains.
+
+    Fold changes (``35.8x``) are left out, since they are derived from two
+    results rather than read from one.
+
+    Args:
+        finding (dict): ``claim``, ``p``, ``effect`` and ``evidence``.
+        pool (list): Every number the model has been shown.
+
+    Returns:
+        list: The unbacked numbers as written.
+    """
+    from results.ai.sandbox import to_float, unverified_numbers
+    text = ' '.join(str(finding.get(k) or '') for k in ('claim', 'effect', 'evidence'))
+    bad = unverified_numbers(FOLD_RE.sub(' ', text), pool)
+    p = to_float(finding.get('p'))
+    if p is not None and math.isfinite(p) and not any(
+            a is not None and math.isfinite(a) and abs(a - p) <= 0.006 * max(abs(a), abs(p))
+            for a in pool):
+        bad.append(f"p={finding.get('p')}")
+    return bad
+
+
 def parse_plan(text):
     """Pull the numbered hypotheses out of a ``PLAN:`` section.
 
@@ -227,6 +332,46 @@ class ExplorationState:
     def plan_text(self):
         """The plan as a numbered list."""
         return '\n'.join(f"{i}. {h}" for i, h in enumerate(self.plan, start=1))
+
+    def seen_numbers(self):
+        """Every number in the messages the model has been sent so far."""
+        from results.ai.sandbox import floats_in_text
+        nums = []
+        for m in self.messages:
+            if m.get('role') == 'user':
+                nums.extend(floats_in_text(m.get('content', '')))
+        return nums
+
+    def vet_findings(self, code, result):
+        """Refuse findings whose numbers do not come from a result the model has seen.
+
+        A finding typed by hand after new code, or one typed at the top of
+        the block that quotes a number no result shown so far holds, sets
+        ``result.error`` so the turn is
+        sent back for a fix that does not use a turn, and the turn's findings
+        are dropped; the fixed code records them again.
+
+        Args:
+            code (str): The turn's code.
+            result (ExecResult): Its run, changed in place.
+
+        Returns:
+            str: The problem told to the model, empty when the findings are fine.
+        """
+        from results.ai.sandbox import output_numbers
+        if result.error or not result.findings:
+            return ''
+        leading, lines = finding_layout(code)
+        if lines:
+            problem = PREMATURE_FINDING.format(line=lines[0])
+        else:
+            pool = self.seen_numbers() + output_numbers(result)
+            bad = [n for f in result.findings[:leading] for n in unbacked_numbers(f, pool)]
+            problem = UNBACKED_FINDING.format(numbers=', '.join(dict.fromkeys(bad))) if bad else ''
+        if problem:
+            result.findings = []
+            result.error = problem
+        return problem
 
     def begin_turn(self):
         """Start the next request: a fix of the current turn or a new turn.

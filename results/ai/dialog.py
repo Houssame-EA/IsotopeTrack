@@ -856,6 +856,7 @@ class AIChatDialog(QDialog):
         self._hold_focus()
         st = self._exp
         code, res = results[0]
+        st.vet_findings(code, res)
         st.ledger.add(res.findings, st.turn)
         st.numbers.extend(res.numbers)
         action = st.after_code(res.error, done)
