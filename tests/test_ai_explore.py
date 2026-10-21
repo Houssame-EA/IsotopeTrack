@@ -12,7 +12,7 @@ from results.ai.exploration import (
     MAX_EXPLORE_FIXES, ExplorationState, compact_messages, elements_named, first_look, premature_finding_lines,
     samples_named, unbacked_numbers,
 )
-from results.ai.prompts import build_system_prompt
+from results.ai.prompts import NO_TOOLS, build_system_prompt
 from results.ai.sandbox import NAN_ON_CATEGORY, execute
 from results.ai.synthetic import make_dataset
 from results.ai.theme import strip_thinking
@@ -526,6 +526,14 @@ def test_benchmark_explore_with_a_test_passes(planted):
         return next(replies)
     out = _ask_explore(q, ds, model, 16384)
     assert out.passed, out.detail
+
+
+@pytest.mark.parametrize('mode', ['chat', 'explore'])
+def test_system_prompt_ends_by_saying_there_are_no_tools(planted, mode):
+    """Models trained as agents are told to write the code instead of calling a tool."""
+    ds, _ = planted
+    prompt = build_system_prompt(ds, 16384, mode, 10)
+    assert prompt.endswith(NO_TOOLS) and prompt.count('You have no tools') == 1
 
 
 def test_rules_for_p_values_and_truncation(planted):

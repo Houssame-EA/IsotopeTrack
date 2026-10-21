@@ -366,6 +366,12 @@ def _functions_block(compact=False):
     return '\n'.join(lines)
 
 
+NO_TOOLS = ("You have no tools: do not call bash, python or any other function. "
+            "Write your answer as text, with the code in ONE ```python block; the app runs it for you.")
+"""Last line of the system prompt. Agent-trained models otherwise answer with a call to a tool that
+does not exist here and leave the reply empty."""
+
+
 def build_system_prompt(ds, num_ctx=8192, mode='chat', max_turns=10, mass_basis='element'):
     """Assemble the system prompt.
 
@@ -390,6 +396,7 @@ def build_system_prompt(ds, num_ctx=8192, mode='chat', max_turns=10, mass_basis=
     if mode == 'explore':
         parts.append(exploration_rules(max_turns))
     parts.append(dataset_brief(ds, compact, mass_basis))
+    parts.append(NO_TOOLS)
     return '\n\n'.join(parts)
 
 
