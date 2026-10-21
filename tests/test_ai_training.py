@@ -12,6 +12,7 @@ import pytest
 
 from results.ai.benchmark import reference_model
 from results.ai.training import (
+    drop_empty_retries,
     HELDOUT_TEMPLATES, build, generate, keep_calls, random_spec, training_questions,
 )
 
@@ -139,3 +140,16 @@ def test_http_errors_carry_the_server_message():
     with pytest.raises(RuntimeError) as err:
         _raise_for_status(R())
     assert 'model runner has unexpectedly stopped' in str(err.value) and is_backend_error(str(err.value))
+
+
+def test_drop_empty_retries():
+    """An empty reply and the request to answer again are left out of the history."""
+    from results.ai.prompts import EMPTY_PREFIX
+    msgs = [{'role': 'system', 'content': 'sys'},
+            {'role': 'user', 'content': 'How many particles?'},
+            {'role': 'assistant', 'content': ''},
+            {'role': 'user', 'content': EMPTY_PREFIX + ' Your reply was empty.'},
+            {'role': 'assistant', 'content': 'Counting.\n```python\nprint(len(df))\n```'}]
+    assert drop_empty_retries(msgs) == [msgs[0], msgs[1], msgs[4]]
+    kept = msgs[:2] + [{'role': 'assistant', 'content': 'Counting.'}]
+    assert drop_empty_retries(kept) == kept

@@ -400,11 +400,39 @@ lora_parameters:
 """
 
 
+def drop_empty_retries(messages):
+    """Remove empty replies and the request that asked for them again.
+
+    Some teachers answer the first question with a call to a tool that does
+    not exist, which leaves the reply empty; the conversation then asks again.
+    The good reply that follows answers the original question, so the empty
+    exchange is left out of the training history.
+
+    Args:
+        messages (list): Chat messages of one example.
+
+    Returns:
+        list: The messages without those pairs.
+    """
+    out, i = [], 0
+    while i < len(messages):
+        m = messages[i]
+        nxt = messages[i + 1] if i + 1 < len(messages) else None
+        if (m.get('role') == 'assistant' and not str(m.get('content') or '').strip() and nxt is not None
+                and nxt.get('role') == 'user' and str(nxt.get('content', '')).startswith(EMPTY_PREFIX)):
+            i += 2
+            continue
+        out.append(m)
+        i += 1
+    return out
+
+
 def build(out_dir, model='mlx-community/Qwen3.5-9B-MLX-4bit', epochs=2, max_len=12288, valid_every=8):
     """Split the examples into training and validation files and write the LoRA config.
 
     Whole datasets go to validation, never single replies, so validation
-    measures questions on data the model did not train on.
+    measures questions on data the model did not train on. Empty replies
+    and their retry requests are left out, see :func:`drop_empty_retries`.
 
     Args:
         out_dir (str): Folder holding ``examples.jsonl``.
@@ -443,7 +471,7 @@ def build(out_dir, model='mlx-community/Qwen3.5-9B-MLX-4bit', epochs=2, max_len=
                 counts['too_long'] += 1
                 continue
             split = 'valid' if r['dataset'] in valid_sets else 'train'
-            files[split].write(json.dumps({'messages': r['messages']}, ensure_ascii=False) + '\n')
+            files[split].write(json.dumps({'messages': drop_empty_retries(r['messages'])}, ensure_ascii=False) + '\n')
             counts[split] += 1
     finally:
         for f in files.values():
