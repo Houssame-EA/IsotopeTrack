@@ -229,6 +229,9 @@ class Suggestion:
             describes this finding; the category when empty.
         details: ``(label, value)`` pairs with the numbers behind the finding,
             shown in the card's details section.
+        facts: Numbers behind the finding in machine-readable form, for the
+            explained figure, such as ``{"ratio_cut": ("208Pb", 45.0)}``
+            for the signal cut an isotope ratio was measured above.
     """
 
     title: str
@@ -242,6 +245,7 @@ class Suggestion:
     sample_groups: dict = field(default_factory=dict)
     explain_key: str = ""
     details: list = field(default_factory=list)
+    facts: dict = field(default_factory=dict)
 
     @property
     def confidence_label(self) -> str:

@@ -102,3 +102,23 @@ def test_unknown_rank_element_is_explained(app, table):
     FigureCanvasAgg(fig)
     report = render(fig, spec, table)
     assert any("Zr" in str(e) for e in report.errors.values())
+
+
+def test_rows_ranked_by_the_total_of_one_element(app):
+    """Rows follow the summed Pb mass, not the number of particles."""
+    parts = []
+    for _ in range(200):
+        parts.append({"elements": {"208Pb": 10.0}, "element_mass_fg": {"208Pb": 0.025},
+                      "source_sample": "S"})
+    for _ in range(150):
+        parts.append({"elements": {"208Pb": 50.0, "63Cu": 20.0},
+                      "element_mass_fg": {"208Pb": 0.333, "63Cu": 0.1}, "source_sample": "S"})
+    table = ParticleTable.from_input({"type": "sample_data", "sample_name": "S",
+                                     "particle_data": parts}, "Counts")
+    by_count = matrix(table, heat_quantity="mass")["rows"]
+    by_total = matrix(table, heat_quantity="mass", heat_sort="element_total",
+                      heat_sort_el="Pb")["rows"]
+    by_counts_total = matrix(table, heat_sort="element_total", heat_sort_el="Pb")["rows"]
+    assert by_count[0].startswith("Pb (")
+    assert by_total[0].startswith("Cu + Pb") or by_total[0].startswith("Pb + Cu")
+    assert by_counts_total[0] == by_total[0]

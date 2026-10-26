@@ -290,20 +290,62 @@ def sd_envelope(ax, fx, fy, res, color, log_x, log_y):
     ax.plot(_from_space(xs, log_x), _from_space(yhat - sd, log_y), color=color, lw=1.0, ls='--', zorder=4)
 
 
-def poisson_band(ax, panel, data, report):
+def counting_band_fits(panel, table=None) -> bool:
+    """Whether a panel plots an isotope ratio against its denominator's counts.
+
+    The counting-statistics band is only defined on those axes: Y must be
+    one isotope divided by another, both in counts, and X the denominator
+    isotope in counts. On any other axes the band would be drawn in the
+    wrong units.
+    """
+    import re
+    from results.figure_builder.core.isotopes import ratio_parts, split_factor
+    y, _factor = split_factor(panel.get('y') or '')
+    if re.search(r'\b(?!counts:)[a-z]+:', y):
+        return False
+    parts = ratio_parts(y, table)
+    if parts is None:
+        return False
+    m = re.fullmatch(r'(?:counts:)?`?([A-Za-z0-9]+)`?', (panel.get('x') or '').strip())
+    if not m:
+        return False
+    name = m.group(1)
+    if table is not None:
+        try:
+            name = table.resolve_label(name)
+        except Exception:
+            pass
+    return name == parts[1]
+
+
+def poisson_band(ax, panel, data, report, table=None):
     """Counting-statistics envelope of a ratio plotted against the denominator's counts.
 
     For a ratio R of two Poisson counts with denominator counts λ, the
     expected standard deviation is σ = √(R(1 + R)/λ). The band is
-    R̄ ± k·σ around each group's mean ratio, over the plotted counts.
+    R̄ ± k·σ around each group's mean ratio, over the plotted counts. A ratio
+    written ``(A / B) * f``, a mass-bias corrected ratio, gets the band of the
+    measured ratio scaled by the same factor. It is
+    left out, with a note, unless the panel's axes are the ones the formula
+    describes (see :func:`counting_band_fits`). The band never widens the
+    Y axis: at a few counts it spans most of the possible ratios, so the axis
+    keeps the range of the particles and the band runs off its edges.
     """
     k = float_or_none(panel.get('poisson_band')) or 0
     if k <= 0:
         return
+    if not counting_band_fits(panel, table):
+        report.stats.append('Counting-statistics band left out: it needs Y = one isotope divided by '
+                            'another, in counts, and X = the denominator isotope in counts')
+        return
+    y_range = ax.get_ylim()
+    from results.figure_builder.core.isotopes import split_factor
+    factor = split_factor(panel.get('y') or '')[1]
     for g, x, y in data:
         ok = np.isfinite(x) & np.isfinite(y) & (x > 0)
         if ok.sum() < 3:
             continue
+        y = y / factor
         r = float(np.mean(y[ok]))
         lo, hi = float(x[ok].min()), float(x[ok].max())
         xs = np.logspace(np.log10(max(lo, 1e-9)), np.log10(hi * 1.05), 200) if ax.get_xscale() == 'log' \
@@ -312,20 +354,21 @@ def poisson_band(ax, panel, data, report):
         upper, lower = r + k * sigma, np.maximum(r - k * sigma, 0)
         if ax.get_yscale() == 'log':
             lower = np.maximum(lower, r * 1e-3)
-        ax.fill_between(xs, lower, upper, color=g.color, alpha=0.12, lw=0, zorder=1)
-        ax.plot(xs, upper, color=g.color, lw=1.0, ls='--', zorder=4)
-        ax.plot(xs, lower, color=g.color, lw=1.0, ls='--', zorder=4)
+        ax.fill_between(xs, lower * factor, upper * factor, color=g.color, alpha=0.12, lw=0, zorder=1)
+        ax.plot(xs, upper * factor, color=g.color, lw=1.0, ls='--', zorder=4)
+        ax.plot(xs, lower * factor, color=g.color, lw=1.0, ls='--', zorder=4)
         inside = np.abs(y[ok] - r) <= k * np.sqrt(max(r, 0) * (1 + max(r, 0)) / np.maximum(x[ok], 1.0))
         report.stats.append(f'{g.label}: mean ratio {r:.4g}; {100 * inside.mean():.1f}% of particles inside '
                             f'the ±{k:g}σ counting-statistics band')
+    ax.set_ylim(y_range)
 
 
 def natural_line(ax, panel, table, report):
     """Horizontal line at the natural abundance ratio when Y is a ratio of two isotopes."""
     if not panel.get('natural_line'):
         return
-    from results.figure_builder.core.isotopes import natural_ratio, ratio_parts
-    parts = ratio_parts(panel.get('y') or '', table)
+    from results.figure_builder.core.isotopes import natural_ratio, ratio_parts, split_factor
+    parts = ratio_parts(split_factor(panel.get('y') or '')[0], table)
     if parts is None:
         report.stats.append('Natural ratio: write Y as one isotope divided by another, e.g. 107Ag/109Ag')
         return
@@ -336,8 +379,52 @@ def natural_line(ax, panel, table, report):
     from matplotlib import transforms
     color = panel.get('natural_color') or '#059669'
     ax.axhline(value, color=color, lw=1.6, ls='-.', zorder=6, label=f'Natural ({value:.4g})')
+    report.stats.append(f'Natural abundance ratio {parts[0]}/{parts[1]} = {value:.5g}')
+    if panel.get('marks_in_legend'):
+        return
     t = ax.text(0.01, value, f' natural {parts[0]}/{parts[1]} = {value:.4g}', color=color,
                 transform=transforms.blended_transform_factory(ax.transAxes, ax.transData),
                 ha='left', va='bottom', fontsize='x-small', zorder=8)
     t._fb_cell = True
-    report.stats.append(f'Natural abundance ratio {parts[0]}/{parts[1]} = {value:.5g}')
+
+
+SOURCE_MARKERS = ('D', 's', '^', 'v', 'P', 'X', 'h', '*')
+SOURCE_COLORS = ('#111827', '#b45309', '#7c3aed', '#be123c', '#0f766e', '#1d4ed8', '#4d7c0f', '#9d174d')
+
+
+def isotope_references(ax, panel, table, report):
+    """Reference sources drawn as named points on an isotope-ratio against isotope-ratio plot.
+
+    Both axes must be ratios of two isotopes (a mass-bias factor is
+    allowed). ``iso_refs`` lists source names from
+    :func:`results.figure_builder.core.references.isotope_sources`, or
+    ``all``. Each source lacking one of the four isotopes is skipped. The
+    points join the legend; nothing is written on the plot.
+    """
+    wanted = (panel.get('iso_refs') or '').strip()
+    if not wanted:
+        return
+    from results.figure_builder.core.isotopes import ratio_parts, split_factor
+    from results.figure_builder.core.references import isotope_sources, source_ratio
+    px = ratio_parts(split_factor(panel.get('x') or '')[0], table)
+    py = ratio_parts(split_factor(panel.get('y') or '')[0], table)
+    if px is None or py is None:
+        report.stats.append('Isotope sources: both axes must be one isotope divided by another')
+        return
+    names = list(isotope_sources()) if wanted.lower() == 'all' else \
+        [n.strip() for n in wanted.replace(';', ',').split(',') if n.strip()]
+    drawn = []
+    for k, name in enumerate(names):
+        x = source_ratio(name, *px)
+        y = source_ratio(name, *py)
+        if x is None or y is None:
+            continue
+        h = ax.scatter([x], [y], marker=SOURCE_MARKERS[k % len(SOURCE_MARKERS)], s=70,
+                       facecolor='white', edgecolor=SOURCE_COLORS[k % len(SOURCE_COLORS)],
+                       linewidths=1.8, zorder=9, label=name)
+        drawn.append(h)
+        report.stats.append(f'Isotope source {name}: {px[0]}/{px[1]} = {x:.4g}, '
+                            f'{py[0]}/{py[1]} = {y:.4g}')
+    if drawn:
+        from results.figure_builder.core.common import merge_legend
+        merge_legend(ax, panel, drawn)

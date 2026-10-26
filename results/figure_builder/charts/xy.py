@@ -8,8 +8,8 @@ from results.figure_builder.core.common import (
     add_colorbar, add_legend, bin_edges, cmap_name, draw_marks, edge_kwargs, finite_mask, handles,
     label_n, marker_sizes, nonzero_mask, panel_palette, resolve_groups, style_axes, trim_bounds)
 from results.figure_builder.charts.overlays import (
-    add_marginals, add_zoom_inset, draw_group_shapes, draw_trends, fit_band, natural_line, poisson_band,
-    sd_envelope)
+    add_marginals, add_zoom_inset, draw_group_shapes, draw_trends, fit_band, isotope_references,
+    natural_line, poisson_band, sd_envelope)
 from results.figure_builder.core.expressions import ExpressionError, evaluate, pretty
 from results.figure_builder.core.spec import PALETTE
 
@@ -89,8 +89,9 @@ def draw_scatter(fig, ax, panel, table, report, style):
     draw_series(ax, panel, table, style, log_x, log_y)
     draw_group_shapes(ax, panel, drawn, log_x, log_y)
     draw_trends(ax, panel, drawn, log_x, log_y)
-    poisson_band(ax, panel, drawn, report)
+    poisson_band(ax, panel, drawn, report, table)
     natural_line(ax, panel, table, report)
+    isotope_references(ax, panel, table, report)
     if panel.get('diagonal'):
         lo = max(ax.get_xlim()[0], ax.get_ylim()[0])
         hi = min(ax.get_xlim()[1], ax.get_ylim()[1])

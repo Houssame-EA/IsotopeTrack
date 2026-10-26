@@ -141,9 +141,45 @@ def candidate_groups(panel: dict, table: ParticleTable) -> list[Group]:
         if panel.get('show_other', True):
             other = panel.get('other_label') or 'No type'
             groups.append(Group('__other__', other, base & (which < 0), OTHER_COLOR))
+    elif mode == 'size':
+        groups.extend(size_groups(table, base))
     else:
         groups.append(Group('__all__', 'All particles', base, panel.get('color') or pal[0]))
     return groups
+
+
+SIZE_COLORS = ('#93c5fd', '#3b82f6', '#1e3a8a')
+"""Light to dark blue for small, medium and large particles."""
+
+
+def particle_amount(table) -> tuple[np.ndarray, str]:
+    """Total amount of each particle, in mass (fg) when calibrated, otherwise in counts."""
+    if not len(table):
+        return np.zeros(0), 'counts'
+    mass = table.view('mass').column('total')
+    if np.any(mass > 0):
+        return mass, 'fg'
+    return table.view('counts').column('total'), 'counts'
+
+
+def size_groups(table, base) -> list[Group]:
+    """Split particles into thirds of their total amount: small, medium and large.
+
+    The cuts are the 33rd and 67th percentiles of the particles in *base*,
+    so each class holds about a third of them. Labels quote the cuts in fg,
+    or in counts when no mass calibration is available.
+    """
+    amount, unit = particle_amount(table)
+    usable = base & (amount > 0)
+    if int(usable.sum()) < 3:
+        return [Group('__all__', 'All particles', base, SIZE_COLORS[1])]
+    lo, hi = np.percentile(amount[usable], [100 / 3, 200 / 3])
+    return [
+        Group('small', f'Small (< {lo:.3g} {unit})', usable & (amount < lo), SIZE_COLORS[0]),
+        Group('medium', f'Medium ({lo:.3g}–{hi:.3g} {unit})',
+              usable & (amount >= lo) & (amount < hi), SIZE_COLORS[1]),
+        Group('large', f'Large (≥ {hi:.3g} {unit})', usable & (amount >= hi), SIZE_COLORS[2]),
+    ]
 
 
 def resolve_groups(panel: dict, table: ParticleTable) -> list[Group]:
@@ -602,6 +638,11 @@ def draw_marks(ax, panel, values, vertical: bool):
     if dl is not None:
         text = (panel.get('dl_label') or '').strip() or f'DL: {dl:g}'
         dcol = panel.get('dl_color') or '#dc2626'
+        if panel.get('marks_in_legend'):
+            line = (ax.axvline if vertical else ax.axhline)(dl, color=dcol, lw=1.4, ls='--', zorder=7,
+                                                           label=f'{text} ({dl:.3g})')
+            merge_legend(ax, panel, [line])
+            return
         if vertical:
             ax.axvline(dl, color=dcol, lw=1.4, ls='--', zorder=7)
             t = ax.text(dl, 0.98, f' {text}', transform=transforms.blended_transform_factory(ax.transData,
@@ -630,15 +671,47 @@ def edges_by_width(values, width, log):
     return 10 ** edges if log else edges
 
 
+def _place_below_axis(ax, leg, renderer, pad: float = 0.03) -> None:
+    """Hang a below-the-plot legend just under the X tick labels and axis title.
+
+    A fixed offset would land on the axis title of a short panel; measuring
+    the axis keeps the legend clear of it whatever the panel's height.
+    """
+    try:
+        if getattr(ax, 'name', '') == 'ternary':
+            box = ax.get_tightbbox(renderer, bbox_extra_artists=[])
+        else:
+            box = ax.xaxis.get_tightbbox(renderer)
+    except Exception:
+        box = None
+    if box is None:
+        return
+    y = ax.transAxes.inverted().transform((0, box.y0))[1] - pad
+    leg.set_bbox_to_anchor((0.5, y), transform=ax.transAxes)
+
+
+def _is_below(ax, leg) -> bool:
+    """Whether a legend hangs under the plot."""
+    anchor = leg.get_bbox_to_anchor()
+    if anchor is None:
+        return False
+    a = anchor.transformed(ax.transAxes.inverted())
+    return a.y0 < 0 and 0.2 < a.x0 < 0.8
+
+
 def _shrink_for_legend(fig, ax, leg, rect, renderer, partners, original, allow_width=True):
     """Shrink ``ax`` (and its partners) until ``leg`` fits inside ``rect``; True on success.
 
     ``allow_width=False`` is used for legends above or below the plot: those
-    cannot be fixed by narrowing the plot, only by fewer columns.
+    cannot be fixed by narrowing the plot, only by fewer columns. A legend
+    under the plot is re-hung below the axis labels on every step.
     """
     right = rect[0] + rect[2]
     bottom, top = 1 - rect[1] - rect[3], 1 - rect[1]
-    for _ in range(5):
+    below = _is_below(ax, leg)
+    for _ in range(6):
+        if below:
+            _place_below_axis(ax, leg, renderer)
         box = leg.get_window_extent(renderer).transformed(fig.transFigure.inverted())
         pos = ax.get_position()
         dx = max(0.0, box.x1 - (right - 0.005))
@@ -792,6 +865,31 @@ def fit_decorations(fig, handles_: dict, rect, pad: float = 0.008):
     finally:
         for leg in legends:
             leg.set_in_layout(True)
+    for a in visible:
+        leg = a.get_legend()
+        if leg is not None and _is_below(a, leg):
+            _hang_inside(a, leg, visible, renderer, inv, bottom)
+
+
+def _hang_inside(ax, leg, group, renderer, inv, bottom):
+    """Re-hang a below-the-plot legend under the axis labels and lift the plot if it overflows.
+
+    Fitting the labels moves the plot, so the legend is placed again; when it
+    then reaches below the panel, the plot (with its partner axes) is raised
+    by the overflow, keeping at least 40% of its height.
+    """
+    for _ in range(4):
+        _place_below_axis(ax, leg, renderer)
+        box = leg.get_window_extent(renderer).transformed(inv)
+        overflow = bottom - box.y0
+        if overflow <= 1e-4:
+            return
+        pos = ax.get_position()
+        if pos.height - overflow < 0.4 * pos.height:
+            return
+        for a in group:
+            q = a.get_position()
+            a.set_position([q.x0, q.y0 + overflow, q.width, q.height - overflow])
 
 
 def _fit_group(visible, renderer, inv, left, right, bottom, top):

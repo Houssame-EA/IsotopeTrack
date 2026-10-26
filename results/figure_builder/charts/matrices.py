@@ -242,6 +242,16 @@ def _sort_column(panel, exprs, table) -> int:
     raise ExpressionError(f"'{wanted}' is not one of the heatmap columns")
 
 
+def _element_total(column, mask) -> float:
+    """Summed amount of one element over the particles in *mask*.
+
+    The sum is taken in the column's own quantity, so it is a total mass for
+    mass columns and a total count for count columns. Non-detects and
+    missing values add nothing.
+    """
+    return float(np.nansum(np.clip(column[mask], 0, None)))
+
+
 def _search_mask(panel, combos) -> np.ndarray:
     """Which combination rows the element search keeps."""
     text = (panel.get('heat_search') or '').replace(',', ' ').split()
@@ -359,6 +369,13 @@ def draw_heatmap(fig, ax, panel, table, report, style):
             cells = np.array([summarise(base & (keys == uniq[i]))[col] for i in order], dtype=float)
             spreads.clear()
             order = order[np.argsort(-np.nan_to_num(cells, nan=-np.inf), kind='stable')]
+        elif sort == 'element_total':
+            col = _sort_column(panel, exprs, table)
+            totals = np.array([_element_total(raw[col], base & (keys == uniq[i])) for i in order])
+            order = order[np.argsort(-totals, kind='stable')]
+            report.stats.append(f'Heatmap rows by total {cols[col]}: ' + ', '.join(
+                f'{uniq[i]} {_element_total(raw[col], base & (keys == uniq[i])):.4g}'
+                for i in order[:8]))
         start = max(1, int(panel.get('heat_start') or 1))
         order = order[start - 1:start - 1 + max(1, int(panel.get('top_n') or 15))]
         rows = [f'{uniq[i]} (n={counts[i]})' if panel.get('show_n', True) else str(uniq[i])
@@ -370,10 +387,15 @@ def draw_heatmap(fig, ax, panel, table, report, style):
         groups = resolve_groups(panel, table)
         rows = [g.label for g in groups]
         M = np.array([summarise(g.mask) for g in groups], dtype=float)
-        if panel.get('heat_sort') in ('element', 'name') and len(rows) > 1:
+        if panel.get('heat_sort') in ('element', 'element_total', 'name') and len(rows) > 1:
             if panel.get('heat_sort') == 'element':
                 col = _sort_column(panel, exprs, table)
                 order = np.argsort(-np.nan_to_num(M[:, col], nan=-np.inf), kind='stable')
+            elif panel.get('heat_sort') == 'element_total':
+                col = _sort_column(panel, exprs, table)
+                column = evaluate(exprs[col], table)
+                totals = np.array([_element_total(column, g.mask) for g in groups])
+                order = np.argsort(-totals, kind='stable')
             else:
                 order = np.argsort(np.array(rows, dtype=str), kind='stable')
             M = M[order]
@@ -493,6 +515,7 @@ HEAT_SORTS = {
     'count': 'Number of particles',
     'amount': 'Share of the summed amount',
     'element': 'Value of one element',
+    'element_total': 'Total of one element',
     'name': 'Name',
 }
 """How heatmap rows can be ranked."""

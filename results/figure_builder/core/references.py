@@ -12,9 +12,13 @@ or illite. This module holds those references so figures can draw them.
   members or idealised compositions, good for orientation, not for
   quantification.
 
-Both tables are built in and editable: :func:`load_user` and :func:`save_user`
-keep the user's own values (changed crust abundances, extra minerals) in the
-application settings, and every lookup prefers them.
+* :data:`ISOTOPE_SOURCES` holds isotope compositions of well-known sources,
+  drawn as reference points on isotope-ratio plots such as the
+  ²⁰⁸Pb/²⁰⁶Pb against ²⁰⁷Pb/²⁰⁶Pb three-isotope plot.
+
+All tables are built in and editable: :func:`load_user` and :func:`save_user`
+keep the user's own values (changed crust abundances, extra minerals, extra
+isotope sources) in the application settings, and every lookup prefers them.
 """
 
 from __future__ import annotations
@@ -95,6 +99,19 @@ MINERALS: dict[str, str] = {
     'chalcopyrite': 'CuFeS2',
 }
 """Common minerals and their ideal formulas."""
+
+ISOTOPE_SOURCES: dict[str, dict[str, float]] = {
+    'Average crust (Stacey & Kramers 1975)': {'204Pb': 1.0, '206Pb': 18.700, '207Pb': 15.628,
+                                              '208Pb': 38.630},
+    'Broken Hill ore': {'204Pb': 1.0, '206Pb': 16.003, '207Pb': 15.390, '208Pb': 35.660},
+}
+"""Isotope compositions of reference sources, as amounts relative to one isotope.
+
+Average crust is the present-day model lead of Stacey, J. S. & Kramers, J. D.
+(1975), Earth Planet. Sci. Lett. 26, 207–221. Broken Hill is the Australian
+ore lead long used in leaded gasoline. Local sources (a smelter's ore, a
+regional gasoline) are added by the user.
+"""
 
 SETTINGS_KEY = 'figure_builder/references'
 """Application-settings key holding the user's own reference values."""
@@ -190,7 +207,8 @@ def load_user() -> dict:
         data = json.loads(raw) if raw else {}
     except Exception:
         data = {}
-    _USER = {'crust': dict(data.get('crust') or {}), 'minerals': dict(data.get('minerals') or {})}
+    _USER = {'crust': dict(data.get('crust') or {}), 'minerals': dict(data.get('minerals') or {}),
+             'isotope_sources': dict(data.get('isotope_sources') or {})}
     return _USER
 
 
@@ -198,7 +216,9 @@ def save_user(user: dict) -> None:
     """Keep the user's reference values in the application settings and use them."""
     global _USER
     _USER = {'crust': {k: float(v) for k, v in (user.get('crust') or {}).items()},
-             'minerals': {str(k): str(v) for k, v in (user.get('minerals') or {}).items()}}
+             'minerals': {str(k): str(v) for k, v in (user.get('minerals') or {}).items()},
+             'isotope_sources': {str(k): {str(i): float(x) for i, x in (v or {}).items()}
+                                 for k, v in (user.get('isotope_sources') or {}).items()}}
     try:
         from PySide6.QtCore import QSettings
         QSettings().setValue(SETTINGS_KEY, json.dumps(_USER))
@@ -210,7 +230,8 @@ def set_user(user: dict | None) -> None:
     """Replace the user's values in memory only, for tests and previews."""
     global _USER
     _USER = None if user is None else {'crust': dict(user.get('crust') or {}),
-                                       'minerals': dict(user.get('minerals') or {})}
+                                       'minerals': dict(user.get('minerals') or {}),
+                                       'isotope_sources': dict(user.get('isotope_sources') or {})}
 
 
 def crust() -> dict[str, float]:
@@ -225,6 +246,42 @@ def crust() -> dict[str, float]:
 def minerals() -> dict[str, str]:
     """Built-in minerals plus the user's own, the user's taking precedence."""
     return {**MINERALS, **load_user()['minerals']}
+
+
+def isotope_sources() -> dict[str, dict[str, float]]:
+    """Built-in isotope sources plus the user's own, the user's taking precedence."""
+    return {**ISOTOPE_SOURCES, **(load_user().get('isotope_sources') or {})}
+
+
+def source_ratio(name: str, numerator: str, denominator: str) -> float | None:
+    """Ratio of two isotopes in a reference source, or ``None`` when it lacks either."""
+    from results.figure_builder.core.isotopes import canonical
+    comp = {canonical(k): float(v) for k, v in (isotope_sources().get(name) or {}).items()}
+    a, b = comp.get(canonical(numerator)), comp.get(canonical(denominator))
+    if not a or not b:
+        return None
+    return a / b
+
+
+def parse_isotope_source(text: str) -> tuple[str, dict[str, float]]:
+    """Read ``Name: 206Pb=18.7, 207Pb=15.63, 208Pb=38.63`` into a name and its composition.
+
+    Raises:
+        ValueError: When the line has no name or no ``isotope=value`` pairs.
+    """
+    from results.figure_builder.core.isotopes import canonical
+    if ':' not in str(text):
+        raise ValueError('Write the source as  Name: 206Pb=18.7, 207Pb=15.63, ...')
+    name, rest = str(text).split(':', 1)
+    comp = {}
+    for item in re.split(r'[,;]', rest):
+        if '=' not in item:
+            continue
+        iso, value = item.split('=', 1)
+        comp[canonical(iso.strip())] = float(value)
+    if not name.strip() or len(comp) < 2:
+        raise ValueError('A source needs a name and at least two isotopes')
+    return name.strip(), comp
 
 
 def symbol_of(label: str) -> str:

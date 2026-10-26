@@ -70,3 +70,65 @@ def ratio_parts(expr: str, table=None) -> tuple[str, str] | None:
                 pass
         parts.append(name)
     return parts[0], parts[1]
+
+
+_FACTOR = re.compile(r'^\(\s*(.+?)\s*\)\s*\*\s*([0-9.]+(?:[eE][-+]?\d+)?)$')
+
+
+def split_factor(expr: str) -> tuple[str, float]:
+    """Split ``(A / B) * k`` into ``('A / B', k)``; any other expression gets ``k = 1``.
+
+    Insights writes a mass-bias corrected ratio this way, so tools that need
+    the plain ratio (the counting band, the natural line) can still read it.
+    """
+    text = (expr or '').strip()
+    m = _FACTOR.match(text)
+    if not m:
+        return text, 1.0
+    try:
+        return m.group(1), float(m.group(2))
+    except ValueError:
+        return text, 1.0
+
+
+def mass_number(label: str) -> float | None:
+    """Mass number of an isotope label: ``206Pb`` or ``Pb206`` → ``206.0``."""
+    m = re.search(r'(\d+)', canonical(label))
+    return float(m.group(1)) if m else None
+
+
+def exponential_factor(numerator: str, denominator: str, ref_num: str, ref_den: str,
+                       certified: float, measured: float) -> float | None:
+    """Mass-bias correction factor of the exponential law (Russell et al., 1978).
+
+    The fractionation exponent comes from a reference ratio of known value,
+    ``f = ln(certified / measured) / ln(m_ref_num / m_ref_den)``, and the
+    measured ratio of *numerator* to *denominator* is multiplied by
+    ``(m_num / m_den) ** f``.
+
+    Returns:
+        The factor, or ``None`` when a mass or a reference value is missing.
+    """
+    masses = [mass_number(x) for x in (numerator, denominator, ref_num, ref_den)]
+    if any(m is None or m <= 0 for m in masses):
+        return None
+    m_num, m_den, m_rn, m_rd = masses
+    try:
+        certified, measured = float(certified), float(measured)
+    except (TypeError, ValueError):
+        return None
+    if certified <= 0 or measured <= 0 or m_rn == m_rd:
+        return None
+    import math
+    f = math.log(certified / measured) / math.log(m_rn / m_rd)
+    return (m_num / m_den) ** f
+
+
+RADIOGENIC = {'Pb', 'Sr', 'Nd', 'Hf', 'Os', 'Ca', 'Ar', 'He', 'U', 'Th'}
+"""Elements whose isotope abundances vary in nature through radioactive decay."""
+
+
+def is_radiogenic(label: str) -> bool:
+    """Whether the element of *label* has a naturally variable isotope composition."""
+    m = re.search(r'([A-Z][a-z]?)', canonical(label))
+    return bool(m) and m.group(1) in RADIOGENIC

@@ -365,6 +365,8 @@ FIELDS = [
     ('Axes', 'Legend', 'legend_cols', 'Columns', 'int', LEGENDED, (1, 8)),
     ('Axes', 'Legend', 'legend_title', 'Title', 'text', LEGENDED, 'optional'),
     ('Axes', 'Legend', 'legend_size', 'Text size', 'combo', LEGENDED, S.FONT_SIZES),
+    ('Axes', 'Legend', 'marks_in_legend', 'Reference lines in legend', 'check', MARKABLE | LEGENDED,
+     None),
     ('Stats', 'Fit', 'show_fit', 'Fit line', 'check', {'scatter'}, None),
     ('Stats', 'Fit', 'fit_lines', 'Lines', 'combo', {'scatter'}, FIT_LINES),
     ('Stats', 'Fit', 'fit_color_points', 'Colour points by their line', 'check', {'scatter'}, None),
@@ -375,6 +377,9 @@ FIELDS = [
      {'scatter'}, (0, 5, 0.5)),
     ('Stats', 'Isotope ratios', 'natural_line', 'Natural abundance ratio line', 'check', {'scatter'}, None),
     ('Stats', 'Isotope ratios', 'natural_color', 'Line colour', 'color', {'scatter'}, None),
+    ('Stats', 'Isotope ratios', 'iso_refs', 'Isotope sources', 'text', {'scatter'},
+     'all, or names, e.g. Broken Hill ore (both axes must be isotope ratios)'),
+    ('Stats', 'Isotope ratios', 'refs_button_iso', '', 'button', {'scatter'}, 'Isotope sources…'),
     ('Axes', 'Zoom inset', 'inset_zoom', 'Zoom on', 'text', {'scatter'}, 'x from, x to, y from, y to'),
     ('Axes', 'Zoom inset', 'inset_loc', 'Inset position', 'combo', {'scatter'}, INSET_LOCS),
     ('Axes', 'Zoom inset', 'inset_size', 'Inset size', 'float', {'scatter'}, (0.15, 0.7, 0.05)),
@@ -386,6 +391,9 @@ FIELDS = [
      {'stars': 'Stars (*, **, ns)', 'p': 'Numbers (p = …)'}),
     ('Stats', 'Compare groups', 'hide_ns', 'Hide non-significant', 'check', set(), None),
     ('Stats', 'Compare groups', 'test_log', 'Test on log values', 'check', set(), None),
+    ('Stats', 'Compare groups', 'test_unit', 'Test on', 'combo', set(),
+     {'particles': 'Every particle', 'replicates': 'Replicate medians'}),
+    ('Stats', 'Compare groups', 'rep_medians', 'Replicate medians', 'check', DIST, None),
     ('Stats', 'Could a minor element be seen?', 'ptl_minor', 'Minor elements', 'text',
      {'box', 'violin', 'strip', 'scatter'}, 'e.g. Ti, Nb (needs element masses)'),
     ('Stats', 'Could a minor element be seen?', 'ptl_ratio', 'Minor : major mass ratio', 'text',
@@ -583,7 +591,7 @@ class PanelEditor(QWidget):
             w.changed.connect(self._groups_changed)
         elif kind == 'button':
             w = QPushButton(opts)
-            if key in ('refs_button', 'refs_button_ptl'):
+            if key in ('refs_button', 'refs_button_ptl', 'refs_button_iso'):
                 w.clicked.connect(self._edit_references)
             else:
                 w.clicked.connect(self.styles_requested if key == 'styles_button' else self.rename_requested)
@@ -777,6 +785,8 @@ class PanelEditor(QWidget):
             return group != 'none' and grouped
         if key == 'test_log':
             return kind in TESTABLE and p.get('test', 'none') != 'none'
+        if key == 'test_unit':
+            return kind in DIST and p.get('test', 'none') != 'none'
         if key in ('pairs', 'correction', 'p_format', 'hide_ns'):
             if kind not in TESTABLE or p.get('test') not in E.PAIRWISE_TESTS:
                 return False
@@ -824,7 +834,7 @@ class PanelEditor(QWidget):
         if key == 'heat_sort':
             return kind == 'heatmap' and p.get('heat_rows') != 'particles'
         if key == 'heat_sort_el':
-            return kind == 'heatmap' and p.get('heat_rows') != 'particles' and p.get('heat_sort') == 'element'
+            return kind == 'heatmap' and p.get('heat_rows') != 'particles' and p.get('heat_sort') in ('element', 'element_total')
         if key in ('heat_search', 'heat_start', 'heat_min_share'):
             return kind == 'heatmap' and p.get('heat_rows') == 'combinations'
         if key == 'heat_search_mode':

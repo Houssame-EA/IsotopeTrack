@@ -69,6 +69,7 @@ GROUP_MODES = {
     'class': 'By classifier class',
     'rules': 'By my rules',
     'types': 'By particle type (from Insights)',
+    'size': 'By particle size (thirds of particle mass)',
 }
 
 
@@ -214,6 +215,10 @@ PANEL_DEFAULTS = {
     'poisson_band': 0.0,
     'natural_line': False,
     'natural_color': '',
+    'iso_refs': '',
+    'marks_in_legend': False,
+    'rep_medians': False,
+    'test_unit': 'particles',
     'tern_filter': 'any',
     'tern_mean': False,
     'net_r_min': 0.3,

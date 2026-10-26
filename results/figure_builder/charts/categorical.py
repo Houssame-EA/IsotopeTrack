@@ -638,7 +638,7 @@ def draw_sunburst(ax, panel, table, report):
             ax.add_patch(w_out)
             records.append((w_out, f'{el} {mates}', w2, 100 * w2 / total))
             m2 = np.deg2rad(s2 - span2 / 2)
-            if span2 >= 9:
+            if span2 >= max(9.0, 1.6 * len(str(mates))):
                 t = ax.text(0.8 * np.cos(m2), 0.8 * np.sin(m2), mates, ha='center', va='center',
                             fontsize='x-small', color='#1f2937', path_effects=halo)
                 t._fb_cell = True
