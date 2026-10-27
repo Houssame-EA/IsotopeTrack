@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import random
+import zlib
 
 import numpy as np
 import pytest
@@ -48,7 +49,7 @@ def pooled():
     for g, r in (("A", 0.84), ("B", 0.88)):
         for k in range(3):
             name = f"{g}_{k + 1}"
-            pool[name] = lead_particles(hash(name) % 1000, r, name)
+            pool[name] = lead_particles(zlib.crc32(name.encode()) % 1000, r, name)
     units = [("A", ("A_1", "A_2", "A_3")), ("B", ("B_1", "B_2", "B_3"))]
     return pool, units, ev.table_from(units, pool)
 

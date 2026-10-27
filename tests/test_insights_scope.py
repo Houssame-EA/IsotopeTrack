@@ -4,7 +4,8 @@
 Covers:
 
 * ``_build_matrix`` — sparse element matrix and detection masks
-* ``resolve_scope`` — every loaded sample, with its replicate groups
+* ``resolve_scope`` — the samples checked on the canvas, or every loaded
+  sample, with their replicate groups
 * ``build_context`` and ``gather_scope_data`` — context assembly and caching
 * the category registry and each analyser, including the statistics behind them
 * ``_isotope_entries`` — resolving element labels for the Add flow
@@ -267,18 +268,27 @@ def test_matrix_accepts_int_values():
 # resolve_scope
 # ──────────────────────────────────────────────────────────────────────────────
 
-def test_scope_always_covers_every_loaded_sample(win, nodes):
-    """Selecting a sample node no longer narrows what Insights searches."""
-    scene = FakeScene(list(nodes.values()), selected=[nodes["single"]])
-    scope = rr.resolve_scope(scene, win)
+def test_scope_follows_the_samples_checked_on_the_canvas(win, nodes):
+    """The checked samples of every selector node are searched, and only those."""
+    scope = rr.resolve_scope(FakeScene([nodes["multi"], nodes["plot"]]), win)
+    assert scope.sample_names == ("S2", "S3")
+    assert scope.origin == "canvas"
+    assert scope.selectors == 1
+    scope = rr.resolve_scope(FakeScene(list(nodes.values())), win)
     assert scope.sample_names == ("S1", "S2", "S3")
-    assert scope.origin == "all"
+    assert scope.origin == "canvas"
     assert scope.total_particles == 900
-    assert scope.is_multi
 
 
-def test_scope_ignores_which_samples_nodes_include(win):
-    """A multi-sample node excluding a sample does not hide it from the search."""
+def test_single_selector_searches_its_one_sample(win, nodes):
+    """A Single Sample node alone narrows the search to its sample."""
+    scope = rr.resolve_scope(FakeScene([nodes["single"]]), win)
+    assert scope.sample_names == ("S1",)
+    assert not scope.is_multi
+
+
+def test_multi_selector_follows_its_included_samples(win):
+    """Samples left unchecked in a Multi-Sample node are not searched."""
     node = FakeNode(
         "multiple_sample_selector",
         selected_samples=["S1", "S2", "S3"],
@@ -286,8 +296,56 @@ def test_scope_ignores_which_samples_nodes_include(win):
                        "S2": {"included": False},
                        "S3": {"included": True}},
     )
-    scene = FakeScene([node], selected=[node])
-    assert set(rr.resolve_scope(scene, win).sample_names) == {"S1", "S2", "S3"}
+    assert rr.resolve_scope(FakeScene([node]), win).sample_names == ("S1", "S3")
+
+
+def test_summed_single_selector_searches_every_replicate(win):
+    """A Single Sample node summing replicates checks all of them."""
+    node = FakeNode("sample_selector", selected_sample="S1",
+                    sum_replicates=True, replicate_samples=["S1", "S2"])
+    assert rr.resolve_scope(FakeScene([node]), win).sample_names == ("S1", "S2")
+
+
+def test_no_selector_or_nothing_checked_searches_everything(win):
+    """Without a selector, or with nothing checked or loaded, every sample is searched."""
+    for scene in (FakeScene([]),
+                  FakeScene([FakeNode("sample_selector", selected_sample=None)]),
+                  FakeScene([FakeNode("sample_selector", selected_sample="NOT_LOADED")])):
+        scope = rr.resolve_scope(scene, win)
+        assert scope.sample_names == ("S1", "S2", "S3")
+        assert scope.origin == "all"
+
+
+def test_too_many_selectors_search_everything(win):
+    """With more than ten selector nodes, Insights goes back to every sample."""
+    few = [FakeNode("sample_selector", selected_sample="S1") for _ in range(rr.MAX_SELECTOR_NODES)]
+    assert rr.resolve_scope(FakeScene(few), win).sample_names == ("S1",)
+    many = few + [FakeNode("sample_selector", selected_sample="S2")]
+    scope = rr.resolve_scope(FakeScene(many), win)
+    assert scope.sample_names == ("S1", "S2", "S3")
+    assert scope.origin == "all" and scope.selectors == rr.MAX_SELECTOR_NODES + 1
+
+
+def test_checking_a_sample_changes_the_scope_key(win):
+    """Checking another sample triggers a new search."""
+    node = FakeNode("multiple_sample_selector",
+                    sample_config={"S1": {"included": True}, "S2": {"included": False}})
+    before = rr.resolve_scope(FakeScene([node]), win).key
+    node.sample_config["S2"]["included"] = True
+    assert rr.resolve_scope(FakeScene([node]), win).key != before
+
+
+def test_scope_text_names_where_the_samples_come_from(win, nodes):
+    """The panel says whether it follows the canvas, and how many groups it found."""
+    first, second = ip.describe_scope(rr.resolve_scope(FakeScene([nodes["multi"]]), win))
+    assert "checked in your 1 selector node" in first
+    assert second.startswith("2 groups")
+    first, _second = ip.describe_scope(rr.resolve_scope(FakeScene([]), win))
+    assert first.endswith("all loaded samples.")
+    many = [FakeNode("sample_selector", selected_sample="S1")
+            for _ in range(rr.MAX_SELECTOR_NODES + 1)]
+    first, _second = ip.describe_scope(rr.resolve_scope(FakeScene(many), win))
+    assert f"more than {rr.MAX_SELECTOR_NODES} selector nodes" in first
 
 
 def test_empty_pool_gives_empty_scope():
@@ -368,6 +426,19 @@ def test_batch_pool_wins_over_window_data(win):
     )
     scope = rr.resolve_scope(FakeScene([batch]), win)
     assert scope.sample_names == ("B1",)
+
+
+def test_batch_scope_key_is_stable_between_checks(win):
+    """Checking a batch-fed selector twice gives the same key, so the panel does not search again."""
+    batch = [{"source_sample": f"B{i % 2}", "elements": {"56Fe": 1.0 + i}} for i in range(40)]
+    single = FakeNode("sample_selector", selected_sample="B0", batch_particle_data=batch)
+    multi = FakeNode("multiple_sample_selector", selected_samples=["B0", "B1"],
+                     batch_particle_data=batch)
+    for scene in (FakeScene([single]), FakeScene([multi]), FakeScene([single, multi])):
+        assert rr.resolve_scope(scene, win).key == rr.resolve_scope(scene, win).key
+    grown = batch + [{"source_sample": "B0", "elements": {"56Fe": 9.0}}]
+    single.batch_particle_data = grown
+    assert rr.resolve_scope(FakeScene([single]), win).total_particles == 21
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -594,6 +594,29 @@ class NodeItem(QGraphicsWidget):
             painter.setFont(f)
             painter.drawText(rect, Qt.AlignCenter, t)
 
+    def paint_number_badge(self, painter, number):
+        """Draw the node's Insights number in a small disc on the upper left of its circle.
+
+        Insights lists its findings by this number, so the user can tell
+        which node a result comes from.
+        """
+        if not number:
+            return
+        d = self.icon_d
+        cx, cy, r = self.width / 2, d / 2 + 4, d / 2
+        t = str(number)
+        f = QFont(DS.FONT_FAMILY)
+        f.setPixelSize(11)
+        f.setBold(True)
+        size = max(18, QFontMetrics(f).horizontalAdvance(t) + 10)
+        rect = QRectF(cx - r * 0.62 - size / 2, cy - r * 0.62 - 9, size, 18)
+        painter.setPen(QPen(QColor(_app_theme.palette.bg_primary), 2))
+        painter.setBrush(QColor("#1F2937"))
+        painter.drawRoundedRect(rect, 9, 9)
+        painter.setPen(QColor("#FFFFFF"))
+        painter.setFont(f)
+        painter.drawText(rect, Qt.AlignCenter, t)
+
     def paint(self, painter, option, widget=None):
         self.paint_icon_node(
             painter, DS.HDR_DATA, "fa6s.cube",
@@ -2118,6 +2141,7 @@ class SampleSelectorNode(WorkflowNode):
         self.selected_isotopes = []
         self.sum_replicates = False
         self.replicate_samples = []
+        self.insights_number = 0
         # How a dilution-factor mismatch among self.replicate_samples was
         # resolved (see tools.particle_filter.resolve_dilution_conflict),
         # made once at Accept/OK time in configure() and reused here on
@@ -2334,6 +2358,7 @@ class MultipleSampleSelectorNode(WorkflowNode):
         self.sample_config = {}
         self.selected_isotopes = []
         self.sum_replicates = False
+        self.insights_number = 0
         # {sum_group_name: resolution_dict} -- how a dilution-factor
         # mismatch among that group's members was resolved (see
         # tools.particle_filter.resolve_dilution_conflict), made once at
@@ -3229,6 +3254,7 @@ class SampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
             "fa6s.flask", "Sample",
             badge, bc,
         )
+        self.paint_number_badge(painter, getattr(wf, "insights_number", 0))
 
     def _trigger(self):
         """Run the node calculation in a background thread on (re)configure."""
@@ -3920,6 +3946,7 @@ class MultipleSampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
             "fa6s.flask-vial", "Multi-Sample",
             badge, bc,
         )
+        self.paint_number_badge(painter, getattr(wf, "insights_number", 0))
 
     def _trigger(self):
         """Run the node calculation in a background thread on (re)configure."""
@@ -5055,9 +5082,32 @@ class EnhancedCanvasScene(QGraphicsScene):
             if isinstance(i, (NodeItem, LinkItem)):
                 i.setSelected(True)
 
+    NUMBERED_NODE_TYPES = ("sample_selector", "multiple_sample_selector")
+    """Node types given a number that Insights lists their findings by."""
+
+    def _assign_insights_number(self, wf_node):
+        """Give a Single or Multi-Sample node a number no other node on the canvas carries.
+
+        A node keeps the number it already has (from a saved project) unless
+        another node carries it; otherwise it gets the smallest free one, so
+        numbers stay put when other nodes are removed.
+        """
+        if getattr(wf_node, 'node_type', '') not in self.NUMBERED_NODE_TYPES:
+            return
+        used = {getattr(n, 'insights_number', 0) for n in self.workflow_nodes
+                if n is not wf_node and getattr(n, 'node_type', '') in self.NUMBERED_NODE_TYPES}
+        current = getattr(wf_node, 'insights_number', 0) or 0
+        if current > 0 and current not in used:
+            return
+        number = 1
+        while number in used:
+            number += 1
+        wf_node.insights_number = number
+
     def add_node(self, wf_node, pos):
         wf_node.set_position(pos)
         self.workflow_nodes.append(wf_node)
+        self._assign_insights_number(wf_node)
         item_cls = _NODE_ITEM_MAP.get(wf_node.node_type, NodeItem)
         if item_cls in (NodeItem,):
             ni = item_cls(wf_node)

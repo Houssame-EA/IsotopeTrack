@@ -3,9 +3,12 @@
 The pipeline has four stages:
 
 ``resolve_scope``
-    Collects every loaded sample and works out its replicate groups (see
-    :mod:`results.insights.replicates`). Canvas selection and element choices
-    are never consulted, so a finding can surface anywhere.
+    Collects the samples checked in the Single and Multi-Sample nodes on the
+    canvas, or every loaded sample when there is no such node, none has a
+    sample checked, or there are more than :data:`MAX_SELECTOR_NODES` of them,
+    and works out their replicate groups (see
+    :mod:`results.insights.replicates`). Element choices are never consulted,
+    so a finding can surface in any element.
 
 ``gather_scope_data``
     Collects the raw particle dicts for that scope. Cheap enough for the GUI
@@ -730,6 +733,37 @@ def _dedupe(seq) -> list[str]:
     return [x for x in seq if x and not (x in seen or seen.add(x))]
 
 
+_BATCH_SPLITS: dict[int, tuple[list, int, dict]] = {}
+"""Batch list identity to ``(batch, length, pool)``, the last split of each batch."""
+
+
+def _split_batch(batch: list) -> dict[str, list[dict]]:
+    """Split a batch's particles by sample, reusing the split while the batch is unchanged.
+
+    The batch list itself is kept with its split, so its identity cannot be
+    reused by another list while the entry exists; a changed length means
+    particles were added or removed, and the batch is split again.
+
+    Args:
+        batch: Particle dicts carrying ``source_sample``.
+
+    Returns:
+        Sample name to its particle dicts, without unnamed particles.
+    """
+    key = id(batch)
+    cached = _BATCH_SPLITS.get(key)
+    if cached is not None and cached[0] is batch and cached[1] == len(batch):
+        return cached[2]
+    pool: dict[str, list[dict]] = {}
+    for p in batch:
+        pool.setdefault(p.get("source_sample", ""), []).append(p)
+    pool.pop("", None)
+    if len(_BATCH_SPLITS) >= 8:
+        _BATCH_SPLITS.clear()
+    _BATCH_SPLITS[key] = (batch, len(batch), pool)
+    return pool
+
+
 def _raw_pool(scene, parent_window) -> dict[str, list[dict]]:
     """Collect every loaded particle, grouped by sample, with all elements intact.
 
@@ -737,7 +771,10 @@ def _raw_pool(scene, parent_window) -> dict[str, list[dict]]:
     bypassing the selector nodes so that no element selection can narrow it.
 
     A batch node's particle pool takes precedence when one is on the canvas,
-    because in that workflow the main window holds no per-sample data.
+    because in that workflow the main window holds no per-sample data. The
+    split of a batch into samples is kept until the batch itself changes, so
+    the same lists come back on every check and the scope's key stays the
+    same; new lists on every call would make the panel search without end.
 
     Args:
         scene: The canvas scene, searched for a batch node.
@@ -749,10 +786,7 @@ def _raw_pool(scene, parent_window) -> dict[str, list[dict]]:
     for node in getattr(scene, "workflow_nodes", []):
         batch = getattr(node, "batch_particle_data", None)
         if batch:
-            pool: dict[str, list[dict]] = {}
-            for p in batch:
-                pool.setdefault(p.get("source_sample", ""), []).append(p)
-            pool.pop("", None)
+            pool = _split_batch(batch)
             if pool:
                 return pool
 
@@ -764,21 +798,28 @@ def _raw_pool(scene, parent_window) -> dict[str, list[dict]]:
 class AnalysisScope:
     """Which samples the Insights engine looks at, and how they group.
 
-    Insights always searches every loaded sample and every element, whatever
-    is selected on the canvas, so that a finding can surface anywhere. Each
-    card then narrows the node it builds to the samples and elements the
-    finding is about.
+    Insights searches the samples checked in the sample selector nodes on the
+    canvas, and every loaded sample when there is no selector, none has a
+    sample checked, or there are too many selectors to follow. Every element
+    is always searched. Each card then narrows the node it builds to the
+    samples and elements the finding is about.
 
     Attributes:
         sample_names: The samples to analyse, in load order.
-        origin: Where the samples came from. ``"all"`` for the loaded pool;
-            ``"batch"`` when a batch node supplies them.
+        origin: Where the samples came from. ``"node"`` for the samples
+            checked in one numbered selector node; ``"canvas"`` for the
+            samples checked in every selector node; ``"all"`` for the loaded
+            pool; ``"batch"`` when a batch node supplies them.
         counts: Particle count per entry in *sample_names*, index aligned.
         pool_ids: Identity of each sample's particle list, index aligned. Two
             different datasets can share a name and a particle count, so the
             counts alone are not enough to tell cached contexts apart.
         groups: Replicate groups covering *sample_names*, see
             :mod:`results.insights.replicates`.
+        selectors: How many Single and Multi-Sample nodes are on the canvas.
+        node_number: The number of the selector node searched, or 0 when the
+            search is not tied to one node.
+        labels: The isotopes that node sends on; empty means every element.
     """
 
     sample_names: tuple[str, ...]
@@ -786,6 +827,9 @@ class AnalysisScope:
     counts: tuple[int, ...]
     pool_ids: tuple[int, ...] = ()
     groups: tuple[ReplicateGroup, ...] = ()
+    selectors: int = 0
+    node_number: int = 0
+    labels: tuple[str, ...] = ()
 
     @property
     def key(self) -> str:
@@ -798,8 +842,8 @@ class AnalysisScope:
         """
         ids = ",".join(str(i) for i in self.pool_ids)
         grouping = ";".join(f"{g.name}={','.join(g.members)}" for g in self.groups)
-        return (f"{self.origin}|{'|'.join(self.sample_names)}|{sum(self.counts)}|{ids}"
-                f"|{grouping}")
+        return (f"{self.origin}{self.node_number or ''}|{'|'.join(self.sample_names)}"
+                f"|{sum(self.counts)}|{ids}|{grouping}|{','.join(self.labels)}")
 
     @property
     def total_particles(self) -> int:
@@ -822,6 +866,8 @@ class AnalysisScope:
         return {
             "all": "all loaded samples",
             "batch": "batch samples",
+            "canvas": "the samples checked in your selector nodes",
+            "node": f"the samples checked in node {self.node_number}",
         }.get(self.origin, self.origin)
 
     @property
@@ -837,25 +883,145 @@ class AnalysisScope:
         return None
 
 
-def resolve_scope(scene, parent_window) -> AnalysisScope:
-    """Collect every loaded sample and work out its replicate groups.
+MAX_SELECTOR_NODES = 10
+"""Most sample selector nodes Insights follows before searching every sample."""
 
-    Canvas selection and the element choices of selector nodes are never
-    consulted, so the search always covers everything. Replicate groups come
-    from the user's own grouping on the canvas when there is any, and are
-    otherwise guessed from sample names.
+SELECTOR_TYPES = ("sample_selector", "multiple_sample_selector")
+"""Node types whose checked samples set what Insights searches."""
+
+
+def selector_nodes(scene) -> list:
+    """The Single and Multi-Sample nodes on the canvas, in the order they were added."""
+    return [n for n in getattr(scene, "workflow_nodes", None) or []
+            if getattr(n, "node_type", "") in SELECTOR_TYPES]
+
+
+def checked_samples(node) -> list[str]:
+    """The samples a selector node has checked.
+
+    A Single Sample node checks its sample, or all its replicates when it sums
+    them. A Multi-Sample node checks the samples marked included in its
+    table, or its selected samples when it has no table.
 
     Args:
-        scene: The canvas scene, read for a batch node and for the user's
-            replicate groups.
-        parent_window: Main window holding the loaded particle data.
+        node: A Single or Multi-Sample node.
 
     Returns:
-        The resolved scope, with empty ``sample_names`` when nothing is loaded.
+        Sample names, in the node's order; empty when nothing is checked.
+    """
+    if getattr(node, "node_type", "") == "sample_selector":
+        members = list(getattr(node, "replicate_samples", None) or [])
+        if getattr(node, "sum_replicates", False) and members:
+            return [str(m) for m in members]
+        sample = getattr(node, "selected_sample", None)
+        return [str(sample)] if sample else []
+    config = getattr(node, "sample_config", None) or {}
+    if config:
+        return [str(s) for s, c in config.items() if (c or {}).get("included")]
+    return [str(s) for s in getattr(node, "selected_samples", None) or []]
+
+
+def node_number(node) -> int:
+    """The number a selector node shows on the canvas, or 0 when it has none."""
+    try:
+        return int(getattr(node, "insights_number", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def numbered_selectors(scene) -> list:
+    """The numbered Single and Multi-Sample nodes, in number order."""
+    return sorted((n for n in selector_nodes(scene) if node_number(n) > 0), key=node_number)
+
+
+def find_selector(scene, number: int):
+    """The selector node carrying *number*, or ``None``."""
+    for node in selector_nodes(scene):
+        if number and node_number(node) == number:
+            return node
+    return None
+
+
+def node_labels(node) -> tuple[str, ...]:
+    """The isotope labels a selector node sends on; empty when it keeps every element."""
+    out = []
+    for item in getattr(node, "selected_isotopes", None) or []:
+        label = item.get("label") if isinstance(item, dict) else item
+        if label and str(label) not in out:
+            out.append(str(label))
+    return tuple(out)
+
+
+class _OneNode:
+    """A scene holding one node, for reading that node's own replicate groups."""
+
+    def __init__(self, node):
+        """Hold *node* as the only workflow node."""
+        self.workflow_nodes = [node]
+
+
+def canvas_samples(scene) -> tuple[list[str], int]:
+    """The samples checked across the canvas's selector nodes.
+
+    Args:
+        scene: The canvas scene.
+
+    Returns:
+        ``(samples, selectors)``: every checked sample once, in node order,
+        and how many selector nodes there are. *samples* is empty when there
+        are more than :data:`MAX_SELECTOR_NODES` of them, so every sample is
+        searched instead.
+    """
+    nodes = selector_nodes(scene)
+    if len(nodes) > MAX_SELECTOR_NODES:
+        return [], len(nodes)
+    return _dedupe(s for node in nodes for s in checked_samples(node)), len(nodes)
+
+
+def resolve_scope(scene, parent_window, number: int = 0) -> AnalysisScope:
+    """Collect the samples to search and work out their replicate groups.
+
+    With *number*, the search follows that one selector node as its output
+    does: its checked samples, its own groups (a sum group is one unit) and
+    the elements it sends on. Without it, the samples checked in every Single
+    and Multi-Sample node are searched, over every element; every loaded
+    sample is, when there is no such node, none has a loaded sample checked,
+    or there are more than :data:`MAX_SELECTOR_NODES` of them. Replicate
+    groups come from the user's own grouping on the canvas when there is any,
+    and are otherwise guessed from sample names.
+
+    Args:
+        scene: The canvas scene, read for selector nodes, a batch node and
+            the user's replicate groups.
+        parent_window: Main window holding the loaded particle data.
+        number: A selector node's number; 0, or a number no node carries,
+            searches across the canvas instead.
+
+    Returns:
+        The resolved scope, with empty ``sample_names`` when nothing is loaded
+        or the chosen node has no loaded sample checked.
     """
     pool = _raw_pool(scene, parent_window)
     origin = "batch" if _find_batch_node(scene) is not None and pool else "all"
     names = [n for n in _dedupe(pool.keys()) if pool.get(n)]
+    node = find_selector(scene, number)
+    if node is not None:
+        wanted = set(checked_samples(node))
+        names = [n for n in names if n in wanted]
+        counts = tuple(len(pool.get(n, ())) for n in names)
+        pool_ids = tuple(id(pool.get(n)) for n in names)
+        try:
+            user_map = user_group_map(_OneNode(node), names)
+        except Exception:
+            _itk_log.exception("[Insights] could not read the node's groups")
+            user_map = {}
+        groups = tuple(resolve_groups(names, user_map))
+        return AnalysisScope(tuple(names), "node", counts, pool_ids, groups,
+                             len(selector_nodes(scene)), number, node_labels(node))
+    checked, selectors = canvas_samples(scene)
+    picked = [n for n in names if n in set(checked)]
+    if picked:
+        names, origin = picked, "canvas"
     counts = tuple(len(pool.get(n, ())) for n in names)
     pool_ids = tuple(id(pool.get(n)) for n in names)
     try:
@@ -864,7 +1030,7 @@ def resolve_scope(scene, parent_window) -> AnalysisScope:
         _itk_log.exception("[Insights] could not read replicate groups")
         user_map = {}
     groups = tuple(resolve_groups(names, user_map))
-    return AnalysisScope(tuple(names), origin, counts, pool_ids, groups)
+    return AnalysisScope(tuple(names), origin, counts, pool_ids, groups, selectors)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1083,6 +1249,40 @@ _CTX_CACHE_MAX = 3
 _CTX_LOCK = threading.Lock()
 
 
+ELEMENT_KEYS = ("elements", "element_mass_fg", "particle_mass_fg", "element_moles_fmol",
+                "particle_moles_fmol", "element_diameter_nm", "particle_diameter_nm")
+"""Particle keys holding a value per element."""
+
+
+def keep_elements(particles: list[dict], labels) -> list[dict]:
+    """Particles reduced to the given isotopes, as a selector node sends them on.
+
+    Each particle is copied with its per-element values limited to *labels*;
+    a particle left with none of them is dropped.
+
+    Args:
+        particles: Particle dicts.
+        labels: Isotope labels to keep.
+
+    Returns:
+        New particle dicts; the originals are not changed.
+    """
+    keep = set(labels)
+    out = []
+    for p in particles:
+        elements = {k: v for k, v in (p.get("elements") or {}).items() if k in keep}
+        if not elements:
+            continue
+        q = dict(p)
+        q["elements"] = elements
+        for key in ELEMENT_KEYS[1:]:
+            values = p.get(key)
+            if isinstance(values, dict):
+                q[key] = {k: v for k, v in values.items() if k in keep}
+        out.append(q)
+    return out
+
+
 def gather_scope_data(
     scene, parent_window, scope: AnalysisScope
 ) -> tuple[list[dict], np.ndarray]:
@@ -1106,6 +1306,8 @@ def gather_scope_data(
     idx_parts: list[np.ndarray] = []
     for i, name in enumerate(scope.sample_names):
         chunk = pool.get(name) or []
+        if scope.labels:
+            chunk = keep_elements(chunk, scope.labels)
         particles.extend(chunk)
         idx_parts.append(np.full(len(chunk), i, dtype=np.int32))
 

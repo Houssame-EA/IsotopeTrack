@@ -298,4 +298,4 @@ def test_reference_dialog_keeps_only_changes(app):
     with pytest.raises(ValueError):
         dlg.values()
     dlg._restore()
-    assert dlg.values() == {"crust": {}, "minerals": {}}
+    assert dlg.values() == {"crust": {}, "minerals": {}, "isotope_sources": {}}
