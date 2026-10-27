@@ -1419,9 +1419,8 @@ class SmartInsightsPanel(QWidget):
         passed its last abort check will still emit, and without this it would
         deliver results for the previous scope into the current panel.
 
-        A cancelled worker is held in ``_retired`` until its thread actually
-        exits, because letting a running ``QThread`` be garbage collected
-        crashes the interpreter.
+        A cancelled worker is kept until its thread actually exits (see
+        :meth:`_retire`).
         """
         w = self._worker
         self._pending = set()
@@ -1433,11 +1432,45 @@ class SmartInsightsPanel(QWidget):
             except (RuntimeError, TypeError):
                 pass
         self._worker = None
-        if w.isRunning():
+        if not w.isFinished():
             w.cancel()
-            self._retired.append(w)
-            w.finished.connect(lambda: self._retired.remove(w)
-                               if w in self._retired else None)
+        self._retire(w)
+
+    def _retire(self, w):
+        """Keep a worker referenced until its thread has really ended.
+
+        A worker hands over its results from inside its thread, before the
+        thread ends. If the panel dropped its last reference then, the thread
+        would hold the only one and free itself from within, and Qt aborts
+        the application ("QThread: Destroyed while thread is still
+        running"). The worker is kept in ``_retired`` and released by
+        :meth:`_reap_retired` on the GUI thread once it has finished.
+
+        Args:
+            w: A worker, or ``None``.
+        """
+        if w is None or w in self._retired or w.isFinished():
+            return
+        self._retired.append(w)
+        w.finished.connect(self._reap_retired)
+        if w.isFinished():
+            QTimer.singleShot(0, lambda: self._reap_retired(w))
+
+    def _reap_retired(self, w=None):
+        """Release a kept worker once its thread has fully exited.
+
+        Runs on the GUI thread when the worker reports it has finished; the
+        short wait covers the moment between that report and the thread's
+        actual end.
+
+        Args:
+            w: The worker; the one that sent the finished signal when omitted.
+        """
+        w = w or self.sender()
+        if w is None or w not in self._retired:
+            return
+        w.wait(2000)
+        self._retired.remove(w)
 
     def _update_sample_strip(self, scope: AnalysisScope | None = None):
         """Describe which samples are searched and how they group into replicates.
@@ -1481,6 +1514,7 @@ class SmartInsightsPanel(QWidget):
             keys: The detectors that ran.
             scope_key: The scope the search was for.
         """
+        self._retire(self._worker)
         self._worker = None
         self._pending = set()
         self._bar.setVisible(False)

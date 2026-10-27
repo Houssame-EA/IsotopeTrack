@@ -281,3 +281,67 @@ def test_mass_bias_reference_read_from_an_isotopic_ratio_node():
     assert mass_bias_reference(SimpleNamespace(workflow_nodes=[other, off, half])) is None
     ref = mass_bias_reference(SimpleNamespace(workflow_nodes=[off, half, full]))
     assert ref == {"ref_num": "205Tl", "ref_den": "203Tl", "certified": 2.3871, "measured": 2.31}
+
+
+
+def test_groups_are_compared_side_by_side_or_in_colour(app, pooled):
+    """With two groups, X–Y views get one panel per group on shared axes; distributions colour them."""
+    s = rr.Suggestion("Fe and Pb", "r", "correlation", 0.8, "x", elements=("56Fe", "206Pb"),
+                      explain_key="correlation")
+    spec = F.figure_for(s, context(pooled, "correlation", s.elements))
+    plots = [p for p in spec["panels"] if p["kind"] != "text"]
+    pairs = [p for p in plots if 'sample == "' in (p.get("filter") or "")]
+    assert len(pairs) >= 4 and len(pairs) % 2 == 0
+    first = pairs[0]
+    second = next(p for p in pairs if p["title"].replace(" — B", "") == first["title"].replace(" — A", "")
+                  and p is not first)
+    assert first["filter"].endswith('sample == "A"') and second["filter"].endswith('sample == "B"')
+    assert all(p["filter"].endswith('sample == "A"') for p in pairs[:3])
+    assert (first["x_min"], first["x_max"], first["y_min"], first["y_max"]) == \
+           (second["x_min"], second["x_max"], second["y_min"], second["y_max"])
+    legend = spec["panels"][-1]["text"]
+    assert "One panel per group: (a) A, (d) B." in legend
+    assert "Each row is one group: A a–c; B d–f." in legend
+    assert "Between groups" in legend and "ρ" in legend
+    _pool, _units, table = pooled
+    assert render_problems(spec, table) == []
+
+
+def test_isotope_groups_differ_and_distributions_are_coloured(app, pooled):
+    """Groups A and B differ in 207Pb/206Pb; the histogram colours them and the check says so."""
+    s = rr.Suggestion("207Pb/206Pb", "r", "isotope", 0.8, "x", elements=("207Pb", "206Pb"),
+                      explain_key="isotope", facts={"ratio_cut": ("206Pb", 50.0)})
+    spec = F.figure_for(s, context(pooled, "isotope", s.elements))
+    hist = next(p for p in spec["panels"] if p["kind"] == "histogram")
+    assert hist["group_by"] == "sample"
+    legend = spec["panels"][-1]["text"]
+    assert "✗ 207Pb/206Pb ratio differs between groups" in legend
+
+
+def test_one_group_keeps_the_usual_layout(app, pooled):
+    """A single group draws the figure as before, with no per-group panels."""
+    pool, _units, _table = pooled
+    table = ev.table_from([("A", ("A_1", "A_2", "A_3"))], pool)
+    parts = [p for k in ("A_1", "A_2", "A_3") for p in pool[k]]
+    ctx = F.context_from(parts, ["56Fe", "206Pb"], {}, table=table)
+    s = rr.Suggestion("t", "r", "correlation", 0.8, "x", elements=("56Fe", "206Pb"),
+                      explain_key="correlation")
+    spec = F.figure_for(s, ctx)
+    assert not any('sample == "' in (p.get("filter") or "") for p in spec["panels"])
+
+
+
+def test_arrangement_follows_the_finding():
+    """A difference between groups keeps views in rows; a pattern with two views or more puts groups in rows."""
+    a = [{"kind": "scatter", "title": f"v{k} — A"} for k in range(2)]
+    b = [{"kind": "scatter", "title": f"v{k} — B"} for k in range(2)]
+    rows = [([{"kind": "histogram"}], "overlay", "wide"),
+            ([a[0], b[0]], "view 0", "split"), ([a[1], b[1]], "view 1", "split")]
+    same, mode = F.arrange(rows, ["A", "B"], between=True)
+    assert mode == "views" and same == rows
+    grouped, mode = F.arrange(rows, ["A", "B"], between=False)
+    assert mode == "groups"
+    assert [k for _p, _c, k in grouped] == ["wide", "group", "group"]
+    assert grouped[1][0] == a and grouped[2][0] == b
+    single, mode = F.arrange(rows[:2], ["A", "B"], between=False)
+    assert mode == "views"

@@ -155,3 +155,73 @@ def test_replicate_findings_still_get_their_own_selector(canvas, panel):
     kinds = [n.node_type for n in sc.workflow_nodes[before:]]
     assert "box_plot" in kinds and any(k.endswith("sample_selector") for k in kinds)
     assert "replicates apart" in panel._card_source(s)
+
+
+def _settle(app, until, seconds=20.0):
+    """Process events until *until* is true or the time runs out."""
+    import time
+    end = time.time() + seconds
+    while time.time() < end and not until():
+        app.processEvents()
+        time.sleep(0.01)
+    app.processEvents()
+
+
+def test_switching_nodes_while_searching_does_not_abort(canvas, panel):
+    """Stopped searches are released on the GUI thread once their thread has ended."""
+    app, _dlg, sc, multi, single, owner = canvas
+    for number in (1, 2, 0, 1, 2, 1):
+        panel.set_node(number)
+        app.processEvents()
+    _settle(app, lambda: not panel._retired and (panel._worker is None
+                                                 or not panel._worker.isRunning()))
+    assert panel._retired == []
+
+
+def test_node_calculation_worker_is_released_after_it_ends(canvas):
+    """A selector's background calculation is released on the GUI thread when it finishes."""
+    app, _dlg, sc, multi, single, owner = canvas
+    from widget.canvas_widgets import _NODE_FACTORIES
+    plot = _NODE_FACTORIES["histogram_plot"](owner)
+    sc.add_node(plot, QPointF(700, 400))
+    sc.add_link(single, "output", plot, "input")
+    item = sc.node_items[single]
+    for _ in range(3):
+        item._run_calculation_async()
+    _settle(app, lambda: not getattr(item, "_calc_workers", None))
+    assert not item._calc_workers
+
+
+
+def test_a_finished_search_keeps_its_worker_until_the_thread_ends(canvas, panel, monkeypatch):
+    """When results arrive the worker's thread is still running; the panel must still hold it.
+
+    The worker is made to linger after sending its results, the window in
+    which dropping it made the thread free itself and abort the application.
+    """
+    import time
+    app, _dlg, sc, multi, single, owner = canvas
+    run = rr._AnalysisWorker.run
+
+    def lingering(self):
+        """Run the search, then stay alive a moment after the results are sent."""
+        run(self)
+        time.sleep(0.3)
+
+    monkeypatch.setattr(rr._AnalysisWorker, "run", lingering)
+    held = []
+    original = panel._on_done
+
+    def watch(keys=frozenset(), scope_key=""):
+        """Record whether the finishing worker is still referenced by the panel."""
+        w = panel._worker
+        original(keys, scope_key)
+        if w is not None:
+            held.append(w.isFinished() or w in panel._retired)
+
+    panel._on_done = watch
+    for number in (1, 2, 1):
+        panel.set_node(number)
+        _settle(app, lambda: panel._worker is None and not panel._retired, seconds=30)
+    assert held and all(held)
+    assert panel._retired == []

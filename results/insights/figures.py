@@ -81,8 +81,11 @@ def _panel(kind: str, title: str, **settings) -> dict:
     """One panel's settings, before it is given a place on the page.
 
     Legends go below the plot and reference lines are named in them, so
-    nothing is written over the data.
+    nothing is written over the data. Combination charts slant their long
+    labels so they do not run into each other.
     """
+    if kind == "combinations" and not settings.get("horizontal"):
+        settings.setdefault("xtick_rotation", 45)
     return {"kind": kind, "title": title, "legend_loc": "below", "marks_in_legend": True,
             **settings}
 
@@ -1481,6 +1484,9 @@ figure's legend.
 
 ISOTOPE_DESIGNS = {_isotope_pair, _isotope_track, _isotope_groups}
 
+BETWEEN_DESIGNS = frozenset({_comparison, _replicates, _signature, _isotope_groups, _time})
+"""Stories whose finding is a difference between groups, laid out one row per view."""
+
 MAX_PANELS = 6
 """Most panels a story uses, a to f."""
 
@@ -1517,13 +1523,338 @@ def caption_text(title: str, captions: list[str]) -> str:
     return " ".join(parts)
 
 
+OVERLAY_KINDS = frozenset({"histogram", "ecdf", "box", "violin", "bar", "strip", "timeline",
+                           "ridgeline", "line"})
+"""Panels that show several groups at once, one colour each, and stay readable."""
+
+MAX_SPLIT_GROUPS = 3
+"""Most groups that get a panel each; more groups are shown in colour only."""
+
+MAX_GROUP_ROWS = 4
+"""Most rows of a figure comparing groups, each row one view of the finding."""
+
+
+def group_names(ctx: FigureContext) -> list[str]:
+    """The groups the figure compares: the samples of its table, when there are two or more."""
+    if ctx.table is None or not len(ctx.table):
+        return []
+    names = [str(n) for n in ctx.table.samples()]
+    return names if len(names) >= 2 else []
+
+
+def _for_group(panel: dict, name: str) -> dict:
+    """A copy of *panel* showing only the particles of group *name*."""
+    import json
+    rule = f"sample == {json.dumps(name)}"
+    old = (panel.get("filter") or "").strip()
+    out = dict(panel)
+    out["filter"] = f"({old}) and {rule}" if old else rule
+    out["title"] = f"{panel.get('title') or ''} — {name}".strip(" —")
+    return out
+
+
+XY_KINDS = frozenset({"scatter", "hexbin", "density", "contour"})
+"""Split panels whose X and Y ranges are made the same across the groups."""
+
+
+def _axis_range(values: np.ndarray, log: bool) -> tuple[float, float] | None:
+    """A padded range covering *values*, in log or linear terms."""
+    v = values[np.isfinite(values)]
+    if log:
+        v = v[v > 0]
+    if v.size < 2:
+        return None
+    if log:
+        lo, hi = np.log10(v.min()), np.log10(v.max())
+        pad = max(hi - lo, 0.1) * 0.05
+        return 10 ** (lo - pad), 10 ** (hi + pad)
+    lo, hi = float(v.min()), float(v.max())
+    pad = max(hi - lo, abs(hi) * 0.01, 1e-12) * 0.05
+    return lo - pad, hi + pad
+
+
+def same_ranges(ctx: FigureContext, panels: list[dict]) -> list[dict]:
+    """Give the per-group copies of an X–Y panel the same axis ranges.
+
+    Each copy would otherwise fit its own group, and two panels side by side
+    on different scales cannot be compared by eye. The range covers every
+    group's particles that the panels draw.
+    """
+    if ctx.table is None or not panels or panels[0].get("kind") not in XY_KINDS:
+        return panels
+    first = panels[0]
+    out = [dict(p) for p in panels]
+    for axis in ("x", "y"):
+        expr = first.get(axis)
+        if not expr:
+            continue
+        try:
+            v = ev._eval(ctx.table, expr)
+            m = np.zeros(len(ctx.table), dtype=bool)
+            for p in panels:
+                m |= ev.mask(ctx.table, p.get("filter") or "")
+        except Exception:
+            continue
+        found = _axis_range(v[m], bool(first.get(f"log_{axis}")))
+        if found is None:
+            continue
+        for p in out:
+            p[f"{axis}_min"], p[f"{axis}_max"] = f"{found[0]:.6g}", f"{found[1]:.6g}"
+    return out
+
+
+def by_groups(story: list, names: list[str], ctx: FigureContext | None = None
+              ) -> list[tuple[list[dict], str, str]]:
+    """Lay a story out to compare groups.
+
+    A panel that can show the groups together (histograms, cumulative curves,
+    box, bar and dot plots, timelines) colours them, one colour per group. A
+    panel that cannot without becoming unreadable (scatters, density maps,
+    ternaries, pies, combinations, matrices), or one already split another
+    way (with and without an element, by size), is drawn once per group,
+    side by side. A panel already comparing samples is kept as it is.
+
+    Args:
+        story: ``(panel, caption)`` pairs.
+        names: The groups, at least two.
+
+    Returns:
+        Rows of ``(panels, caption, kind)``; *kind* is ``"wide"`` for one
+        panel across the row and ``"split"`` for one panel per group.
+    """
+    rows = []
+    split_ok = len(names) <= MAX_SPLIT_GROUPS
+    for panel, caption in story:
+        kind = panel.get("kind")
+        grouping = panel.get("group_by") or "none"
+        if grouping == "sample":
+            rows.append(([panel], caption, "wide"))
+        elif kind in OVERLAY_KINDS and grouping == "none":
+            rows.append(([dict(panel, group_by="sample")], caption + " Each colour is one group.",
+                          "wide"))
+        elif split_ok:
+            copies = [_for_group(panel, n) for n in names]
+            if ctx is not None:
+                copies = same_ranges(ctx, copies)
+            shared = " The panels share their axis ranges." if kind in XY_KINDS else ""
+            rows.append((copies, caption + shared, "split"))
+        elif kind in OVERLAY_KINDS or kind in ("scatter", "combinations"):
+            rows.append(([dict(panel, group_by="sample")], caption + " Each colour is one group.",
+                          "wide"))
+        else:
+            rows.append(([panel], caption + " All groups together.", "wide"))
+    return rows[:MAX_GROUP_ROWS]
+
+
+GROUP_ROW_VIEWS = 3
+"""Most views on one group's row when the groups are laid out in rows."""
+
+
+def arrange(rows, names: list[str], between: bool):
+    """Choose how a grouped figure is laid out, from what the finding is about.
+
+    A finding that is a difference between groups keeps one row per view with
+    the groups side by side (1 2 / 1 2), so each row compares the same view.
+    A finding about a pattern inside the material, shown in two or more
+    split views, gets one row per group (1 1 1 / 2 2 2): each group's story
+    reads along its row and every view lines up down its column. Panels
+    overlaying the groups in colour stay across the top.
+
+    Args:
+        rows: Rows from :func:`by_groups`.
+        names: The groups.
+        between: Whether the finding is a difference between groups.
+
+    Returns:
+        ``(rows, mode)``: the rows to draw, each ``(panels, caption, kind)``
+        where *kind* is ``"wide"``, ``"split"`` (views in rows) or
+        ``"group"`` (one group's views), and *mode* ``"views"`` or ``"groups"``.
+    """
+    splits = [r for r in rows if r[2] == "split"]
+    if between or len(splits) < 2:
+        return rows, "views"
+    wide = [r for r in rows if r[2] == "wide"]
+    views = splits[:GROUP_ROW_VIEWS]
+    room = max(0, MAX_GROUP_ROWS - len(names))
+    out = wide[:room]
+    for g, name in enumerate(names):
+        out.append(([panels[g] for panels, _c, _k in views], name, "group"))
+    return out, "groups"
+
+
+def rows_layout(rows, n_groups: int, caption: str = ""):
+    """Place grouped rows above the legend: a wide panel spans its row, the others share it equally.
+
+    Returns:
+        ``(panel_rects, caption_rect, width, height)`` as :func:`story_layout`.
+    """
+    cells = [len(panels) for panels, _c, kind in rows if kind != "wide"]
+    cols = max(2, min(max(cells) if cells else n_groups, max(MAX_SPLIT_GROUPS, GROUP_ROW_VIEWS)))
+    width = 5.4 * cols
+    plot_height = 3.9 * len(rows)
+    chars_per_line = max(40, int(width * 15))
+    lines = max(1, math.ceil(len(caption) / chars_per_line))
+    caption_height = 0.35 + 0.19 * lines
+    height = plot_height + caption_height
+    top = plot_height / height
+    row_h = top / len(rows)
+    rects = []
+    for r, (panels, _caption, kind) in enumerate(rows):
+        if kind == "wide":
+            rects.append([0.0, r * row_h, 1.0, row_h])
+        else:
+            w = 1.0 / len(panels)
+            rects.extend([k * w, r * row_h, w, row_h] for k in range(len(panels)))
+    return rects, [0.0, top, 1.0, 1.0 - top], width, height
+
+
+def rows_caption(title: str, rows, names: list[str], views=None) -> str:
+    """The legend of a grouped figure, naming the panel of each group.
+
+    Args:
+        title: The finding's title.
+        rows: The rows drawn.
+        names: The groups.
+        views: For a figure laid out one row per group, the split views in
+            order, as ``(panels, caption, kind)``; each gets one sentence
+            listing its panel in every group.
+    """
+    from results.figure_builder.core.spec import panel_letter
+    parts = [f"{title}."]
+    i = 0
+    if views is not None:
+        for panels, caption, kind in rows:
+            if kind == "wide":
+                parts.append(f"({panel_letter(i, 'a')}) {caption}")
+                i += 1
+        first_group_row = i
+        per_row = len(views)
+        for v, (_panels, caption, _kind) in enumerate(views):
+            letters = [panel_letter(first_group_row + g * per_row + v, 'a') for g in range(len(names))]
+            which = ", ".join(f"({x}) {n}" for x, n in zip(letters, names))
+            parts.append(f"({', '.join(letters)}) {caption} One panel per group: {which}.")
+        parts.append("Each row is one group: " + "; ".join(
+            f"{n} {panel_letter(first_group_row + g * per_row, 'a')}–"
+            f"{panel_letter(first_group_row + g * per_row + per_row - 1, 'a')}"
+            for g, n in enumerate(names)) + ".")
+        return " ".join(parts)
+    for panels, caption, kind in rows:
+        if kind == "wide":
+            parts.append(f"({panel_letter(i, 'a')}) {caption}")
+            i += 1
+            continue
+        letters = [panel_letter(i + k, 'a') for k in range(len(panels))]
+        which = ", ".join(f"({x}) {n}" for x, n in zip(letters, names))
+        parts.append(f"({letters[0]}–{letters[-1]}) {caption} One panel per group: {which}.")
+        i += len(panels)
+    return " ".join(parts)
+
+
+def _group_values(ctx: FigureContext, expr: str, rule: str, names: list[str]):
+    """``(group, values)`` of *expr* among the particles passing *rule*, per group."""
+    v = ev._eval(ctx.table, expr)
+    m = ev.mask(ctx.table, rule) & np.isfinite(v) & (v > 0)
+    col = ctx.table.column("sample")
+    return [(n, v[m & (col == n)]) for n in names]
+
+
+def _medians_between(ctx: FigureContext, expr: str, rule: str, what: str, names: list[str],
+                     tolerance: float = 0.10) -> str:
+    """Compare a value's median between groups, adding a check; return the sentence."""
+    import warnings
+    from scipy import stats
+    groups = [(n, v) for n, v in _group_values(ctx, expr, rule, names) if v.size >= 5]
+    if len(groups) < 2:
+        return ""
+    meds = [(n, float(np.median(v)), v.size) for n, v in groups]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        try:
+            p = float(stats.kruskal(*[v for _n, v in groups]).pvalue)
+        except ValueError:
+            p = math.nan
+    lo, hi = min(m for _n, m, _k in meds), max(m for _n, m, _k in meds)
+    gap = hi / lo - 1 if lo > 0 else math.nan
+    same = not (p < 0.05 and gap > tolerance)
+    ctx.checks.add(same, f"{what} {'is alike in every group' if same else 'differs between groups'} "
+                         f"({', '.join(f'{n} {m:.3g}' for n, m, _k in meds)}; Kruskal-Wallis "
+                         f"{ev.p_text(p)})")
+    return (f"Between groups, median {what}: "
+            + "; ".join(f"{n} {m:.3g} ({k:,} particles)" for n, m, k in meds)
+            + (f", {gap:.0%} apart" if math.isfinite(gap) else "") + ".")
+
+
+def _correlation_between(ctx: FigureContext, a: str, b: str, names: list[str]) -> str:
+    """Rank correlation of two elements in each group, adding a check; return the sentence."""
+    xa, xb = _amount(ctx, a), _amount(ctx, b)
+    rule = f"{a} > 0 and {b} > 0"
+    xs = dict(_group_values(ctx, xb, rule, names))
+    col = ctx.table.column("sample")
+    va, vb = ev._eval(ctx.table, xa), ev._eval(ctx.table, xb)
+    m = ev.mask(ctx.table, rule) & (va > 0) & (vb > 0)
+    rows = []
+    for n in names:
+        g = m & (col == n)
+        rho, _p, k = ev.spearman(np.log10(vb[g]), np.log10(va[g])) if g.sum() else (math.nan, 0, 0)
+        if math.isfinite(rho):
+            rows.append((n, rho, k))
+    if len(rows) < 2:
+        return ""
+    holds = all(np.sign(r) == np.sign(rows[0][1]) and abs(r) >= 0.2 for _n, r, _k in rows)
+    ctx.checks.add(holds, f"the correlation {'holds in every group' if holds else 'differs between groups'} "
+                          f"({', '.join(f'{n} ρ = {r:+.2f}' for n, r, _k in rows)})")
+    return ("Between groups: " + "; ".join(f"{n} ρ = {r:+.2f} ({k:,} particles)" for n, r, k in rows)
+            + ".")
+
+
+def between_groups(s, ctx: FigureContext, design, names: list[str]) -> str:
+    """The legend sentence comparing the finding between groups, with its check."""
+    if not names or ctx.table is None or not s.elements:
+        return ""
+    els = list(s.elements)
+    try:
+        if design is _correlation and len(els) >= 2:
+            return _correlation_between(ctx, els[0], els[1], names)
+        if design is _stoichiometry and len(els) >= 2:
+            prefix = "moles" if "moles" in ctx.quantities else "counts"
+            ratio = f"{_expr(prefix, els[0])} / {_expr(prefix, els[1])}"
+            return _medians_between(ctx, ratio, f"{els[0]} > 0 and {els[1]} > 0",
+                                    f"{els[0]}/{els[1]} ratio", names)
+        if design is _interference and len(els) >= 2:
+            return _medians_between(ctx, f"{els[1]} / {els[0]}", f"{els[1]} > 0 and {els[0]} > 0",
+                                    f"{els[1]}/{els[0]} share", names, tolerance=0.2)
+        if design in ISOTOPE_DESIGNS and len(els) >= 2:
+            return _medians_between(ctx, _ratio(ctx, els[0], els[1]), _used(s, els[0], els[1]),
+                                    f"{els[0]}/{els[1]} ratio", names, tolerance=0.01)
+        if design is _cooccurrence and len(els) >= 2:
+            col = ctx.table.column("sample")
+            rare, common = ev._eval(ctx.table, els[0]) > 0, ev._eval(ctx.table, els[1]) > 0
+            rows = [(n, float(np.mean(common[rare & (col == n)])), int((rare & (col == n)).sum()))
+                    for n in names if (rare & (col == n)).sum() >= 10]
+            if len(rows) < 2:
+                return ""
+            spread = max(r for _n, r, _k in rows) - min(r for _n, r, _k in rows)
+            ctx.checks.add(spread <= 0.15, f"{els[0]} particles carry {els[1]} "
+                                           + ", ".join(f"{n} {r:.0%}" for n, r, _k in rows))
+            return ("Between groups, share of " + els[0] + " particles carrying " + els[1] + ": "
+                    + "; ".join(f"{n} {r:.0%} of {k:,}" for n, r, k in rows) + ".")
+        if design in (_distribution, _outlier, _rare, _signature, _size_trend):
+            return _medians_between(ctx, _amount(ctx, els[0]), "", f"{els[0]} per particle", names)
+    except Exception:
+        return ""
+    return ""
+
+
 def figure_for(s, ctx: FigureContext) -> dict | None:
     """Build the figure that tells a finding's story, panels a to f with a legend.
 
     The panels follow the finding's story in order: the pattern, the
     evidence, the meaning, then the limits. A caption panel
     under them, written like a journal figure legend, says what each panel
-    shows, with the finding's own numbers.
+    shows, with the finding's own numbers. When the figure's particles fall
+    into two or more groups, every view compares them (see
+    :func:`by_groups`) and the legend says whether the finding holds in
+    each group.
 
     Args:
         s: The finding (:class:`~results.insights.engine.Suggestion`).
@@ -1555,19 +1886,34 @@ def figure_for(s, ctx: FigureContext) -> dict | None:
     story = [(panel, caption) for panel, caption in story if panel][:MAX_PANELS]
     if not story:
         return None
-    legend = caption_text(s.title, [c for _p, c in story])
+    names = group_names(ctx) if design not in (_types_overview, _particle_type) else []
+    if names:
+        rows = by_groups(story, names, ctx)
+        views = [r for r in rows if r[2] == "split"][:GROUP_ROW_VIEWS]
+        rows, mode = arrange(rows, names, design in BETWEEN_DESIGNS)
+        legend = rows_caption(s.title, rows, names, views if mode == "groups" else None)
+        between = between_groups(s, ctx, design, names)
+        if between:
+            legend = f"{legend} {between}"
+        flat = [panel for panels, _c, _k in rows for panel in panels]
+    else:
+        legend = caption_text(s.title, [c for _p, c in story])
+        flat = [panel for panel, _c in story]
     note = limits_sentence(ctx)
     if note:
         legend = f"{legend} {note}"
     verdict = ctx.checks.line()
     if verdict:
         legend = f"{legend} {verdict}"
-    rects, caption_rect, width, height = story_layout(len(story), legend)
+    if names:
+        rects, caption_rect, width, height = rows_layout(rows, len(names), legend)
+    else:
+        rects, caption_rect, width, height = story_layout(len(story), legend)
     spec = default_spec()
     spec["figure"].update({"width": width, "height": height, "panel_letters": True})
     spec["data_type"] = ((s.config or {}).get("data_type") or "Counts"
                          if design in (_types_overview, _particle_type) else "Counts")
-    panels = [make_panel(rect=list(rects[i]), **panel) for i, (panel, _c) in enumerate(story)]
+    panels = [make_panel(rect=list(rects[i]), **panel) for i, panel in enumerate(flat)]
     panels.append(make_panel(rect=list(caption_rect), kind="text", caption=True,
                              text=legend,
                              text_size=9.5, panel_bg="#ffffff"))

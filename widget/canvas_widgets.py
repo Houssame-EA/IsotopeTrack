@@ -3170,7 +3170,7 @@ class _StatusNodeMixin:
         self._calc_workers.add(worker)
         worker.finished_ok.connect(self._on_calc_done)
         worker.failed.connect(self._on_calc_failed)
-        worker.finished.connect(lambda w=worker: self._cleanup_worker(w))
+        worker.finished.connect(self._cleanup_finished_worker)
 
         self.update()
         worker.start()
@@ -3200,6 +3200,21 @@ class _StatusNodeMixin:
         """
         _itk_log.error(f"Calculation error: {message}")
         self.update()
+
+    def _cleanup_finished_worker(self):
+        """Release the worker that just finished, on the GUI thread.
+
+        Connected as a method of the node item, so Qt runs it on the GUI
+        thread. A lambda would run on the worker's own thread and could drop
+        the last reference to the thread from inside it, which aborts the
+        application. The short wait covers the moment between the finished
+        signal and the thread's actual end.
+        """
+        worker = self.sender()
+        if worker is None:
+            return
+        worker.wait(2000)
+        self._cleanup_worker(worker)
 
     def _cleanup_worker(self, worker):
         """Drop a finished worker so it can be garbage-collected."""
