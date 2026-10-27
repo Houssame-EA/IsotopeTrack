@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 
 from results.figure_builder.core.common import (
@@ -192,21 +194,70 @@ def _corr_matrix(values, base, panel):
     return R, P, N
 
 
-def combination_keys(table, exprs, mask):
-    """Per-particle combination labels (bare symbols joined by ' + ')."""
-    values = [np.nan_to_num(evaluate(e, table), nan=0.0) for e in exprs]
+def _symbol_names(exprs):
+    """Bare element symbols of the expressions, or the expression itself."""
     names = []
     for e in exprs:
         sym, _mass = split_symbol(e)
         names.append(sym if sym else e)
-    idx = np.flatnonzero(mask)
-    keys = np.empty(len(mask), dtype=object)
-    keys[:] = ''
-    det = np.vstack([v > 0 for v in values]) if values else np.zeros((0, len(mask)), dtype=bool)
-    for i in idx:
-        parts = [names[c] for c in range(len(values)) if det[c, i]]
-        keys[i] = ' + '.join(parts) if parts else 'none'
-    return keys, values
+    return names
+
+
+def combination_codes(values, mask):
+    """Integer code of each particle's detected-element pattern.
+
+    Args:
+        values (list[np.ndarray]): One array per column, detected where > 0.
+        mask (np.ndarray): Particles to classify.
+
+    Returns:
+        tuple: ``(codes, patterns, counts)`` where ``codes`` is -1 outside
+        *mask*, ``patterns`` is a boolean ``(K, ncols)`` array of the K
+        distinct patterns and ``counts`` the particles in each.
+    """
+    n = len(mask)
+    codes = np.full(n, -1, dtype=np.intp)
+    if not mask.any():
+        return codes, np.zeros((0, len(values)), dtype=bool), np.zeros(0, dtype=np.intp)
+    if not values:
+        codes[mask] = 0
+        return codes, np.zeros((1, 0), dtype=bool), np.array([int(mask.sum())])
+    det = np.column_stack([np.nan_to_num(v[mask], nan=0.0) > 0 for v in values])
+    packed = np.packbits(det, axis=1)
+    if packed.shape[1] <= 8:
+        flat = np.zeros(packed.shape[0], dtype=np.uint64)
+        for b in range(packed.shape[1]):
+            flat = (flat << np.uint64(8)) | packed[:, b].astype(np.uint64)
+        uniq, first, inv, counts = np.unique(flat, return_index=True, return_inverse=True,
+                                             return_counts=True)
+        patterns = det[first]
+    else:
+        uniq, first, inv, counts = np.unique(packed, axis=0, return_index=True,
+                                             return_inverse=True, return_counts=True)
+        patterns = det[first]
+    codes[mask] = np.asarray(inv).reshape(-1)
+    return codes, patterns, counts
+
+
+def combination_keys(table, exprs, mask):
+    """Per-particle combination labels (bare symbols joined by ' + ')."""
+    values = [np.nan_to_num(evaluate(e, table), nan=0.0) for e in exprs]
+    names = _symbol_names(exprs)
+    codes, patterns, _counts = combination_codes(values, mask)
+    labels = [' + '.join(names[c] for c in np.flatnonzero(p)) or 'none' for p in patterns]
+    lookup = np.empty(len(labels) + 1, dtype=object)
+    lookup[:len(labels)] = labels
+    lookup[-1] = ''
+    return lookup[codes], values
+
+
+def _heat_row_label(pattern, exprs, names):
+    """Combination label as on the canvas heatmap: symbols by mass, joined by ', '."""
+    def mass(i):
+        _sym, m = split_symbol(exprs[i].split(':', 1)[-1])
+        return (0, int(m)) if m else (1, 0)
+    cols = sorted(np.flatnonzero(pattern), key=mass)
+    return ', '.join(names[c] for c in cols) or 'none'
 
 
 def _order_columns(panel, table, exprs):
@@ -261,7 +312,7 @@ def _search_mask(panel, combos) -> np.ndarray:
     exact = panel.get('heat_search_mode') == 'exact'
     out = []
     for c in combos:
-        parts = {p.strip() for p in str(c).split('+') if p.strip()}
+        parts = {p.strip() for p in re.split(r'[,+]', str(c)) if p.strip()}
         out.append(parts == wanted if exact else wanted <= parts)
     return np.array(out, dtype=bool)
 
@@ -339,21 +390,31 @@ def draw_heatmap(fig, ax, panel, table, report, style):
         order = np.lexsort((-M.sum(axis=1), np.argmax(M, axis=1)))
         M = M[order]
         rows = []
-        row_title = f'Particles (n = {M.shape[0]:,})'
+        row_title = f'Particles ({M.shape[0]:,})'
     elif rows_mode == 'combinations':
-        keys, _v = combination_keys(table, exprs, base)
-        uniq, counts = np.unique(keys[base], return_counts=True)
+        raw = [evaluate(e, table) for e in exprs]
+        codes, patterns, counts = combination_codes(raw, base)
+        names = _symbol_names(exprs)
+        labels = np.array([_heat_row_label(p, exprs, names) for p in patterns], dtype=str)
+        uniq, merge = np.unique(labels, return_inverse=True)
+        uniq = uniq.astype(object)
+        merge = np.asarray(merge).reshape(-1)
+        counts = np.bincount(merge, weights=counts, minlength=len(uniq)).astype(np.intp)
+        inside = codes >= 0
+        codes[inside] = merge[codes[inside]]
+        per_col = np.vstack([np.bincount(codes[inside], minlength=len(counts),
+                                         weights=np.clip(np.nan_to_num(v[inside], nan=0.0), 0, None))
+                             for v in raw]) if raw else np.zeros((0, len(counts)))
+        amount = per_col.sum(axis=0)
         ok = counts >= int(panel.get('min_count') or 0)
         ok &= _search_mask(panel, uniq)
-        uniq, counts = uniq[ok], counts[ok]
-        raw = [evaluate(e, table) for e in exprs]
-        amount = np.array([sum(float(np.nansum(np.clip(v[base & (keys == u)], 0, None))) for v in raw)
-                           for u in uniq])
+        ids = np.flatnonzero(ok)
+        uniq, counts, amount = uniq[ids], counts[ids], amount[ids]
         shares = 100 * amount / amount.sum() if amount.sum() > 0 else amount
         min_share = float(panel.get('heat_min_share') or 0)
         if min_share > 0:
             keep = shares >= min_share
-            uniq, counts, amount, shares = uniq[keep], counts[keep], amount[keep], shares[keep]
+            ids, uniq, counts, amount, shares = ids[keep], uniq[keep], counts[keep], amount[keep], shares[keep]
         sort = panel.get('heat_sort', 'count')
         if sort == 'amount':
             rank = -amount
@@ -366,21 +427,20 @@ def draw_heatmap(fig, ax, panel, table, report, style):
         order = np.argsort(rank, kind='stable')
         if sort == 'element':
             col = _sort_column(panel, exprs, table)
-            cells = np.array([summarise(base & (keys == uniq[i]))[col] for i in order], dtype=float)
+            cells = np.array([summarise(codes == ids[i])[col] for i in order], dtype=float)
             spreads.clear()
             order = order[np.argsort(-np.nan_to_num(cells, nan=-np.inf), kind='stable')]
         elif sort == 'element_total':
             col = _sort_column(panel, exprs, table)
-            totals = np.array([_element_total(raw[col], base & (keys == uniq[i])) for i in order])
-            order = order[np.argsort(-totals, kind='stable')]
+            totals = per_col[col, ids]
+            order = order[np.argsort(-totals[order], kind='stable')]
             report.stats.append(f'Heatmap rows by total {cols[col]}: ' + ', '.join(
-                f'{uniq[i]} {_element_total(raw[col], base & (keys == uniq[i])):.4g}'
-                for i in order[:8]))
+                f'{uniq[i]} {totals[i]:.4g}' for i in order[:8]))
         start = max(1, int(panel.get('heat_start') or 1))
         order = order[start - 1:start - 1 + max(1, int(panel.get('top_n') or 15))]
-        rows = [f'{uniq[i]} (n={counts[i]})' if panel.get('show_n', True) else str(uniq[i])
+        rows = [f'{uniq[i]} ({counts[i]})' if panel.get('show_n', True) else str(uniq[i])
                 for i in order]
-        M = np.array([summarise(base & (keys == uniq[i])) for i in order], dtype=float)
+        M = np.array([summarise(codes == ids[i]) for i in order], dtype=float)
         row_title = 'Element combination'
         unit = ''
     else:
@@ -476,6 +536,7 @@ def draw_heatmap(fig, ax, panel, table, report, style):
             ax.set_ylabel(panel['y_label'])
         if panel.get('annotate', True) and M.size <= 400 and finite.size:
             vmin, vmax = float(np.nanmin(finite)), float(np.nanmax(finite))
+            size = cell_fontsize(fig, ax, M.shape[1], M.shape[0])
             for i in range(M.shape[0]):
                 for j in range(M.shape[1]):
                     v = M[i, j]
@@ -486,8 +547,7 @@ def draw_heatmap(fig, ax, panel, table, report, style):
                         shade = v if norm is None else (np.log10(max(v, 1e-300)) if v > 0 else vmin)
                         lo = vmin if norm is None else np.log10(max(norm.vmin, 1e-300))
                         hi = vmax if norm is None else np.log10(norm.vmax)
-                        _cell_text(ax, j, i, txt, shade, lo, hi, cmap,
-                                   cell_fontsize(fig, ax, M.shape[1], M.shape[0]))
+                        _cell_text(ax, j, i, txt, shade, lo, hi, cmap, size)
     _colorbar(fig, ax, img, panel, report, label)
     report.counts[panel['id']] = int(base.sum())
 

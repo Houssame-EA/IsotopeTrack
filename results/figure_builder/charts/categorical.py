@@ -254,8 +254,11 @@ def _pie_items(panel, table, style):
             return (['Single element', 'Multiple elements'],
                     [float(np.sum(w[single])), float(np.sum(w[multi]))],
                     [pal[0], pal[1 % len(pal)]], int(keep.sum()), True)
-        uniq = list(dict.fromkeys(keys[keep].tolist()))
-        sizes = [float(np.sum(w[keep & (keys == u)])) for u in uniq]
+        found, first, inv = np.unique(keys[keep].astype(str), return_index=True, return_inverse=True)
+        totals = np.bincount(np.asarray(inv).reshape(-1), weights=w[keep], minlength=len(found))
+        seen = np.argsort(first, kind='stable')
+        uniq = [str(found[i]) for i in seen]
+        sizes = [float(totals[i]) for i in seen]
         order = np.argsort(-np.asarray(sizes), kind='stable')
         top = max(1, int(panel.get('top_n') or 8))
         labels = [names.get(uniq[i]) or uniq[i] for i in order[:top]]

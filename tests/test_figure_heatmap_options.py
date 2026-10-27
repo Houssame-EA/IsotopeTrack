@@ -119,6 +119,6 @@ def test_rows_ranked_by_the_total_of_one_element(app):
     by_total = matrix(table, heat_quantity="mass", heat_sort="element_total",
                       heat_sort_el="Pb")["rows"]
     by_counts_total = matrix(table, heat_sort="element_total", heat_sort_el="Pb")["rows"]
-    assert by_count[0].startswith("Pb (")
-    assert by_total[0].startswith("Cu + Pb") or by_total[0].startswith("Pb + Cu")
+    assert by_count[0] == "Pb (200)"
+    assert by_total[0] == "Cu, Pb (150)"
     assert by_counts_total[0] == by_total[0]
