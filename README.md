@@ -346,6 +346,12 @@ Thanks to everyone who has contributed to building IsotopeTrack:
 
 ---
 
+## Use of AI Tools
+
+Parts of IsotopeTrack's code, tests and documentation were written with the help of AI coding assistants. Every AI-assisted change is reviewed, tested and approved by the maintainers before it is merged, and the scientific methods follow the published work cited above.
+
+---
+
 ## License
 
 IsotopeTrack is free and open-source software released under the [GNU General Public License v3.0](LICENSE).

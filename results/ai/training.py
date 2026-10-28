@@ -18,10 +18,13 @@ Run from the repository root::
 
     python -m results.ai.training generate --backend ollama --model <teacher> --datasets 12 --out ~/Desktop/ai_train
     python -m results.ai.training build --out ~/Desktop/ai_train
+    python -m results.ai.lora_train --config ~/Desktop/ai_train/lora_config.yaml
 
 ``generate`` can be stopped and started again; finished questions are
 skipped. ``build`` splits the examples into ``train.jsonl`` and
 ``valid.jsonl`` for ``mlx_lm.lora`` and writes a ready ``lora_config.yaml``.
+Train with :mod:`results.ai.lora_train` rather than ``mlx_lm.lora`` itself:
+for Qwen3.5-family models plain ``mlx_lm.lora`` needs hundreds of GB.
 """
 from __future__ import annotations
 
@@ -381,7 +384,7 @@ LORA_CONFIG = """model: {model}
 train: true
 data: {data}
 fine_tune_type: lora
-num_layers: 16
+num_layers: 8
 batch_size: 1
 iters: {iters}
 learning_rate: 1.0e-5
@@ -391,7 +394,7 @@ val_batches: 25
 save_every: 100
 adapter_path: {adapters}
 max_seq_length: {max_len}
-grad_checkpoint: true
+grad_checkpoint: false
 mask_prompt: true
 lora_parameters:
   rank: 16
@@ -520,6 +523,7 @@ def main(argv=None):
         print(f"{counts['train']} training and {counts['valid']} validation examples "
               f"({counts['too_long']} too long dropped); {counts['iters']} iterations")
         print(f"Config: {os.path.join(out, 'lora_config.yaml')}")
+        print(f"Train:  python3 -m results.ai.lora_train --config {os.path.join(out, 'lora_config.yaml')}")
         return 0
     if args.reference:
         factory, cfg = reference_model, None
