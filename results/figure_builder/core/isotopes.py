@@ -6,6 +6,24 @@ import re
 
 _ABUNDANCE: dict[str, float] | None = None
 
+ELEMENT_SYMBOLS = (
+    'H', 'He', 'Li', 'Be', 'B', 'C', 'N', 'O', 'F', 'Ne', 'Na', 'Mg', 'Al', 'Si', 'P', 'S', 'Cl',
+    'Ar', 'K', 'Ca', 'Sc', 'Ti', 'V', 'Cr', 'Mn', 'Fe', 'Co', 'Ni', 'Cu', 'Zn', 'Ga', 'Ge', 'As',
+    'Se', 'Br', 'Kr', 'Rb', 'Sr', 'Y', 'Zr', 'Nb', 'Mo', 'Tc', 'Ru', 'Rh', 'Pd', 'Ag', 'Cd', 'In',
+    'Sn', 'Sb', 'Te', 'I', 'Xe', 'Cs', 'Ba', 'La', 'Ce', 'Pr', 'Nd', 'Pm', 'Sm', 'Eu', 'Gd', 'Tb',
+    'Dy', 'Ho', 'Er', 'Tm', 'Yb', 'Lu', 'Hf', 'Ta', 'W', 'Re', 'Os', 'Ir', 'Pt', 'Au', 'Hg', 'Tl',
+    'Pb', 'Bi', 'Po', 'At', 'Rn', 'Fr', 'Ra', 'Ac', 'Th', 'Pa', 'U', 'Np', 'Pu', 'Am', 'Cm', 'Bk',
+    'Cf', 'Es', 'Fm', 'Md', 'No', 'Lr', 'Rf', 'Db', 'Sg', 'Bh', 'Hs', 'Mt', 'Ds', 'Rg', 'Cn', 'Nh',
+    'Fl', 'Mc', 'Lv', 'Ts', 'Og')
+"""Element symbols in atomic-number order (index + 1 is the atomic number)."""
+
+_ATOMIC_NUMBER = {sym: i + 1 for i, sym in enumerate(ELEMENT_SYMBOLS)}
+
+
+def atomic_number(symbol: str) -> int | None:
+    """Atomic number of an element symbol such as ``Ag``, or None when unknown."""
+    return _ATOMIC_NUMBER.get(str(symbol).strip().capitalize())
+
 
 def _load() -> dict[str, float]:
     """``{'107Ag': 51.839, ...}`` in percent (empty when the table is unavailable)."""

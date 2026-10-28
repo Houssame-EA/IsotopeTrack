@@ -370,7 +370,8 @@ def _render_panel(fig, index, panel, spec, table, report, style, fw, fh, bg, Rec
     try:
         if len(table) == 0 and kind not in ('text', 'code'):
             raise ExpressionError('No particles: connect a sample or filter node')
-        DRAWERS.get(kind, DRAWERS['scatter'])(fig, ax, panel, ptable, report, style)
+        DRAWERS.get(kind, DRAWERS['scatter'])(fig, ax, panel, ptable, report,
+                                               panel.get('label_style') or style)
         if kind in SHAPE_KINDS:
             merge_legend(ax, panel, draw_shapes(ax, panel))
         annotate(ax, panel)

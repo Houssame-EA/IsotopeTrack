@@ -804,6 +804,12 @@ def item_label(panel: dict, expr: str, table: ParticleTable, style: str,
     return custom if custom else pretty(expr, table, style, with_unit=not short)
 
 
+def xtick_rotation(panel: dict, default: float = 45.0) -> float:
+    """X tick rotation of the panel; 0 stays 0, only a missing value gives *default*."""
+    value = panel.get('xtick_rotation')
+    return default if value is None or value == '' else float(value)
+
+
 def item_exprs(panel: dict, table: ParticleTable) -> list[str]:
     """Expressions listed in the panel's ``isotopes`` field, or every isotope."""
     from results.figure_builder.core.expressions import split_list

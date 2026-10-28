@@ -140,6 +140,11 @@ FIELDS = [
     ('Data', 'What to plot', 'heat_start', 'Start at rank', 'int', {'heatmap'}, (1, 10000)),
     ('Data', 'What to plot', 'heat_min_share', 'Min share of the amount (%)', 'float', {'heatmap'},
      (0, 100, 0.5)),
+    ('Data', 'What to plot', 'heat_max_label', 'Max elements in a row label (0 = all)', 'int',
+     {'heatmap'}, (0, 50)),
+    ('Data', 'What to plot', 'label_style', 'Isotope labels', 'combo', {'heatmap'},
+     {'': 'Same as the figure', 'isotope': 'Isotope (¹⁰⁷Ag)', 'symbol': 'Symbol (Ag)',
+      'raw': 'As written (107Ag)'}),
     ('Data', 'What to plot', 'zero_handling', 'Particles in each pair', 'combo', {'corr_matrix'},
      {'': 'Automatic (hide zero values)', **ZERO_HANDLING}),
     ('Data', 'What to plot', 'corr_diff', 'Difference of the first two groups (Δr)', 'check',
@@ -834,7 +839,7 @@ class PanelEditor(QWidget):
         if key == 'heat_sort':
             return kind == 'heatmap' and p.get('heat_rows') != 'particles'
         if key == 'heat_sort_el':
-            return kind == 'heatmap' and p.get('heat_rows') != 'particles' and p.get('heat_sort') in ('element', 'element_total')
+            return kind == 'heatmap' and p.get('heat_rows') != 'particles' and p.get('heat_sort') in ('element', 'element_total', 'element_mean')
         if key in ('heat_search', 'heat_start', 'heat_min_share'):
             return kind == 'heatmap' and p.get('heat_rows') == 'combinations'
         if key == 'heat_search_mode':
@@ -863,7 +868,7 @@ class PanelEditor(QWidget):
                     and str(p.get('fit_lines') or '1') == '1')
         if key == 'max_rows':
             return kind == 'heatmap' and p.get('heat_rows') == 'particles'
-        if key == 'top_n' and kind == 'heatmap':
+        if key in ('top_n', 'heat_max_label') and kind == 'heatmap':
             return p.get('heat_rows') == 'combinations'
         if key == 'heat_value':
             return kind == 'heatmap' and p.get('heat_rows') != 'particles'

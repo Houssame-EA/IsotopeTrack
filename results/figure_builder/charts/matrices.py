@@ -8,8 +8,9 @@ import numpy as np
 
 from results.figure_builder.core.common import (
     add_colorbar, base_mask, bin_edges, cmap_name, finite_mask, handles, item_exprs, item_label,
-    resolve_groups)
-from results.figure_builder.core.expressions import ExpressionError, evaluate, plain, split_symbol
+    resolve_groups, xtick_rotation)
+from results.figure_builder.core.expressions import (
+    ExpressionError, _format_label, evaluate, plain, split_symbol)
 
 METHOD_NAMES = {'pearson': 'Pearson r', 'spearman': 'Spearman ρ', 'kendall': 'Kendall τ'}
 
@@ -37,7 +38,7 @@ def cell_fontsize(fig, ax, ncols, nrows):
 
 def _matrix_ticks(ax, panel, rows, cols):
     """Category tick labels on both axes of an image-style matrix."""
-    rot = float(panel.get('xtick_rotation') or 45)
+    rot = xtick_rotation(panel)
     ax.set_xticks(range(len(cols)))
     ax.set_xticklabels(cols, rotation=rot, ha='right' if 0 < rot < 90 else 'center',
                        rotation_mode='anchor')
@@ -251,20 +252,54 @@ def combination_keys(table, exprs, mask):
     return lookup[codes], values
 
 
-def _heat_row_label(pattern, exprs, names):
-    """Combination label as on the canvas heatmap: symbols by mass, joined by ', '."""
+def _by_mass(exprs, cols):
+    """Column indices *cols* ordered by isotope mass."""
     def mass(i):
         _sym, m = split_symbol(exprs[i].split(':', 1)[-1])
         return (0, int(m)) if m else (1, 0)
-    cols = sorted(np.flatnonzero(pattern), key=mass)
-    return ', '.join(names[c] for c in cols) or 'none'
+    return sorted(cols, key=mass)
+
+
+def _heat_row_label(pattern, exprs, names):
+    """Combination label as on the canvas heatmap: names by mass, joined by ', '."""
+    return ', '.join(names[c] for c in _by_mass(exprs, np.flatnonzero(pattern))) or 'none'
+
+
+def _styled_names(exprs, table, style):
+    """Row-label name of each column in the panel's isotope label style."""
+    out = []
+    for e in exprs:
+        name = e.split(':', 1)[-1]
+        try:
+            name = table.resolve_label(name)
+        except ExpressionError:
+            pass
+        out.append(_format_label(name, style or 'isotope'))
+    return out
+
+
+def _short_row_label(pattern, amounts, exprs, names, limit):
+    """Row label holding only the *limit* elements with the largest amount, then '...'."""
+    cols = np.flatnonzero(pattern)
+    if limit <= 0 or cols.size <= limit:
+        return None
+    top = cols[np.argsort(-amounts[cols], kind='stable')[:limit]]
+    return ', '.join(names[c] for c in _by_mass(exprs, top)) + ', ...'
 
 
 def _order_columns(panel, table, exprs):
-    """Order the heatmap columns as the panel asks: listed, by mass, by detection or by name."""
+    """Order the heatmap columns as the panel asks: listed, by atomic number, by mass, by detection or by name."""
     how = panel.get('heat_col_order') or 'list'
     if how == 'list' or len(exprs) < 2:
         return exprs
+    if how == 'atomic':
+        from results.figure_builder.core.isotopes import atomic_number
+
+        def z(e):
+            sym, m = split_symbol(e.split(':', 1)[-1])
+            n = atomic_number(sym)
+            return (0, n, int(m) if m else 0) if n else (1, 0, 0)
+        return sorted(exprs, key=z)
     if how == 'mass':
         def mass(e):
             _sym, m = split_symbol(e.split(':', 1)[-1])
@@ -301,6 +336,17 @@ def _element_total(column, mask) -> float:
     missing values add nothing.
     """
     return float(np.nansum(np.clip(column[mask], 0, None)))
+
+
+def _element_mean(column, mask) -> float:
+    """Mean amount of one element in a single particle of *mask*.
+
+    Only particles holding the element count, so the value does not grow
+    with the number of particles in the row.
+    """
+    vv = column[mask]
+    vv = vv[np.isfinite(vv) & (vv > 0)]
+    return float(vv.mean()) if vv.size else 0.0
 
 
 def _search_mask(panel, combos) -> np.ndarray:
@@ -394,11 +440,15 @@ def draw_heatmap(fig, ax, panel, table, report, style):
     elif rows_mode == 'combinations':
         raw = [evaluate(e, table) for e in exprs]
         codes, patterns, counts = combination_codes(raw, base)
-        names = _symbol_names(exprs)
-        labels = np.array([_heat_row_label(p, exprs, names) for p in patterns], dtype=str)
-        uniq, merge = np.unique(labels, return_inverse=True)
+        shown = _styled_names(exprs, table, style)
+        labels = np.array([_heat_row_label(p, exprs, shown) for p in patterns], dtype=str)
+        symbols = [_heat_row_label(p, exprs, _symbol_names(exprs)) for p in patterns]
+        uniq, first, merge = np.unique(labels, return_index=True, return_inverse=True)
         uniq = uniq.astype(object)
         merge = np.asarray(merge).reshape(-1)
+        searchable = np.array([symbols[i] for i in first], dtype=object)
+        patterns = np.vstack([np.logical_or.reduce(patterns[merge == k], axis=0)
+                              for k in range(len(uniq))]) if len(uniq) else patterns
         counts = np.bincount(merge, weights=counts, minlength=len(uniq)).astype(np.intp)
         inside = codes >= 0
         codes[inside] = merge[codes[inside]]
@@ -407,7 +457,7 @@ def draw_heatmap(fig, ax, panel, table, report, style):
                              for v in raw]) if raw else np.zeros((0, len(counts)))
         amount = per_col.sum(axis=0)
         ok = counts >= int(panel.get('min_count') or 0)
-        ok &= _search_mask(panel, uniq)
+        ok &= _search_mask(panel, searchable)
         ids = np.flatnonzero(ok)
         uniq, counts, amount = uniq[ids], counts[ids], amount[ids]
         shares = 100 * amount / amount.sum() if amount.sum() > 0 else amount
@@ -436,18 +486,31 @@ def draw_heatmap(fig, ax, panel, table, report, style):
             order = order[np.argsort(-totals[order], kind='stable')]
             report.stats.append(f'Heatmap rows by total {cols[col]}: ' + ', '.join(
                 f'{uniq[i]} {totals[i]:.4g}' for i in order[:8]))
+        elif sort == 'element_mean':
+            col = _sort_column(panel, exprs, table)
+            means = np.zeros(len(ids))
+            per_count = np.bincount(codes[inside], minlength=len(counts),
+                                    weights=(np.nan_to_num(raw[col][inside], nan=0.0) > 0).astype(float))
+            held = per_count[ids]
+            np.divide(per_col[col, ids], held, out=means, where=held > 0)
+            order = order[np.argsort(-means[order], kind='stable')]
+            report.stats.append(f'Heatmap rows by mean {cols[col]} per particle: ' + ', '.join(
+                f'{uniq[i]} {means[i]:.4g}' for i in order[:8]))
         start = max(1, int(panel.get('heat_start') or 1))
         order = order[start - 1:start - 1 + max(1, int(panel.get('top_n') or 15))]
-        rows = [f'{uniq[i]} ({counts[i]})' if panel.get('show_n', True) else str(uniq[i])
-                for i in order]
+        limit = int(panel.get('heat_max_label') or 0)
+        names_of = [(_short_row_label(patterns[ids[i]], per_col[:, ids[i]], exprs, shown, limit)
+                     or str(uniq[i])) for i in order]
+        rows = [f'{name} ({counts[i]})' if panel.get('show_n', True) else name
+                for name, i in zip(names_of, order)]
         M = np.array([summarise(codes == ids[i]) for i in order], dtype=float)
-        row_title = 'Element combination'
+        row_title = 'Particle combination'
         unit = ''
     else:
         groups = resolve_groups(panel, table)
         rows = [g.label for g in groups]
         M = np.array([summarise(g.mask) for g in groups], dtype=float)
-        if panel.get('heat_sort') in ('element', 'element_total', 'name') and len(rows) > 1:
+        if panel.get('heat_sort') in ('element', 'element_total', 'element_mean', 'name') and len(rows) > 1:
             if panel.get('heat_sort') == 'element':
                 col = _sort_column(panel, exprs, table)
                 order = np.argsort(-np.nan_to_num(M[:, col], nan=-np.inf), kind='stable')
@@ -456,6 +519,11 @@ def draw_heatmap(fig, ax, panel, table, report, style):
                 column = evaluate(exprs[col], table)
                 totals = np.array([_element_total(column, g.mask) for g in groups])
                 order = np.argsort(-totals, kind='stable')
+            elif panel.get('heat_sort') == 'element_mean':
+                col = _sort_column(panel, exprs, table)
+                column = evaluate(exprs[col], table)
+                means = np.array([_element_mean(column, g.mask) for g in groups])
+                order = np.argsort(-means, kind='stable')
             else:
                 order = np.argsort(np.array(rows, dtype=str), kind='stable')
             M = M[order]
@@ -484,7 +552,11 @@ def draw_heatmap(fig, ax, panel, table, report, style):
     label = {'mean': 'Mean', 'median': 'Median', 'sum': 'Sum', 'detect': 'Detected in (%)',
              'count': 'Particles detected', 'gmean': 'Geometric mean', 'mode': 'Mode'}.get(agg, agg)
     if (percent or norm_mode == 'particle') and agg not in ('detect', 'count'):
-        label += f' ({HEAT_QUANTITIES[quantity]})' if percent else ' (% of particle)'
+        if percent:
+            short = HEAT_LABELS.get(quantity, HEAT_QUANTITIES[quantity])
+            label = short if agg == 'mean' else f'{label} ({short})'
+        else:
+            label += ' (% of particle)'
     elif quantity and agg not in ('detect', 'count'):
         label += f' ({HEAT_QUANTITIES[quantity]})'
     if rows_mode == 'particles':
@@ -510,7 +582,7 @@ def draw_heatmap(fig, ax, panel, table, report, style):
     handles(report, panel)['matrix'] = {'values': M, 'rows': list(rows), 'cols': list(cols),
                                          'label': label}
     if rows_mode == 'particles':
-        rot = float(panel.get('xtick_rotation') or 45)
+        rot = xtick_rotation(panel)
         if transpose:
             ax.set_yticks(range(len(rows)))
             ax.set_yticklabels(rows)
@@ -571,16 +643,21 @@ computed particle by particle over the listed isotopes, so a cell is the
 typical composition of the particles in that row.
 """
 
+HEAT_LABELS = {'mass_pct': 'Mass %', 'moles_pct': 'Mole %'}
+"""Colour bar names of the element % quantities."""
+
 HEAT_SORTS = {
     'count': 'Number of particles',
     'amount': 'Share of the summed amount',
     'element': 'Value of one element',
     'element_total': 'Total of one element',
+    'element_mean': 'Mean of one element',
     'name': 'Name',
 }
 """How heatmap rows can be ranked."""
 
 HEAT_COL_ORDERS = {
+    'atomic': 'By atomic number',
     'list': 'As listed',
     'mass': 'By isotope mass',
     'abundance': 'Most often detected first',

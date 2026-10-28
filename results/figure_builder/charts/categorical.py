@@ -6,7 +6,7 @@ import numpy as np
 
 from results.figure_builder.core.common import (
     add_legend, compact, count_label, draw_marks, handles, ink, item_exprs, item_label,
-    legend_kwargs, panel_palette, particle_weights, resolve_groups, style_axes)
+    legend_kwargs, panel_palette, particle_weights, resolve_groups, style_axes, xtick_rotation)
 from results.figure_builder.core.expressions import ExpressionError, evaluate, pretty, split_list
 from results.figure_builder.core.stats import draw_brackets, run_tests
 
@@ -442,7 +442,7 @@ def draw_combinations(fig, ax, panel, table, report, style):
             ax.set_xscale('log')
     else:
         ax.set_xticks(pos)
-        ax.set_xticklabels(names, rotation=float(panel.get('xtick_rotation') or 45),
+        ax.set_xticklabels(names, rotation=xtick_rotation(panel),
                            ha='right', rotation_mode='anchor')
         ax.set_ylabel(panel.get('y_label') or vlab)
         if panel.get('x_label'):
