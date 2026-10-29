@@ -26,7 +26,8 @@ from results.figure_builder.charts.more import LOLLI_STATS, SHARE_MODES, TIME_MO
 from results.figure_builder.charts.network import NODE_SIZES, PCA_TRANSFORMS
 from results.figure_builder.charts.special import TERNARY_FILTERS
 from results.figure_builder.charts.xy import FIT_LINES
-from results.figure_builder.charts.overlays import ELLIPSES, INSET_LOCS, MARGINALS, TRENDS
+from results.figure_builder.charts.overlays import (
+    ELLIPSES, INSET_LOCS, MARGINAL_UNITS, MARGINALS, TRENDS)
 from results.figure_builder.core import styles as S
 from results.figure_builder.core.common import BANDS, GROUP_SORTS, HATCHES, SHAPE_TYPES, TICK_FORMATS
 from results.figure_builder.core.expressions import (
@@ -221,6 +222,9 @@ FIELDS = [
     ('Style', 'Around the groups', 'trend', 'Trend curve', 'combo', {'scatter'}, TRENDS),
     ('Style', 'Around the groups', 'trend_bins', 'Trend points', 'int', {'scatter'}, (4, 60)),
     ('Style', 'Around the groups', 'marginals', 'Along the edges', 'combo', {'scatter'}, MARGINALS),
+    ('Style', 'Around the groups', 'marginals_unit', 'Edges in', 'combo', {'scatter'}, MARGINAL_UNITS),
+    ('Style', 'Around the groups', 'marg_top_label', 'Top edge title', 'text', {'scatter'}, 'automatic'),
+    ('Style', 'Around the groups', 'marg_right_label', 'Right edge title', 'text', {'scatter'}, 'automatic'),
     ('Style', 'Colour scale', 'color_by', 'Colour by value', 'expr', {'scatter', 'ternary'}, 'optional, e.g. total'),
     ('Style', 'Colour scale', 'colormap', 'Colour map', 'combo',
      {'scatter', 'density', 'heatmap', 'cooccurrence', 'hexbin', 'ternary'},
@@ -377,7 +381,7 @@ FIELDS = [
     ('Stats', 'Fit', 'fit_color_points', 'Colour points by their line', 'check', {'scatter'}, None),
     ('Stats', 'Fit', 'fit_band', '95% confidence band', 'check', {'scatter'}, None),
     ('Stats', 'Fit', 'sd_band', 'Fit ± SD of the residuals', 'check', {'scatter'}, None),
-    ('Stats', 'Fit', 'show_r', 'Show r and R²', 'check', {'scatter'}, None),
+    ('Stats', 'Fit', 'show_r', "Show the line's equation", 'check', {'scatter'}, None),
     ('Stats', 'Isotope ratios', 'poisson_band', 'Counting-statistics band (± kσ, 0 = off)', 'float',
      {'scatter'}, (0, 5, 0.5)),
     ('Stats', 'Isotope ratios', 'natural_line', 'Natural abundance ratio line', 'check', {'scatter'}, None),
@@ -750,7 +754,7 @@ class PanelEditor(QWidget):
         if key in ('kind', 'group_by', 'test', 'pie_mode', 'rules', 'y', 'heat_rows', 'heat_sort',
                    'heat_search', 'show_fit', 'fit_lines', 'trend',
                    'share_mode', 'facet', 'bin_mode', 'donut', 'color_by', 'agg', 'stat_band',
-                   'natural_line', 'dl_value'):
+                   'natural_line', 'dl_value', 'marginals'):
             if key == 'kind' and value == 'code' and not (self.panel.get('code') or '').strip():
                 self.panel['code'] = E.CODE_EXAMPLE
                 self._loading = True
@@ -790,6 +794,8 @@ class PanelEditor(QWidget):
             return group != 'none' and grouped
         if key == 'test_log':
             return kind in TESTABLE and p.get('test', 'none') != 'none'
+        if key in ('marginals_unit', 'marg_top_label', 'marg_right_label'):
+            return kind == 'scatter' and p.get('marginals', 'none') != 'none'
         if key == 'test_unit':
             return kind in DIST and p.get('test', 'none') != 'none'
         if key in ('pairs', 'correction', 'p_format', 'hide_ns'):

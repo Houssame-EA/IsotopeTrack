@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from results.figure_builder.core.common import bin_edges, float_or_none, handles, ink, numbers
+from results.figure_builder.core.expressions import pretty
 
 ELLIPSES = {
     'none': 'None', '1sd': '68% (1 SD) ellipse', '2sd': '95% ellipse', '3sd': '99% ellipse',
@@ -18,6 +19,12 @@ TRENDS = {'none': 'None', 'median': 'Running median', 'mean': 'Running mean'}
 
 MARGINALS = {'none': 'None', 'hist': 'Histograms', 'kde': 'Smooth curves (KDE)', 'box': 'Box plots'}
 """What can be drawn along the top and right edges of a scatter."""
+
+MARGINAL_UNITS = {'same': 'Same as the axes', 'mass': 'Mass (fg)', 'd': 'Diameter (nm)',
+                  'moles': 'Moles (fmol)'}
+"""The quantity the edge plots of a scatter can show."""
+
+UNIT_SUFFIX = {'mass': 'mass (fg)', 'd': 'diameter (nm)', 'moles': 'moles (fmol)'}
 
 INSET_LOCS = {'upper left': 'Upper left', 'upper right': 'Upper right',
               'lower left': 'Lower left', 'lower right': 'Lower right'}
@@ -156,11 +163,86 @@ def _boxplot(axes, values, position, vertical, style):
         axes.boxplot([values], positions=[position], vert=vertical, **style)
 
 
-def add_marginals(fig, ax, panel, data, log_x, log_y, report):
-    """Distributions of X along the top and of Y along the right edge of a scatter."""
+def _marginal_data(panel, data, table, report):
+    """The plotted particles' X and Y in the quantity the edge plots are asked to show.
+
+    The same particles as the scatter are used; only the quantity a bare
+    isotope name means changes, so ``Fe`` becomes the Fe mass, diameter or
+    moles. Returns ``None`` when the edges use the axes' own quantity, or
+    when the particles carry no values in the one asked for.
+    """
+    unit = panel.get('marginals_unit') or 'same'
+    if unit == 'same' or table is None:
+        return None
+    from results.figure_builder.core.expressions import evaluate
+    view = table.view(unit)
+    try:
+        xq = np.asarray(evaluate(panel['x'], view), dtype=float)
+        yq = np.asarray(evaluate(panel['y'], view), dtype=float)
+    except Exception as exc:
+        report.stats.append(f'Edges in {MARGINAL_UNITS[unit].lower()}: {exc}')
+        return None
+    points = handles(report, panel).get('points') or []
+    out = []
+    for (g, _x, _y), pts in zip(data, points):
+        idx = np.asarray(pts['index'])
+        out.append((g, xq[idx], yq[idx]))
+    allx = np.concatenate([x for _g, x, _y in out]) if out else np.array([])
+    if not np.any(np.isfinite(allx) & (allx > 0)):
+        report.stats.append(f'Edges in {MARGINAL_UNITS[unit].lower()}: these particles have no '
+                            'such values, so the edges use the axes\' quantity')
+        return None
+    return out
+
+
+def _edge_values(v, log):
+    """Values an edge plot can draw: finite, and positive on a log scale."""
+    v = np.asarray(v, dtype=float)
+    keep = np.isfinite(v) & ((v > 0) if log else True)
+    return v[keep]
+
+
+def _edge_titles(panel, table, style, own):
+    """Titles of the top and right edge plots.
+
+    A typed title always wins. Otherwise edges in their own quantity are
+    named like the main axes, in that quantity (``$^{56}$Fe mass (fg)``),
+    and edges sharing the axes' quantity stay untitled.
+    """
+    typed = [(panel.get('marg_top_label') or '').strip(), (panel.get('marg_right_label') or '').strip()]
+    if not own:
+        return typed
+    view = table.view(panel['marginals_unit'])
+    auto = []
+    for expr in (panel['x'], panel['y']):
+        try:
+            text = pretty(expr, view, style)
+        except Exception:
+            text = ''
+        unit = UNIT_SUFFIX[panel['marginals_unit']]
+        auto.append(text if text.endswith(unit.split(' ')[-1]) else f'{text} {unit}'.strip())
+    return [t or a for t, a in zip(typed, auto)]
+
+
+def add_marginals(fig, ax, panel, data, log_x, log_y, report, table=None, style='isotope'):
+    """Distributions of X along the top and of Y along the right edge of a scatter.
+
+    With ``marginals_unit`` the edges show the same particles in mass (fg),
+    diameter (nm) or moles (fmol) instead of the axes' quantity. They then
+    have their own scale, drawn on their outer side with the unit, since it
+    no longer lines up with the scatter's axes. ``marg_top_label`` and
+    ``marg_right_label`` replace the edges' automatic titles; a title typed
+    for edges that share the axes' quantity is shown too.
+    """
     mode = panel.get('marginals', 'none')
     if mode not in ('hist', 'kde', 'box') or not data:
         return
+    other = _marginal_data(panel, data, table, report)
+    if other is not None:
+        data = [(g, _edge_values(x, log_x), _edge_values(y, log_y)) for g, x, y in other]
+        data = [(g, x, y) for g, x, y in data if x.size and y.size]
+        if not data:
+            return
     right_too = not (panel.get('y2') or '').strip()
     p = ax.get_position()
     frac = 0.18
@@ -168,12 +250,20 @@ def add_marginals(fig, ax, panel, data, log_x, log_y, report):
     main_w = p.width * (1 - frac - gap) if right_too else p.width
     main_h = p.height * (1 - frac - gap)
     ax.set_position([p.x0, p.y0, main_w, main_h])
-    top = fig.add_axes([p.x0, p.y0 + main_h + p.height * gap, main_w, p.height * frac], sharex=ax)
+    own = other is not None
+    top = fig.add_axes([p.x0, p.y0 + main_h + p.height * gap, main_w, p.height * frac],
+                       **({} if own else {'sharex': ax}))
     marg = [top]
     right = None
     if right_too:
-        right = fig.add_axes([p.x0 + main_w + p.width * gap, p.y0, p.width * frac, main_h], sharey=ax)
+        right = fig.add_axes([p.x0 + main_w + p.width * gap, p.y0, p.width * frac, main_h],
+                             **({} if own else {'sharey': ax}))
         marg.append(right)
+    if own:
+        if log_x:
+            top.set_xscale('log')
+        if log_y and right is not None:
+            right.set_yscale('log')
     allx = np.concatenate([x for _g, x, _y in data])
     ally = np.concatenate([y for _g, _x, y in data])
     bins = max(5, min(80, int(panel.get('bins') or 40)))
@@ -207,6 +297,23 @@ def add_marginals(fig, ax, panel, data, log_x, log_y, report):
                       top=False, right=False, labeltop=False, labelright=False)
     top.spines['bottom'].set_visible(True)
     top.spines['bottom'].set_color('#9ca3af')
+    top_title, right_title = _edge_titles(panel, table, style, own)
+    if own:
+        top.spines['top'].set_visible(True)
+        top.spines['top'].set_color('#9ca3af')
+        top.tick_params(axis='x', which='both', top=True, labeltop=True, labelsize='x-small',
+                        colors='#4b5563')
+        if right is not None:
+            right.spines['right'].set_visible(True)
+            right.spines['right'].set_color('#9ca3af')
+            right.tick_params(axis='y', which='both', right=True, labelright=True,
+                              labelsize='x-small', colors='#4b5563')
+    if top_title:
+        top.xaxis.set_label_position('top')
+        top.set_xlabel(top_title, fontsize='x-small', color='#4b5563')
+    if right is not None and right_title:
+        right.yaxis.set_label_position('right')
+        right.set_ylabel(right_title, fontsize='x-small', color='#4b5563')
     if right is not None:
         right.spines['bottom'].set_visible(False)
         right.spines['left'].set_visible(True)
@@ -220,7 +327,8 @@ def add_marginals(fig, ax, panel, data, log_x, log_y, report):
         if right is not None:
             right.set_xlim(left=0)
     if ax.get_title():
-        ax.set_title(ax.get_title(), y=1 + (p.height * (frac + gap)) / main_h)
+        lift = (p.height * (frac + gap)) / main_h + (0.09 if own else 0.05 if top_title else 0.0)
+        ax.set_title(ax.get_title(), y=1 + lift)
     hd = handles(report, panel)
     hd.setdefault('extra_axes', []).extend(marg)
     hd['marg_top'] = top
