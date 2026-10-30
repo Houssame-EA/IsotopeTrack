@@ -5,6 +5,19 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
+## v1.12.0 - 2026-10-30
+
+### What’s Changed
+
+- v1.12.0 ([#42](https://github.com/Houssame-EA/IsotopeTrack/pull/42)) [@Houssame-EA](https://github.com/Houssame-EA)
+- Insights and Figure Builder: group comparisons, explained figures, edge plots in mass ([#41](https://github.com/Houssame-EA/IsotopeTrack/pull/41)) [@Houssame-EA](https://github.com/Houssame-EA)
+
+### Contributors
+
+@Houssame-EA and [@github-actions[bot]](https://github.com/apps/github-actions)
+
+**Full Changelog**: [v1.11.1...v1.12.0](https://github.com/Houssame-EA/IsotopeTrack/compare/v1.11.1...v1.12.0)
+
 ## v1.11.1 - 2026-10-19
 
 ### What’s Changed
