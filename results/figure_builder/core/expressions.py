@@ -52,7 +52,8 @@ DATA_TYPES: dict[str, str] = {
 }
 """Default-quantity choices offered in the UI, mapped to their prefix."""
 
-SPECIAL_NAMES = ('total', 'n_elements', 'sample', 'class', 'time', 'index', 'per_ml', 'max_counts')
+SPECIAL_NAMES = ('total', 'n_elements', 'sample', 'replicate', 'class', 'time', 'index', 'per_ml',
+                 'max_counts')
 
 UNCLASSIFIED = 'Unclassified'
 
@@ -322,6 +323,10 @@ class ParticleTable:
         if name == 'sample':
             single = getattr(self, '_single_sample', None)
             col = np.array([p.get('source_sample') or single or 'Sample'
+                            for p in self.particles], dtype=object)
+        elif name == 'replicate':
+            single = getattr(self, '_single_sample', None)
+            col = np.array([p.get('original_sample') or p.get('source_sample') or single or 'Sample'
                             for p in self.particles], dtype=object)
         elif name == 'class':
             bucket_of = _bucket_and_composition()[0]

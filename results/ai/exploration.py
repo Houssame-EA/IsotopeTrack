@@ -7,6 +7,7 @@ and the final summary is written from this record rather than from memory.
 """
 from __future__ import annotations
 
+import ast
 import itertools
 import math
 import re
@@ -19,6 +20,39 @@ MAX_FAILED_TURNS = 2
 MAX_REPEATS = 2
 """Times the model may send code it already ran before the exploration ends."""
 KEEP_FULL_TURNS = 2
+
+ELEMENT_NAMES = dict(pair.split(':') for pair in (
+    'H:hydrogen He:helium Li:lithium Be:beryllium B:boron C:carbon N:nitrogen O:oxygen F:fluorine '
+    'Ne:neon Na:sodium Mg:magnesium Al:aluminium Si:silicon P:phosphorus S:sulfur Cl:chlorine Ar:argon '
+    'K:potassium Ca:calcium Sc:scandium Ti:titanium V:vanadium Cr:chromium Mn:manganese Fe:iron '
+    'Co:cobalt Ni:nickel Cu:copper Zn:zinc Ga:gallium Ge:germanium As:arsenic Se:selenium Br:bromine '
+    'Kr:krypton Rb:rubidium Sr:strontium Y:yttrium Zr:zirconium Nb:niobium Mo:molybdenum '
+    'Tc:technetium Ru:ruthenium Rh:rhodium Pd:palladium Ag:silver Cd:cadmium In:indium Sn:tin '
+    'Sb:antimony Te:tellurium I:iodine Xe:xenon Cs:caesium Ba:barium La:lanthanum Ce:cerium '
+    'Pr:praseodymium Nd:neodymium Pm:promethium Sm:samarium Eu:europium Gd:gadolinium Tb:terbium '
+    'Dy:dysprosium Ho:holmium Er:erbium Tm:thulium Yb:ytterbium Lu:lutetium Hf:hafnium Ta:tantalum '
+    'W:tungsten Re:rhenium Os:osmium Ir:iridium Pt:platinum Au:gold Hg:mercury Tl:thallium Pb:lead '
+    'Bi:bismuth Po:polonium At:astatine Rn:radon Fr:francium Ra:radium Ac:actinium Th:thorium '
+    'Pa:protactinium U:uranium Np:neptunium Pu:plutonium Am:americium').split())
+"""English element names by symbol, for questions that name an element in words."""
+ELEMENT_NAME_VARIANTS = {'aluminum': 'Al', 'cesium': 'Cs', 'sulphur': 'S', 'wolfram': 'W'}
+WORD_SYMBOLS = frozenset({'I', 'In', 'As', 'At', 'Be', 'He', 'No', 'Am'})
+"""Symbols that are also English words; written alone they count only inside a sentence."""
+
+TYPED_NUMBER_RE = re.compile(r'(?<![\w.%])\d+\.\d+|(?<![\w.%])\d+(?:\.\d+)?[eE][-+]?\d+')
+"""A decimal or scientific number written into the code by hand."""
+FOLD_RE = re.compile(r'[-+]?\d[\d.,]*(?:[eE][-+]?\d+)?\s*(?:x|×|-?fold)(?![A-Za-z])', re.IGNORECASE)
+"""Fold changes such as ``35.8x``, which the model derives from two results."""
+PREMATURE_FINDING = (
+    "record_finding on line {line} types numbers by hand after this block computes a new result, so "
+    "they cannot come from that result: you have not seen it yet. Build the claim from the computed "
+    "values with an f-string, e.g. f\"median {{res['median_ratio'].iloc[0]:.3g}}\", and pass p from the "
+    "table, or record the finding next turn once you have seen the result. A finding about an earlier "
+    "turn's result goes at the top of the block, before any new code.")
+UNBACKED_FINDING = (
+    "record_finding quotes {numbers}, which no result you have seen contains. Quote the numbers of the "
+    "tables you were shown, or compute them in the code; pass p from the test you ran, and p=None for a "
+    "descriptive finding with no test.")
 
 DONE_RE = re.compile(r'^\s*\**\s*EXPLORATION\s+DONE\b', re.IGNORECASE | re.MULTILINE)
 _PLAN_RE = re.compile(r'PLAN\s*:\s*(.*?)(?:```|\Z)', re.IGNORECASE | re.DOTALL)
@@ -145,6 +179,95 @@ class FindingsLedger:
         return out
 
 
+def _is_record_call(node):
+    """Whether an AST node calls ``record_finding``."""
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == 'record_finding')
+
+
+def _typed_numbers(call):
+    """Whether a ``record_finding`` call holds numbers written by hand.
+
+    A float literal (``p=1e-300``) or a decimal inside a string literal
+    (``'median 0.18'``) counts; values inside the braces of an f-string are
+    computed, and whole numbers such as isotope masses or ``95%`` are ignored.
+
+    Args:
+        call (ast.Call): The call.
+
+    Returns:
+        bool: True when a hand-written number is found.
+    """
+    def walk(node):
+        if isinstance(node, ast.FormattedValue):
+            return False
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, float):
+                return True
+            return isinstance(node.value, str) and bool(TYPED_NUMBER_RE.search(node.value))
+        return any(walk(child) for child in ast.iter_child_nodes(node))
+    return any(walk(a) for a in list(call.args) + [k.value for k in call.keywords])
+
+
+def finding_layout(code):
+    """Where a turn's code records its findings.
+
+    Findings typed by hand may only describe results the model has already
+    seen, so they belong before any new computation in the block. One that
+    comes after it was written before its result existed.
+
+    Args:
+        code (str): One turn's code.
+
+    Returns:
+        tuple: ``(leading, premature)``: how many ``record_finding`` calls
+        open the block before any other code, and the lines where a call
+        with hand-written numbers follows new code. ``(0, [])`` when the
+        code does not parse.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return 0, []
+    leading, lines, at_top = 0, [], True
+    for stmt in tree.body:
+        if at_top and isinstance(stmt, ast.Expr) and _is_record_call(stmt.value):
+            leading += 1
+            continue
+        at_top = False
+        lines.extend(node.lineno for node in ast.walk(stmt) if _is_record_call(node) and _typed_numbers(node))
+    return leading, sorted(lines)
+
+
+def premature_finding_lines(code):
+    """Lines where a finding with hand-written numbers follows new code, see :func:`finding_layout`."""
+    return finding_layout(code)[1]
+
+
+def unbacked_numbers(finding, pool):
+    """Numbers in a finding that no result the model saw contains.
+
+    Fold changes (``35.8x``) are left out, since they are derived from two
+    results rather than read from one.
+
+    Args:
+        finding (dict): ``claim``, ``p``, ``effect`` and ``evidence``.
+        pool (list): Every number the model has been shown.
+
+    Returns:
+        list: The unbacked numbers as written.
+    """
+    from results.ai.sandbox import to_float, unverified_numbers
+    text = ' '.join(str(finding.get(k) or '') for k in ('claim', 'effect', 'evidence'))
+    bad = unverified_numbers(FOLD_RE.sub(' ', text), pool)
+    p = to_float(finding.get('p'))
+    if p is not None and math.isfinite(p) and not any(
+            a is not None and math.isfinite(a) and abs(a - p) <= 0.006 * max(abs(a), abs(p))
+            for a in pool):
+        bad.append(f"p={finding.get('p')}")
+    return bad
+
+
 def parse_plan(text):
     """Pull the numbered hypotheses out of a ``PLAN:`` section.
 
@@ -209,6 +332,46 @@ class ExplorationState:
     def plan_text(self):
         """The plan as a numbered list."""
         return '\n'.join(f"{i}. {h}" for i, h in enumerate(self.plan, start=1))
+
+    def seen_numbers(self):
+        """Every number in the messages the model has been sent so far."""
+        from results.ai.sandbox import floats_in_text
+        nums = []
+        for m in self.messages:
+            if m.get('role') == 'user':
+                nums.extend(floats_in_text(m.get('content', '')))
+        return nums
+
+    def vet_findings(self, code, result):
+        """Refuse findings whose numbers do not come from a result the model has seen.
+
+        A finding typed by hand after new code, or one typed at the top of
+        the block that quotes a number no result shown so far holds, sets
+        ``result.error`` so the turn is
+        sent back for a fix that does not use a turn, and the turn's findings
+        are dropped; the fixed code records them again.
+
+        Args:
+            code (str): The turn's code.
+            result (ExecResult): Its run, changed in place.
+
+        Returns:
+            str: The problem told to the model, empty when the findings are fine.
+        """
+        from results.ai.sandbox import output_numbers
+        if result.error or not result.findings:
+            return ''
+        leading, lines = finding_layout(code)
+        if lines:
+            problem = PREMATURE_FINDING.format(line=lines[0])
+        else:
+            pool = self.seen_numbers() + output_numbers(result)
+            bad = [n for f in result.findings[:leading] for n in unbacked_numbers(f, pool)]
+            problem = UNBACKED_FINDING.format(numbers=', '.join(dict.fromkeys(bad))) if bad else ''
+        if problem:
+            result.findings = []
+            result.error = problem
+        return problem
 
     def begin_turn(self):
         """Start the next request: a fix of the current turn or a new turn.
@@ -596,7 +759,156 @@ def _mass_leads(ds):
     return leads, quiet
 
 
-def first_look(ds, max_items=7):
+def elements_named(ds, question):
+    """The dataset's elements that a question names.
+
+    An element counts when the question writes its isotope label
+    (``56Fe``, ``Fe56``, ``Fe-56``), its symbol with the exact case
+    (``Fe``) or its English name in any case (``iron``). Symbols that are
+    also English words (``In``, ``As``, ``I``...) count alone only when they
+    do not open a sentence, and ``I`` never counts alone.
+
+    Args:
+        ds (Dataset): The dataset.
+        question (str): The user's question.
+
+    Returns:
+        list: Element symbols, in the dataset's order, each listed once.
+    """
+    text = str(question or '')
+    present = {}
+    for lab in ds.elements:
+        present.setdefault(element_symbol(lab), lab)
+    if not text or not present:
+        return []
+    found = set()
+    for mass, sym in re.findall(r'(?<![A-Za-z\d])(\d{1,3})\s?-?([A-Z][a-z]?)(?![a-z])', text):
+        found.add(sym)
+    for sym, mass in re.findall(r'(?<![A-Za-z\d])([A-Z][a-z]?)-?(\d{1,3})(?![\d])', text):
+        found.add(sym)
+    for m in re.finditer(r'(?<![A-Za-z\d])([A-Z][a-z]?)(?![A-Za-z\d])', text):
+        sym = m.group(1)
+        if sym in WORD_SYMBOLS:
+            before = text[:m.start()].rstrip()
+            if sym == 'I' or not before or before[-1] in '.!?:;':
+                continue
+        found.add(sym)
+    words = {name: sym for sym, name in ELEMENT_NAMES.items()}
+    words.update(ELEMENT_NAME_VARIANTS)
+    for word in re.findall(r'[A-Za-z]+', text.lower()):
+        if word in words:
+            found.add(words[word])
+    return [sym for sym in present if sym in found]
+
+
+def _burst_stretches(table):
+    """Join flagged time bins that touch into stretches, one row per stretch."""
+    out = []
+    for run, g in table.sort_values(['run', 't_from']).groupby('run', sort=False):
+        cur = None
+        for _, r in g.iterrows():
+            width = r['t_to'] - r['t_from']
+            if cur and r['t_from'] - cur['t_to'] <= 0.01 * width:
+                cur['t_to'] = r['t_to']
+                cur['count'] += int(r['count'])
+                cur['expected'] += float(r['expected'])
+                cur['p'] = min(cur['p'], float(r['p']))
+            else:
+                cur = {'run': run, 't_from': float(r['t_from']), 't_to': float(r['t_to']),
+                       'count': int(r['count']), 'expected': float(r['expected']), 'p': float(r['p'])}
+                out.append(cur)
+    return sorted(out, key=lambda c: -(c['count'] - c['expected']))
+
+
+def _element_leads(ds, label):
+    """Time bursts and outliers of one element, for a question about that element."""
+    from results.ai import analysis as A
+    leads, quiet = [], []
+    run_sample = dict(zip(ds.df['run'], ds.df['sample'])) if 'sample' in ds.df.columns else {}
+    try:
+        table = A.time_bursts(ds, label)
+        stretches = _burst_stretches(table) if len(table) else []
+    except Exception:
+        stretches = None
+    if stretches:
+        for c in stretches[:3]:
+            smp = run_sample.get(c['run'], c['run'])
+            where = smp if smp == c['run'] else f"run {c['run']} ({smp})"
+            leads.append((40 + min(c['count'] / max(c['expected'], 1.0), 50) / 5,
+                          f"{label} particles arrive in a burst in {where} from {_fmt(c['t_from'])} to "
+                          f"{_fmt(c['t_to'])} s: {c['count']} particles where about {_fmt(c['expected'])} are "
+                          f"expected (x{_fmt(c['count'] / max(c['expected'], 1e-9))}, p {_p(c['p'])}). "
+                          f"Contamination or a nebuliser spike?"))
+        if len(stretches) > 3:
+            leads.append((39, f"{label} has {len(stretches) - 3} smaller burst(s) in time as well."))
+    elif stretches is not None:
+        quiet.append(f"{label} arrival in time (no bursts)")
+    try:
+        out = A.find_outliers(ds, element=label)
+    except Exception:
+        out = None
+    col = f'mass_fg_{label}'
+    if out is not None and len(out) and col in ds.df.columns:
+        med = float(ds.df[col][ds.df[col] > 0].median())
+        by = out['sample'].value_counts()
+        top = out.iloc[0]
+        leads.append((38, f"{len(out)} {label} particle(s) lie far outside the usual mass range (robust z >= 5), "
+                          f"most in {by.index[0]} ({int(by.iloc[0])}); the most extreme is {_fmt(top['value'])} fg "
+                          f"against a median of {_fmt(med)} fg, in {top['sample']}."))
+    elif out is not None and col in ds.df.columns:
+        quiet.append(f"{label} particle mass (no outliers)")
+    return leads, quiet
+
+
+def samples_named(ds, question):
+    """The dataset's samples that a question names.
+
+    A name matches in any case, with underscores, spaces and hyphens
+    interchangeable (``River_A``, ``river a``, ``River-A``).
+
+    Args:
+        ds (Dataset): The dataset.
+        question (str): The user's question.
+
+    Returns:
+        list: Sample names, in the dataset's order.
+    """
+    text = str(question or '')
+    found = []
+    for smp in ds.samples:
+        parts = [re.escape(x) for x in re.split(r'[_\s-]+', str(smp)) if x]
+        if parts and re.search(r'(?<![A-Za-z\d])' + r'[_\s-]?'.join(parts) + r'(?![A-Za-z\d])', text, re.I):
+            found.append(smp)
+    return found
+
+
+def _focus_on_samples(leads, named, others):
+    """Order leads for a question about some samples.
+
+    Leads naming more of the asked samples come first, keeping the screen's
+    order within each group; leads that name only other samples are dropped.
+
+    Args:
+        leads (list): ``(priority, text)`` pairs.
+        named (list): Samples the question names.
+        others (list): The dataset's other samples.
+
+    Returns:
+        list: The kept leads, most relevant first.
+    """
+    def mentions(text, smp):
+        return re.search(r'(?<![A-Za-z\d])' + re.escape(smp) + r'(?![A-Za-z\d])', text) is not None
+    kept = []
+    for prio, text in leads:
+        hits = sum(mentions(text, smp) for smp in named)
+        if not hits and any(mentions(text, smp) for smp in others):
+            continue
+        kept.append((hits, prio, text))
+    kept.sort(key=lambda t: (-t[0], -t[1]))
+    return [(prio, text) for _, prio, text in kept]
+
+
+def first_look(ds, question='', max_items=7):
     """A silent deep screen of the data, given before the first turn.
 
     Looks for what would surprise an analyst: molar ratios that differ
@@ -605,10 +917,15 @@ def first_look(ds, max_items=7):
     away from natural, and, with low priority, large mass differences and
     missing elements. Only the leads are reported, most surprising first,
     with one line naming what was checked and found unremarkable. Bursts,
-    outliers and truncation are left to the user's questions.
+    outliers and truncation are left to the user's questions, except when
+    the question names exactly one element: that element's time bursts and
+    mass outliers are then screened too and lead the list. When the question
+    names samples, the leads about those samples come first and leads about
+    other samples only are left out.
 
     Args:
         ds (Dataset): The dataset.
+        question (str): The user's question, or empty.
         max_items (int): Most leads to report.
 
     Returns:
@@ -617,6 +934,12 @@ def first_look(ds, max_items=7):
     from results.ai import analysis as A
     multi = len(ds.samples) > 1
     leads, quiet = [], []
+    named = elements_named(ds, question)
+    if len(named) == 1:
+        label = next(lab for lab in ds.elements if element_symbol(lab) == named[0])
+        found, flat = _element_leads(ds, label)
+        leads.extend(found)
+        quiet.extend(flat)
     try:
         co = A.co_occurrence(ds)
         real = co[co['verdict'].str.contains('real', case=False)]
@@ -652,6 +975,9 @@ def first_look(ds, max_items=7):
     if not leads and not quiet:
         return ''
     leads.sort(key=lambda t: -t[0])
+    named_samples = samples_named(ds, question) if multi else []
+    if named_samples:
+        leads = _focus_on_samples(leads, named_samples, [x for x in ds.samples if x not in named_samples])
     lines = ["FIRST LOOK (an automatic screen, most surprising first; confirm each lead with your own "
              "tests and dig into it):"]
     if leads:

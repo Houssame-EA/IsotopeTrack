@@ -9,10 +9,11 @@ import pytest
 
 from results.ai.data import Dataset
 from results.ai.exploration import (
-    MAX_EXPLORE_FIXES, ExplorationState, compact_messages, first_look,
+    MAX_EXPLORE_FIXES, ExplorationState, compact_messages, elements_named, first_look, premature_finding_lines,
+    samples_named, unbacked_numbers,
 )
-from results.ai.prompts import build_system_prompt
-from results.ai.sandbox import execute
+from results.ai.prompts import NO_TOOLS, build_system_prompt
+from results.ai.sandbox import NAN_ON_CATEGORY, execute
 from results.ai.synthetic import make_dataset
 from results.ai.theme import strip_thinking
 
@@ -60,6 +61,146 @@ def test_first_look_single_sample():
     text = first_look(ds)
     assert 'differs between samples' not in text and 'heavier in' not in text
     assert 'Ce/La molar ratio is tight in the sample' in text
+
+
+def _leads(text):
+    """The numbered lead lines of a first look."""
+    return [ln for ln in text.splitlines() if ln.strip()[:2] in {f'{i}.' for i in range(1, 10)}]
+
+
+@pytest.mark.parametrize('question, expected', [
+    ("Is there anything unusual about iron in this data?", ['Fe']),
+    ("Anything odd with 56Fe?", ['Fe']),
+    ("Look at Fe-56 and Fe56 over time", ['Fe']),
+    ("Tell me about lead", ['Pb']),
+    ("Compare Ce and La", ['Ce', 'La']),
+    ("Explore the dataset and tell me what is interesting.", []),
+    ("In River_A, is aluminum fine?", ['Al']),
+    ("Is there any uranium?", []),
+])
+def test_elements_named(planted, question, expected):
+    """Symbols, isotope labels and English names count; absent elements and English words do not."""
+    ds, _ = planted
+    assert elements_named(ds, question) == expected
+
+
+def test_first_look_screens_the_named_element(planted):
+    """A question about one element puts that element's time burst first."""
+    ds, truth = planted
+    smp, t0, t1 = truth.burst
+    for q in ("Is there anything unusual about iron in this data?", "Is Fe unusual?", "What about 56Fe?"):
+        lead = _leads(first_look(ds, q))[0].strip()
+        assert lead.startswith('1. 56Fe particles arrive in a burst in ' + smp)
+        start, end = (float(x) for x in lead.split(' from ')[1].split(' s:')[0].split(' to '))
+        assert t0 - 0.5 <= start <= t0 + 0.5 and t1 - 0.5 <= end <= t1 + 0.5
+
+
+def test_first_look_says_when_the_named_element_is_quiet(planted):
+    """A named element without bursts or outliers is listed as checked."""
+    ds, _ = planted
+    text = first_look(ds, "Is anything unusual with titanium?")
+    assert 'arrive in a burst' not in text
+    quiet = [ln for ln in text.splitlines() if ln.startswith('Checked, nothing unusual')][0]
+    assert '48Ti arrival in time (no bursts)' in quiet and '48Ti particle mass (no outliers)' in quiet
+
+
+@pytest.mark.parametrize('question', ["Explore the dataset and tell me what is interesting.",
+                                      "Do Fe and Ti occur together?"])
+def test_first_look_skips_bursts_for_open_and_pair_questions(planted, question):
+    """Open questions and questions about several elements are screened as before."""
+    ds, _ = planted
+    assert first_look(ds, question) == first_look(ds)
+
+
+@pytest.mark.parametrize('question, expected', [
+    ("Compare River_A and Spiked_C.", ['River_A', 'Spiked_C']),
+    ("compare river a with spiked-c", ['River_A', 'Spiked_C']),
+    ("What is special about Spiked_C?", ['Spiked_C']),
+    ("Explore the dataset and tell me what is interesting.", []),
+])
+def test_samples_named(planted, question, expected):
+    """Sample names match in any case, with underscores, spaces or hyphens."""
+    ds, _ = planted
+    assert samples_named(ds, question) == expected
+
+
+def test_first_look_puts_the_compared_samples_first(planted):
+    """A comparison question gets the leads about both samples first and none about other samples only."""
+    ds, _ = planted
+    leads = [ln.strip() for ln in _leads(first_look(ds, "Compare River_A and Spiked_C."))]
+    both = [ln for ln in leads if 'River_A' in ln and 'Spiked_C' in ln]
+    assert leads[:len(both)] == both
+    assert any('48Ti particles are heavier in Spiked_C' in ln for ln in leads[:3])
+    assert all('River_A' in ln or 'Spiked_C' in ln for ln in leads)
+
+
+GUESSED = """res = molar_ratio('Ce', 'La', by='sample')
+show_table(res, title='Ce/La molar ratio by sample')
+record_finding('Ce/La median ~1.5 in River_A, a fixed stoichiometry', n=161, p=1e-300)
+"""
+
+
+@pytest.mark.parametrize('code, lines', [
+    (GUESSED, [3]),
+    ("record_finding('Fe/Ni median 0.18 in Ni-Fe-Mo', p=1e-300)\nres = molar_ratio('Ni', 'Mn')\n", []),
+    ("res = molar_ratio('Co', 'Mn')\nm = res['median_ratio'].iloc[0]\n"
+     "record_finding(f'Co/Mn median {m:.3g}', p=float(res['p_vs_rest'].min()))\n", []),
+    ("res = molar_ratio('Co', 'Mn')\nrecord_finding('Co/Mn median %.2f' % res['median_ratio'].iloc[0])\n", []),
+    ("res = isotope_ratio('206Pb', '207Pb')\nrecord_finding('206Pb/207Pb natural in every sample at 95% level')\n", []),
+    ("res = coincidence('Ti', 'Fe')\nrecord_finding('Ti and Fe meet only by chance')\n", []),
+    ("res = coincidence('Ti', 'Fe')\nfor r in [1]:\n    record_finding('ratio 0.98', p=0.63)\n", [3]),
+    ("x = 1\nrecord_finding(f'ratio {x} vs 6.34')\n", [2]),
+])
+def test_premature_finding_lines(code, lines):
+    """Numbers typed after new code are flagged; f-strings, earlier results and plain words are not."""
+    assert premature_finding_lines(code) == lines
+
+
+def test_unbacked_numbers():
+    """Every decimal and the p of a finding must be among the numbers shown; fold changes are derived."""
+    pool = [0.177, 0.1794, 0.654, 6.34, 0.18, 3.76e-160]
+    assert unbacked_numbers({'claim': 'Fe/Ni 0.18 vs 6.34, 35.2x apart', 'p': 3.76e-160}, pool) == []
+    assert unbacked_numbers({'claim': 'Co/Mn median ~1.0', 'p': 1e-300}, pool) == ['1.0', 'p=1e-300']
+    assert unbacked_numbers({'claim': 'Cr/Fe the same', 'p': 0.654, 'effect': 'median 0.5'}, pool) == ['0.5']
+
+
+def test_vet_findings_sends_guessed_findings_back(planted):
+    """A finding written before its result existed is dropped and the turn goes back for a fix."""
+    ds, _ = planted
+    st = ExplorationState(question='q', max_turns=3)
+    st.messages = [{'role': 'user', 'content': 'FIRST LOOK: nothing yet'}]
+    st.begin_turn()
+    res = execute(GUESSED, ds)
+    assert res.findings and not res.error
+    problem = st.vet_findings(GUESSED, res)
+    assert problem.startswith('record_finding on line 3 types numbers by hand')
+    assert res.error == problem and res.findings == []
+    assert st.after_code(res.error, False) == 'fix'
+
+
+def test_vet_findings_keeps_computed_findings(planted):
+    """A claim built from the computed values passes, and so does one quoting an earlier table."""
+    ds, _ = planted
+    st = ExplorationState(question='q', max_turns=3)
+    st.messages = [{'role': 'user', 'content': 'TABLE: median_ratio 1.98 | p 4.4e-110'}]
+    st.begin_turn()
+    code = ("record_finding('Ce/La 1.98 in River_A', p=4.4e-110)\n"
+            "res = molar_ratio('Ce', 'La', by='sample')\n"
+            "m = res.loc[res['sample'] == 'River_B', 'median_ratio'].iloc[0]\n"
+            "record_finding(f'Ce/La median {m:.3g} in River_B', p=float(res['p_vs_rest'].min()))\n")
+    res = execute(code, ds)
+    assert st.vet_findings(code, res) == '' and len(res.findings) == 2 and not res.error
+
+
+def test_vet_findings_refuses_invented_numbers_at_the_top(planted):
+    """A finding typed at the top must still quote numbers the model was shown."""
+    ds, _ = planted
+    st = ExplorationState(question='q', max_turns=3)
+    st.messages = [{'role': 'user', 'content': 'TABLE: median_ratio 0.177 | p 0.654'}]
+    st.begin_turn()
+    code = "record_finding('Cr/Fe median 0.5 in all samples', p=0.654)\nprint(1)\n"
+    res = execute(code, ds)
+    assert st.vet_findings(code, res).startswith('record_finding quotes 0.5, which no result you have seen')
 
 
 def test_fix_does_not_use_a_turn():
@@ -312,11 +453,95 @@ def test_benchmark_explore_does_not_rerun_repeated_code(planted):
     assert any(m.startswith('[REPEATED CODE] This is the same code you ran in turn 1') for m in sent)
 
 
+def test_benchmark_iron_question_gets_the_burst_lead(planted):
+    """The benchmark passes the question to the first look."""
+    from results.ai.benchmark import _ask_explore, build_questions
+    ds, truth = planted
+    dc, _, _ = make_dataset(seed=11)
+    q = next(x for x in build_questions('rivers', dc, truth) if x.qid.endswith('explore_iron'))
+    sent = []
+
+    def model(messages, system):
+        """Stop at once and keep what was sent."""
+        sent.append(messages[-1]['content'])
+        return "EXPLORATION DONE"
+    _ask_explore(q, ds, model, 16384)
+    assert f"56Fe particles arrive in a burst in {truth.burst[0]}" in sent[0]
+
+
+@pytest.mark.parametrize('text', ["Ti is 3.3x heavier in Spiked_C (median 1.86 fg vs 0.558 fg in River_A).",
+                                  "Spiked_C carries larger Ti particles than River_A.",
+                                  "Ti particles in Spiked_C are more massive."])
+def test_explore_compare_accepts_heavier(planted, text):
+    """Heavier and more massive Ti count as the larger-Ti finding."""
+    from results.ai.benchmark import build_questions, score_exploration
+    _, truth = planted
+    dc, _, _ = make_dataset(seed=11)
+    q = next(x for x in build_questions('rivers', dc, truth) if x.qid.endswith('explore_compare'))
+    assert score_exploration(q, text)[0]
+    assert not score_exploration(q, "Ti is the same in both samples.")[0]
+
+
+@pytest.mark.parametrize('legend', [True, False])
+def test_nan_on_a_category_axis_gets_a_clear_error(planted, legend):
+    """A NaN point on a text axis is explained instead of matplotlib's internal error."""
+    ds, _ = planted
+    code = ("fig, ax = plt.subplots()\n"
+            "ax.scatter(['River_A'], [1.0], label='River_A')\n"
+            "ax.scatter(['Spiked_C'], [float('nan')], label='Spiked_C')\n"
+            "ax.set_ylabel('Ce/La')\n" + ("ax.legend()\n" if legend else ""))
+    res = execute(code, ds)
+    assert res.error == f"Figure 1 could not be drawn — {NAN_ON_CATEGORY}"
+
+
+def test_benchmark_explore_without_tests_fails(planted):
+    """A summary that only restates the first look, with no code run, does not pass."""
+    from results.ai.benchmark import _ask_explore, build_questions
+    ds, truth = planted
+    dc, _, _ = make_dataset(seed=11)
+    q = next(x for x in build_questions('rivers', dc, truth) if x.qid.endswith('explore_iron'))
+    summary = f"**Supported**\n- There is a burst of Fe particles in {truth.burst[0]} around 20 to 22 s."
+    replies = iter(["PLAN:\n1. Fe burst", "Testing the Fe burst.", summary])
+
+    def model(messages, system):
+        """Plan, never write code, then restate the screen."""
+        return next(replies)
+    out = _ask_explore(q, ds, model, 16384)
+    assert not out.passed and out.detail.endswith('no test ran without an error')
+
+
+def test_benchmark_explore_with_a_test_passes(planted):
+    """The same summary passes once a test ran and a computed finding was recorded."""
+    from results.ai.benchmark import _ask_explore, build_questions
+    ds, truth = planted
+    dc, _, _ = make_dataset(seed=11)
+    q = next(x for x in build_questions('rivers', dc, truth) if x.qid.endswith('explore_iron'))
+    code = ("PLAN:\n1. Fe burst\nTesting the Fe burst.\n```python\nb = time_bursts('Fe')\nshow_table(b)\n"
+            "record_finding(f\"Fe burst in {b['run'].iloc[0]}\", p=float(b['p'].min()))\n```")
+    summary = f"**Supported**\n- There is a burst of Fe particles in {truth.burst[0]} around 20 to 22 s."
+    replies = iter([code, "EXPLORATION DONE", summary])
+
+    def model(messages, system):
+        """One real test, then the summary."""
+        return next(replies)
+    out = _ask_explore(q, ds, model, 16384)
+    assert out.passed, out.detail
+
+
+@pytest.mark.parametrize('mode', ['chat', 'explore'])
+def test_system_prompt_ends_by_saying_there_are_no_tools(planted, mode):
+    """Models trained as agents are told to write the code instead of calling a tool."""
+    ds, _ = planted
+    prompt = build_system_prompt(ds, 16384, mode, 10)
+    assert prompt.endswith(NO_TOOLS) and prompt.count('You have no tools') == 1
+
+
 def test_rules_for_p_values_and_truncation(planted):
     """The explore rules forbid placeholder p-values; truncation comes from the truncated column."""
     from results.ai.analysis import SIGNATURES
     ds, _ = planted
     prompt = build_system_prompt(ds, 16384, 'explore', 10)
-    assert 'Never pass p=1.0 as a placeholder' in prompt
+    assert 'Never pass p=1.0 or p=1e-300 as a placeholder' in prompt
+    assert 'Never type a number you have not been shown' in prompt
     sd = next(desc for sig, desc in SIGNATURES if sig.startswith('size_distribution'))
     assert "truncated is 'yes'" in sd

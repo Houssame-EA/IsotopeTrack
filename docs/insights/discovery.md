@@ -93,6 +93,7 @@ that two replicates of one material are never reported as different samples.
 | `_replicate_agree_card` | `(rr, group, members, metrics, elements, sample_cfg)` | Build the card for a replicate group whose replicates agree. |
 | `merge_group_findings` | `(items, scope_order, n_groups: int) → list` | Merge the same finding reported by several replicate groups into one card. |
 | `isotope_pairs` | `(ctx, max_per_element: int=3) → list[tuple[str, str, str]]` | List the isotope ratios to examine: two isotopes of the same element. |
+| `ratio_cut` | `(ctx, num: str, den: str) → tuple[str, float] \| None` | The signal cut an isotope ratio is measured above. |
 | `ratio_values` | `(ctx, num: str, den: str) → tuple[np.ndarray, np.ndarray]` | Return the particles usable for a ratio, and the ratio in each. |
 | `_natural_ratio` | `(num: str, den: str) → float \| None` | Natural abundance ratio of two isotopes, or ``None`` when unknown. |
 | `_ratio_config` | `(num: str, den: str, x_axis: str) → dict` | Isotopic ratio plot settings for one ratio. |

@@ -5,7 +5,7 @@
 **A fast, free, and open-source desktop application for single-particle ICP-ToF-MS data analysis**
 
 [![Docs](https://img.shields.io/badge/docs-readthedocs-blue.svg)](https://isotopetrack.readthedocs.io/en/latest/)
-[![Version](https://img.shields.io/badge/version-1.11.1-blue.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
+[![Version](https://img.shields.io/badge/version-1.12.0-blue.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://python.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
@@ -343,6 +343,12 @@ Thanks to everyone who has contributed to building IsotopeTrack:
 | <a href="https://github.com/TNTY100"><img src="https://github.com/TNTY100.png?size=80" width="40" height="40" alt="TNTY100"></a> | [TNTY100](https://github.com/TNTY100) — Yohan Thibault |
 | <a href="https://github.com/apps/github-actions"><img src="https://avatars.githubusercontent.com/in/15368?s=80&v=4" width="40" height="40" alt="github-actions[bot]"></a> | [github-actions[bot]](https://github.com/apps/github-actions) — automation/CI bot |
 | <a href="https://github.com/Houssame-EA"><img src="https://github.com/Houssame-EA.png?size=80" width="40" height="40" alt="Houssame-EA"></a> | [Houssame-EA](https://github.com/Houssame-EA) — Houssame-Eddine Ahabchane |
+
+---
+
+## Use of AI Tools
+
+Parts of IsotopeTrack's code, tests and documentation were written with the help of AI coding assistants. Every AI-assisted change is reviewed, tested and approved by the maintainers before it is merged, and the scientific methods follow the published work cited above.
 
 ---
 

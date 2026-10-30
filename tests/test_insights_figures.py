@@ -257,12 +257,28 @@ def test_comparison_panels_carry_a_significance_test(groups, test, extra):
     ctx = F.FigureContext(quantities={"counts", "mass"}, multi_sample=True, groups=groups)
     story = F._comparison(s, ctx)
     boxes = [p for p, _c in story if p["kind"] == "box"]
-    assert len(boxes) == 2
+    assert len(boxes) == 1
     for box in boxes:
         assert box["test"] == test and box["test_log"]
         for key, value in extra.items():
             assert box[key] == value
-    assert "log10 counts" in story[0][1]
+    assert "log10 mass (fg)" in story[0][1]
+
+
+def test_amount_panels_use_mass_only():
+    """With mass calibrated, no panel reads counts or size; without it, counts stand in."""
+    s = rr.Suggestion("t", "r", "comparison", 0.8, "box_plot", elements=("56Fe",),
+                      explain_key="comparison")
+    full = F.FigureContext(quantities={"counts", "mass", "d"}, multi_sample=True, groups=2)
+    for design in (F._comparison, F._distribution, F._outlier, F._rare, F._replicates):
+        for panel, _c in design(s, full):
+            value = str(panel.get("value") or "")
+            if value and panel["kind"] not in ("bar", "combinations"):
+                assert value.startswith("mass:"), (design.__name__, panel)
+            assert "d:" not in value and "size (nm)" not in panel.get("title", "")
+    bare = F.FigureContext(quantities={"counts"}, multi_sample=True, groups=2)
+    box = next(p for p, _c in F._comparison(s, bare) if p["kind"] == "box")
+    assert box["value"] == "56Fe" and "counts" in box["title"]
 
 
 def test_single_group_has_no_test():
@@ -467,3 +483,57 @@ def test_new_panels_join_the_stories_when_the_data_allows(app, stream):
     table.detection_limits = {"140Ce": {"mass": {"S1": 0.02, "S2": 0.02}}}
     table.sample_members = {"S1": ["S1"], "S2": ["S2"]}
     assert render_problems(spec, table) == []
+
+
+def test_counting_band_only_on_ratio_against_its_denominator():
+    """The ±2σ band needs Y = isotope ratio in counts and X = the denominator's counts."""
+    from results.figure_builder.charts.overlays import counting_band_fits
+    assert counting_band_fits({"x": "206Pb", "y": "207Pb / 206Pb"})
+    assert counting_band_fits({"x": "counts:206Pb", "y": "counts:207Pb/counts:206Pb"})
+    assert not counting_band_fits({"x": "206Pb", "y": "207Pb"})
+    assert not counting_band_fits({"x": "56Fe", "y": "207Pb / 206Pb"})
+    assert not counting_band_fits({"x": "206Pb", "y": "mass:207Pb / mass:206Pb"})
+
+
+@pytest.mark.parametrize("key, elements", [
+    ("isotope", ("207Pb", "206Pb")),
+    ("isotope_two", ("207Pb", "206Pb")),
+    ("isotope_track", ("207Pb", "206Pb", "56Fe")),
+    ("isotope_groups", ("207Pb", "206Pb")),
+])
+def test_isotope_stories_put_the_band_where_it_means_something(app, stream, key, elements):
+    """No isotope-against-isotope scatter; every band sits on ratio against denominator counts."""
+    from results.figure_builder.charts.overlays import counting_band_fits
+    parts, table = stream
+    s = rr.Suggestion("t", "r", "isotope", 0.8, "isotopic_ratio_plot", elements=elements,
+                      explain_key=key, facts={"ratio_cut": ("206Pb", 40.0)})
+    ctx = F.context_from(parts, list(elements), {}, multi_sample=True, groups=2)
+    story = F.DESIGNS[key](s, ctx, 0.9146)
+    scatters = [p for p, _c in story if p["kind"] == "scatter"]
+    assert scatters
+    for panel in scatters:
+        assert "/" in panel["y"], panel
+        if panel.get("poisson_band"):
+            assert counting_band_fits(panel, table), panel
+    assert any(p.get("poisson_band") for p in scatters)
+    ratio_panels = [p for p, _c in story if p.get("value") == "207Pb / 206Pb"]
+    assert ratio_panels and all("206Pb >= 40" in p["filter"] for p in ratio_panels)
+    assert render_problems(F.figure_for(s, ctx), table) == []
+
+
+def test_band_on_wrong_axes_is_left_out_with_a_note(app, stream):
+    """A band asked for on isotope-against-isotope axes is skipped and explained."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+    from results.figure_builder.core.engine import render
+    from results.figure_builder.core.spec import default_spec, make_panel, normalise_spec
+    _parts, table = stream
+    spec = default_spec()
+    spec["panels"] = [make_panel(kind="scatter", x="206Pb", y="207Pb", poisson_band=2.0,
+                                 log_x=True, log_y=True, rect=[0, 0, 1, 1])]
+    spec = normalise_spec(spec)
+    fig = Figure()
+    FigureCanvasAgg(fig)
+    report = render(fig, spec, table)
+    assert not report.errors
+    assert any("band left out" in line for line in report.stats)

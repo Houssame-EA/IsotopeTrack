@@ -20,10 +20,13 @@ Run from the repository root::
 
     python -m results.ai.training generate --backend ollama --model <teacher> --datasets 12 --out ~/Desktop/ai_train
     python -m results.ai.training build --out ~/Desktop/ai_train
+    python -m results.ai.lora_train --config ~/Desktop/ai_train/lora_config.yaml
 
 ``generate`` can be stopped and started again; finished questions are
 skipped. ``build`` splits the examples into ``train.jsonl`` and
 ``valid.jsonl`` for ``mlx_lm.lora`` and writes a ready ``lora_config.yaml``.
+Train with :mod:`results.ai.lora_train` rather than ``mlx_lm.lora`` itself:
+for Qwen3.5-family models plain ``mlx_lm.lora`` needs hundreds of GB.
 
 ---
 
@@ -69,5 +72,6 @@ Wraps a model and keeps every request it answered, exactly as sent.
 | `retrying` | `(model, attempts=3, wait_s=5.0)` | Wrap a model so a failed request is tried again after a short wait. |
 | `_done_ids` | `(path)` | Question ids already handled in an earlier run; a request that never reached the teacher is asked again. |
 | `generate` | `(model_factory, out_dir, n_datasets=10, start=0, categories=None, mode` | Put the training questions to a teacher and keep its verified-correct replies. |
+| `drop_empty_retries` | `(messages)` | Remove empty replies and the request that asked for them again. |
 | `build` | `(out_dir, model='mlx-community/Qwen3.5-9B-MLX-4bit', epochs=2, max_len` | Split the examples into training and validation files and write the LoRA config. |
 | `main` | `(argv=None)` | Command-line entry point. |

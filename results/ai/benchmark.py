@@ -785,7 +785,7 @@ def _add_explore(add, S, s0, largest_ti, burst_sample, b0, b1, truth):
         'Fe burst': ([_name_pattern(burst_sample, S), r'\bbursts?\b|\bspikes?\b|\bsurges?\b|\bpeaks?\b|\bsudden|\btransient|\bepisod|\banomal'], ''),
         'Ag+Au sample': ([E['Ag'], E['Au'], _name_pattern(truth.alloy_sample, S)], ''),
         f'larger Ti in {largest_ti}': ([_name_pattern(largest_ti, S), E['Ti'],
-                                         r'larg|bigger|greater|higher|coarser'], ''),
+                                         r'larg|bigger|greater|higher|coarser|heav|massive'], ''),
         'Ag+Au real': ([E['Ag'], E['Au'], real], not_real),
     }
     forbidden = {'Ti+Fe called real': ([E['Ti'], E['Fe'],
@@ -1618,15 +1618,21 @@ def _ask_conversation(question, ds, model, num_ctx):
 
 
 def _ask_explore(question, ds, model, num_ctx):
-    """Run an exploration the way the Explore button does and score its summary."""
+    """Run an exploration the way the Explore button does and score its summary.
+
+    The summary only counts when at least one turn's code ran without an
+    error and at least one finding passed :meth:`ExplorationState.vet_findings`,
+    so restating the first look without testing anything fails.
+    """
     out = Outcome(qid=question.qid, dataset=question.dataset, split=question.split,
                   category=question.category)
     t0 = time.time()
     st = ExplorationState(question=question.text, max_turns=question.max_turns)
-    st.messages = [{"role": "user", "content": first_exploration_message(question.text, first_look(ds))}]
+    st.messages = [{"role": "user", "content": first_exploration_message(question.text, first_look(ds, question.text))}]
     out.transcript = st.messages
     system = build_system_prompt(ds, num_ctx, 'explore', question.max_turns)
     summary = ''
+    ran_ok = 0
     try:
         while st.begin_turn():
             reply = strip_thinking(model(fit_messages(compact_messages(st.messages), system, num_ctx, pinned=1),
@@ -1655,6 +1661,8 @@ def _ask_explore(question, ds, model, num_ctx):
                 continue
             res = execute(m.group(1).strip(), ds, EXEC_TIMEOUT_S)
             out.attempts += 1
+            st.vet_findings(m.group(1).strip(), res)
+            ran_ok += not res.error
             st.ledger.add(res.findings, st.turn)
             out.error = res.error or out.error
             action = st.after_code(res.error, done)
@@ -1673,6 +1681,10 @@ def _ask_explore(question, ds, model, num_ctx):
         out.error = f"{type(e).__name__}: {e}"
     out.answer = summary
     out.passed, out.detail = score_exploration(question, summary + '\n' + st.ledger.as_text())
+    if out.passed and not ran_ok:
+        out.passed, out.detail = False, out.detail + '; no test ran without an error'
+    elif out.passed and not len(st.ledger):
+        out.passed, out.detail = False, out.detail + '; no finding was recorded'
     out.seconds = time.time() - t0
     return out
 

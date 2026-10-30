@@ -31,6 +31,7 @@ compares the model's prose against.
 | `_ANYNUM_RE` | `re.compile('[-+]?(?:\\d[\\d,]*\\.?\\d*\|\\.\\d+)(?:[eE][-+…` |
 | `_DECIMAL_RE` | `re.compile('[-+]?(?:\\d[\\d,]*\\.\\d+\|\\.\\d+)(?:[eE][-+]…` |
 | `STATS_SHORTCUTS` | `('mannwhitneyu', 'kruskal', 'chi2_contingency', 'fisher_e…` |
+| `NAN_ON_CATEGORY` | `'a point has no value (NaN, not detected) on a category a…` |
 
 ## Classes
 
@@ -72,10 +73,12 @@ Attributes:
 | `error_hint` | `(exc, ns, ds)` | Advice that turns a common mistake into a one-step fix. |
 | `_bind` | `(fn, ds)` | Close an analysis function over the dataset, keeping its docstring. |
 | `build_namespace` | `(ds, collector, tables, findings)` | Assemble what generated code can see. |
+| `_nan_on_category` | `(fig)` | Whether a figure puts a NaN point on a category (text) axis. |
 | `_has_content` | `(fig)` | Whether any panel of a figure has something drawn on it. |
 | `_axis_has_content` | `(ax)` | Whether one panel has something drawn on it; panel letters alone do not count. |
 | `_hide_empty_panels` | `(fig)` | Hide the unused panels of a grid, e.g. the sixth of a 2 x 3 grid holding five plots. |
 | `_finish_figures` | `(collector, result)` | Style, render and describe the figures, collecting any drawing errors. |
 | `execute` | `(code, ds, timeout=CODE_EXEC_TIMEOUT, stop_event=None)` | Run generated code against a dataset. |
+| `output_numbers` | `(result)` | Numbers the code printed or put in tables, without those of its findings. |
 | `compact_table` | `(tbl, max_rows=15)` | Plain-text rendering of a result table for the model. |
 | `result_digest` | `(result, max_rows=15, max_text=2500)` | Everything a result tells the model, compacted for its context window. |

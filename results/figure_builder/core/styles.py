@@ -188,12 +188,14 @@ def font_stack(family: str | None) -> tuple[list[str], str]:
     """Font fallback list and matching mathtext set for a chosen family.
 
     Isotope labels use mathtext superscripts, so serif figures use the STIX
-    (Times-like) math font and sans-serif figures the DejaVu Sans one.
+    (Times-like) math font and sans-serif figures the DejaVu Sans one. Both
+    lists end with DejaVu Sans, which ships with matplotlib and covers symbols
+    such as ✓ and ✗ that serif fonts lack.
     """
     family = family or 'Times New Roman'
     if family in SERIF_FAMILIES or 'serif' in family.lower() and 'sans' not in family.lower():
         stack = [family, 'Times New Roman', 'Times', 'Liberation Serif', 'Nimbus Roman',
-                 'STIXGeneral', 'DejaVu Serif']
+                 'STIXGeneral', 'DejaVu Serif', 'DejaVu Sans']
         math = 'stix'
     else:
         stack = [family, 'Arial', 'Helvetica', 'Liberation Sans', 'DejaVu Sans']

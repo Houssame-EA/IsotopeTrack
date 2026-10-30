@@ -17,6 +17,13 @@ and the final summary is written from this record rather than from memory.
 | `MAX_FAILED_TURNS` | `2` |
 | `MAX_REPEATS` | `2` |
 | `KEEP_FULL_TURNS` | `2` |
+| `ELEMENT_NAMES` | `dict((pair.split(':') for pair in 'H:hydrogen He:helium L…` |
+| `ELEMENT_NAME_VARIANTS` | `{'aluminum': 'Al', 'cesium': 'Cs', 'sulphur': 'S', 'wolfr…` |
+| `WORD_SYMBOLS` | `frozenset({'I', 'In', 'As', 'At', 'Be', 'He', 'No', 'Am'})` |
+| `TYPED_NUMBER_RE` | `re.compile('(?<![\\w.%])\\d+\\.\\d+\|(?<![\\w.%])\\d+(?:\\…` |
+| `FOLD_RE` | `re.compile('[-+]?\\d[\\d.,]*(?:[eE][-+]?\\d+)?\\s*(?:x\|×\|…` |
+| `PREMATURE_FINDING` | `'record_finding on line {line} types numbers by hand afte…` |
+| `UNBACKED_FINDING` | `'record_finding quotes {numbers}, which no result you hav…` |
 | `DONE_RE` | `re.compile('^\\s*\\**\\s*EXPLORATION\\s+DONE\\b', re.IGNO…` |
 | `_PLAN_RE` | `re.compile('PLAN\\s*:\\s*(.*?)(?:```\|\\Z)', re.IGNORECASE…` |
 | `_ITEM_RE` | `re.compile('^\\s*(?:\\d+[.)]\|[-*•])\\s+(.+?)\\s*$', re.MU…` |
@@ -82,6 +89,8 @@ Attributes:
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `plan_text` | `(self)` | The plan as a numbered list. |
+| `seen_numbers` | `(self)` | Every number in the messages the model has been sent so far. |
+| `vet_findings` | `(self, code, result)` | Refuse findings whose numbers do not come from a result the model has seen. |
 | `begin_turn` | `(self)` | Start the next request: a fix of the current turn or a new turn. |
 | `repeated` | `(self, code)` | Whether *code* was already run, ignoring comments and spacing. |
 | `too_many_repeats` | `(self)` | Whether the model keeps resending code it already ran. |
@@ -92,6 +101,11 @@ Attributes:
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `_num` | `(v)` | Return *v* as a finite float, or ``None``. |
+| `_is_record_call` | `(node)` | Whether an AST node calls ``record_finding``. |
+| `_typed_numbers` | `(call)` | Whether a ``record_finding`` call holds numbers written by hand. |
+| `finding_layout` | `(code)` | Where a turn's code records its findings. |
+| `premature_finding_lines` | `(code)` | Lines where a finding with hand-written numbers follows new code, see :func:`finding_layout`. |
+| `unbacked_numbers` | `(finding, pool)` | Numbers in a finding that no result the model saw contains. |
 | `parse_plan` | `(text)` | Pull the numbered hypotheses out of a ``PLAN:`` section. |
 | `is_done` | `(text)` | Whether the model declared the exploration finished. |
 | `code_key` | `(code)` | Code reduced to what it does: no comment lines, no trailing spaces, no blank lines. |
@@ -107,4 +121,9 @@ Attributes:
 | `_pair_leads` | `(ds, a, b, multi)` | Leads for one pair of elements that really share particles. |
 | `_isotope_leads` | `(ds, multi)` | Leads from isotope ratios of elements measured on two or more isotopes. |
 | `_mass_leads` | `(ds)` | Low-priority leads: large mass differences and elements missing from samples. |
-| `first_look` | `(ds, max_items=7)` | A silent deep screen of the data, given before the first turn. |
+| `elements_named` | `(ds, question)` | The dataset's elements that a question names. |
+| `_burst_stretches` | `(table)` | Join flagged time bins that touch into stretches, one row per stretch. |
+| `_element_leads` | `(ds, label)` | Time bursts and outliers of one element, for a question about that element. |
+| `samples_named` | `(ds, question)` | The dataset's samples that a question names. |
+| `_focus_on_samples` | `(leads, named, others)` | Order leads for a question about some samples. |
+| `first_look` | `(ds, question='', max_items=7)` | A silent deep screen of the data, given before the first turn. |

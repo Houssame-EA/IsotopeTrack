@@ -22,12 +22,14 @@ from PySide6.QtWidgets import (
 
 from results.figure_builder.core.limits import detection_limits
 from results.insights import discovery as _disc
+from results.insights import evidence as _evidence
 from results.insights import figures as _figures
 from results.insights.explain import explanation_for
 from results.insights.engine import (
-    _ANALYSERS, _FONT, FOCUSED_CARD_LIMIT, NODE_TYPE_META, AnalysisScope, Suggestion,
+    _ANALYSERS, _FONT, FOCUSED_CARD_LIMIT, MAX_SELECTOR_NODES, NODE_TYPE_META, AnalysisScope,
+    Suggestion, checked_samples, find_selector, numbered_selectors,
     _AnalysisWorker, _dedupe_suggestions, _find_batch_node, _itk_log, analysers_for,
-    category_keys, gather_scope_data, invalidate_context_cache, node_type_keys,
+    category_keys, gather_scope_data, invalidate_context_cache, keep_elements, node_type_keys,
     resolve_scope,
 )
 from tools.theme import theme as _theme
@@ -637,6 +639,55 @@ class _Card(QFrame):
         QTimer.singleShot(1400, restore)
 
 
+EXPONENTIAL_LAW = "Exponential Law (instrumental mass fractionation)"
+"""The Isotopic Ratio node's name for the exponential-law mass-bias correction."""
+
+
+def mass_bias_reference(scene) -> dict | None:
+    """The exponential-law reference set up in an Isotopic Ratio node on the canvas.
+
+    The first node whose correction is the exponential law with a complete
+    reference (two isotopes, a certified and a measured ratio) is used.
+
+    Args:
+        scene: The canvas scene.
+
+    Returns:
+        ``{ref_num, ref_den, certified, measured}``, or ``None`` when no node
+        has one.
+    """
+    for node in getattr(scene, "workflow_nodes", []) or []:
+        if getattr(node, "node_type", "") != "isotopic_ratio_plot":
+            continue
+        cfg = getattr(node, "config", None) or {}
+        if cfg.get("correction_method") != EXPONENTIAL_LAW:
+            continue
+        ref = {"ref_num": str(cfg.get("ref_isotope_num") or ""),
+               "ref_den": str(cfg.get("ref_isotope_den") or "")}
+        try:
+            ref["certified"] = float(cfg.get("ref_certified_ratio"))
+            ref["measured"] = float(cfg.get("ref_measured_ratio"))
+        except (TypeError, ValueError):
+            continue
+        if ref["ref_num"] and ref["ref_den"] and ref["certified"] > 0 and ref["measured"] > 0 \
+                and abs(ref["certified"] - ref["measured"]) > 1e-12:
+            return ref
+    return None
+
+
+OWN_SELECTOR_CATEGORIES = frozenset({"replicate", "time"})
+"""Findings that need each replicate on its own, so their plots get their own selector.
+
+A selector node pools each sum group into one sample; a replicate check or a
+particle rate per run has to see the replicates apart.
+"""
+
+
+def node_units(scope: AnalysisScope) -> list[tuple[str, tuple[str, ...]]]:
+    """The samples a node sends on, grouped the way it pools them: one unit per group."""
+    return [(g.name, tuple(g.members)) for g in scope.groups]
+
+
 def selection_units(s: Suggestion, scope: AnalysisScope | None) -> list[tuple[str, tuple[str, ...]]]:
     """Group a suggestion's samples the way its selector will treat them.
 
@@ -702,11 +753,25 @@ def describe_scope(scope: AnalysisScope) -> tuple[str, str]:
         ``(samples_sentence, replicates_sentence)``.
     """
     n = len(scope.sample_names)
+    elements = (f"{len(scope.labels)} element{'s' if len(scope.labels) != 1 else ''}"
+                if scope.labels else "every element")
     first = (f"{n} sample{'s' if n != 1 else ''} and {scope.total_particles:,} particles, "
-             "every element.")
+             f"{elements}")
+    if scope.origin == "node":
+        first += f", from node {scope.node_number}."
+    elif scope.origin == "canvas":
+        first += (f", checked in your {scope.selectors} selector "
+                  f"node{'s' if scope.selectors != 1 else ''}.")
+    elif scope.selectors > MAX_SELECTOR_NODES:
+        first += (f"; all loaded samples, because there are more than {MAX_SELECTOR_NODES} "
+                  "selector nodes.")
+    else:
+        first += "; all loaded samples."
+    count = len(scope.groups)
+    groups = f"{count} group{'s' if count != 1 else ''}"
     replicated = [g for g in scope.groups if g.is_replicated]
     if not replicated:
-        return first, "No replicates found."
+        return first, f"{groups}, no replicates found."
     shown = ", ".join(f"{g.name} ({len(g.members)})" for g in replicated[:4])
     if len(replicated) > 4:
         shown += f" and {len(replicated) - 4} more"
@@ -714,7 +779,7 @@ def describe_scope(scope: AnalysisScope) -> tuple[str, str]:
     origin = ("your selector groups" if sources == {"user"}
               else "sample names" if sources == {"auto"}
               else "your groups and sample names")
-    return first, f"Replicates: {shown}, from {origin}."
+    return first, f"{groups}. Replicates: {shown}, from {origin}."
 
 
 _FILTER_KEY = "insights/plot_filter"
@@ -846,6 +911,9 @@ class SmartInsightsPanel(QWidget):
         self._filter: str | None = _load_filter()
         self._focus = ""
         self._focus_symbols: list[str] = []
+        self._node_number = 0
+        self._node_auto = True
+        self._node_list: tuple = ()
         self._cards: dict[tuple, _Card] = {}
         self._held = False
         self.setMinimumWidth(self.MIN_WIDTH)
@@ -938,7 +1006,18 @@ class SmartInsightsPanel(QWidget):
         self._focus_menu = QMenu(self._focus_btn)
         self._focus_btn.setMenu(self._focus_menu)
         self._fill_focus_menu([])
+        self._node_btn = QToolButton()
+        self._node_btn.setObjectName("iTypesBtn")
+        self._node_btn.setPopupMode(QToolButton.InstantPopup)
+        self._node_btn.setCursor(Qt.PointingHandCursor)
+        self._node_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self._node_btn.setToolTip("Search one Single or Multi-Sample node, by the number shown on "
+                                  "it; its plots connect straight to that node")
+        self._node_menu = QMenu(self._node_btn)
+        self._node_btn.setMenu(self._node_menu)
+        self._fill_node_menu()
         types_row = QHBoxLayout()
+        types_row.addWidget(self._node_btn)
         types_row.addWidget(self._types_btn)
         types_row.addWidget(self._focus_btn)
         types_row.addStretch()
@@ -1152,7 +1231,8 @@ class SmartInsightsPanel(QWidget):
         Args:
             force: Discard everything found so far and search again.
         """
-        scope = resolve_scope(self._scene, self._pw)
+        self._sync_nodes()
+        scope = self._resolve()
         if force or self._scope is None or scope.key != self._scope.key:
             self._stop_worker()
             self._found, self._ran, self._pending = [], set(), set()
@@ -1183,8 +1263,9 @@ class SmartInsightsPanel(QWidget):
         self._count_lbl.setText("Searching…")
         if not self._found:
             self._clear_cards()
-            self._show_placeholder("Searching every sample and element. Findings appear "
-                                   "here as each check finishes.")
+            where = (f"Searching node {scope.node_number}" if scope.origin == "node"
+                     else "Searching every sample and element")
+            self._show_placeholder(f"{where}. Findings appear here as each check finishes.")
 
         particles, sample_idx = gather_scope_data(self._scene, self._pw, scope)
         symbols = element_symbols(particles)
@@ -1212,6 +1293,79 @@ class SmartInsightsPanel(QWidget):
         name = NODE_TYPE_META.get(node_type, "All plot types") if node_type else "All plot types"
         log_click(f"Insights: showing {name}", {"node_type": node_type or "all"})
         self._set_filter(node_type)
+
+    def _node_entries(self) -> tuple:
+        """``(number, title, checked samples)`` of every numbered selector node on the canvas."""
+        return tuple((n.insights_number, "Multi-Sample" if n.node_type == "multiple_sample_selector"
+                      else "Single Sample", len(checked_samples(n)))
+                     for n in numbered_selectors(self._scene))
+
+    def _sync_nodes(self) -> bool:
+        """Follow the numbered nodes on the canvas; return whether the searched node changed.
+
+        Until the user picks, the lowest-numbered node is searched. A picked
+        node that is removed hands over to the lowest-numbered one.
+        """
+        entries = self._node_entries()
+        numbers = [e[0] for e in entries]
+        before = self._node_number
+        if self._node_number and self._node_number not in numbers:
+            self._node_auto = True
+        if self._node_auto:
+            self._node_number = numbers[0] if numbers else 0
+        if entries != self._node_list or before != self._node_number:
+            self._node_list = entries
+            self._fill_node_menu()
+        return before != self._node_number
+
+    def _fill_node_menu(self):
+        """List every numbered node and the choice of searching across them all."""
+        self._node_menu.clear()
+        from PySide6.QtGui import QActionGroup
+        group = QActionGroup(self._node_menu)
+        group.setExclusive(True)
+        every = self._node_menu.addAction("All selector nodes")
+        every.setCheckable(True)
+        every.setChecked(not self._node_number)
+        group.addAction(every)
+        every.triggered.connect(lambda: self._pick_node(0))
+        if self._node_list:
+            self._node_menu.addSeparator()
+        for number, title, n in self._node_list:
+            action = self._node_menu.addAction(
+                f"{number} · {title} ({n} sample{'s' if n != 1 else ''} checked)")
+            action.setCheckable(True)
+            action.setChecked(number == self._node_number)
+            group.addAction(action)
+            action.triggered.connect(lambda _checked=False, k=number: self._pick_node(k))
+        self._node_btn.setText(f"Node: {self._node_number or 'all'}  ▾")
+        self._node_btn.setVisible(bool(self._node_list))
+
+    def current_node(self) -> int:
+        """Return the number of the node searched, or 0 when searching across all of them."""
+        return self._node_number
+
+    def set_node(self, number: int):
+        """Search one numbered selector node, or every one when *number* is 0.
+
+        Args:
+            number: A number shown on a Single or Multi-Sample node, or 0.
+        """
+        self._node_auto = False
+        self._node_number = number if number in {e[0] for e in self._node_entries()} else 0
+        self._node_list = self._node_entries()
+        self._fill_node_menu()
+        self.scan(force=True)
+
+    def _pick_node(self, number: int):
+        """Search the node picked from the menu, and log the choice."""
+        log_click(f"Insights: searching node {number}" if number
+                  else "Insights: searching all selector nodes", {"node": number})
+        self.set_node(number)
+
+    def _resolve(self) -> AnalysisScope:
+        """The scope for the node being searched, or across the canvas."""
+        return resolve_scope(self._scene, self._pw, self._node_number)
 
     def _pick_focus(self, symbol: str):
         """Search around the element picked from the menu, and log the choice."""
@@ -1248,8 +1402,9 @@ class SmartInsightsPanel(QWidget):
         """Search again when the loaded samples or replicate groups have changed."""
         if not self.isVisible():
             return
-        scope = resolve_scope(self._scene, self._pw)
-        if self._scope is None or scope.key != self._scope.key:
+        changed = self._sync_nodes()
+        scope = self._resolve()
+        if changed or self._scope is None or scope.key != self._scope.key:
             self.scan()
 
     def _on_scene_selection(self, *_):
@@ -1264,9 +1419,8 @@ class SmartInsightsPanel(QWidget):
         passed its last abort check will still emit, and without this it would
         deliver results for the previous scope into the current panel.
 
-        A cancelled worker is held in ``_retired`` until its thread actually
-        exits, because letting a running ``QThread`` be garbage collected
-        crashes the interpreter.
+        A cancelled worker is kept until its thread actually exits (see
+        :meth:`_retire`).
         """
         w = self._worker
         self._pending = set()
@@ -1278,11 +1432,45 @@ class SmartInsightsPanel(QWidget):
             except (RuntimeError, TypeError):
                 pass
         self._worker = None
-        if w.isRunning():
+        if not w.isFinished():
             w.cancel()
-            self._retired.append(w)
-            w.finished.connect(lambda: self._retired.remove(w)
-                               if w in self._retired else None)
+        self._retire(w)
+
+    def _retire(self, w):
+        """Keep a worker referenced until its thread has really ended.
+
+        A worker hands over its results from inside its thread, before the
+        thread ends. If the panel dropped its last reference then, the thread
+        would hold the only one and free itself from within, and Qt aborts
+        the application ("QThread: Destroyed while thread is still
+        running"). The worker is kept in ``_retired`` and released by
+        :meth:`_reap_retired` on the GUI thread once it has finished.
+
+        Args:
+            w: A worker, or ``None``.
+        """
+        if w is None or w in self._retired or w.isFinished():
+            return
+        self._retired.append(w)
+        w.finished.connect(self._reap_retired)
+        if w.isFinished():
+            QTimer.singleShot(0, lambda: self._reap_retired(w))
+
+    def _reap_retired(self, w=None):
+        """Release a kept worker once its thread has fully exited.
+
+        Runs on the GUI thread when the worker reports it has finished; the
+        short wait covers the moment between that report and the thread's
+        actual end.
+
+        Args:
+            w: The worker; the one that sent the finished signal when omitted.
+        """
+        w = w or self.sender()
+        if w is None or w not in self._retired:
+            return
+        w.wait(2000)
+        self._retired.remove(w)
 
     def _update_sample_strip(self, scope: AnalysisScope | None = None):
         """Describe which samples are searched and how they group into replicates.
@@ -1291,9 +1479,11 @@ class SmartInsightsPanel(QWidget):
             scope: Scope to describe. Resolved from the scene when omitted.
         """
         if scope is None:
-            scope = resolve_scope(self._scene, self._pw)
+            scope = self._resolve()
         if not scope.sample_names:
-            self._sample_lbl.setText("No samples loaded yet.")
+            self._sample_lbl.setText(
+                f"Node {scope.node_number} has no loaded sample checked yet."
+                if scope.origin == "node" else "No samples loaded yet.")
             self._group_lbl.setText("")
             self._group_lbl.setVisible(False)
             return
@@ -1324,6 +1514,7 @@ class SmartInsightsPanel(QWidget):
             keys: The detectors that ran.
             scope_key: The scope the search was for.
         """
+        self._retire(self._worker)
         self._worker = None
         self._pending = set()
         self._bar.setVisible(False)
@@ -1479,7 +1670,7 @@ class SmartInsightsPanel(QWidget):
                     has_figure = ((s.explain_key or s.category) in _figures.DESIGNS
                                   or s.category in _figures.DESIGNS)
                     card = _Card(s, on_add=self._add_suggestion,
-                                 samples_text=describe_samples(s, self._scope),
+                                 samples_text=self._card_source(s),
                                  on_figure=self._add_figure if has_figure else None,
                                  on_cluster=self._add_clustering)
                     self._cards[key] = card
@@ -1495,6 +1686,9 @@ class SmartInsightsPanel(QWidget):
             A short message for the empty list.
         """
         scope = self._scope
+        if scope is not None and scope.origin == "node" and not scope.sample_names:
+            return (f"Check a sample in node {scope.node_number}, or choose another node, to "
+                    "start.")
         if scope is None or not scope.sample_names:
             return ("Load a sample to start. Insights searches every sample and element on "
                     "its own.")
@@ -1532,6 +1726,28 @@ class SmartInsightsPanel(QWidget):
             if item.widget():
                 _discard(item.widget())
 
+    def _direct_node(self, s: Suggestion):
+        """The selector node a card's plot connects straight to, or ``None``.
+
+        When one numbered node is searched, its plots hang off that node and
+        get exactly what it sends on; findings about single replicates still
+        get their own selector (see :data:`OWN_SELECTOR_CATEGORIES`).
+        """
+        scope = self._scope
+        if scope is None or scope.origin != "node" or s.category in OWN_SELECTOR_CATEGORIES:
+            return None
+        return find_selector(self._scene, scope.node_number)
+
+    def _card_source(self, s: Suggestion) -> str:
+        """The card's line saying which samples, and which node, a finding comes from."""
+        text = describe_samples(s, self._scope)
+        scope = self._scope
+        if scope is not None and scope.origin == "node":
+            where = (f"Node {scope.node_number}" if self._direct_node(s) is not None
+                     else f"Node {scope.node_number}, its replicates apart")
+            return f"{where} · {text}" if text else where
+        return text
+
     def _add_figure(self, s: Suggestion):
         """Add the figure that walks through a finding, panels a to f with a legend.
 
@@ -1542,19 +1758,28 @@ class SmartInsightsPanel(QWidget):
         Args:
             s: The finding.
         """
-        units = selection_units(s, self._scope)
+        direct = self._direct_node(s)
+        units = node_units(self._scope) if direct is not None else selection_units(s, self._scope)
         samples = [m for _label, members in units for m in members]
         pool = _raw_pool_for(self._scene, self._pw)
+        if direct is not None and self._scope.labels:
+            pool = {name: keep_elements(pool.get(name, ()), self._scope.labels) for name in samples}
         particles = [p for name in samples for p in pool.get(name, ())]
         labels = list(s.elements)
         for panel in (s.config or {}).get("panels") or []:
             for label in (panel.get("types") or {}).get("elements") or ():
                 if label not in labels:
                     labels.append(label)
+        try:
+            table = _evidence.table_from(units, pool)
+        except Exception:
+            _itk_log.exception("[Insights] could not build the figure's particle table")
+            table = None
         ctx = _figures.context_from(
             particles, labels,
             detection_limits(self._pw, samples, labels),
-            multi_sample=len(units) > 1, groups=len(units))
+            multi_sample=len(units) > 1, groups=len(units), table=table,
+            mass_bias=mass_bias_reference(self._scene))
         spec = _figures.figure_for(s, ctx)
         if spec is None:
             self._flash_status("No figure is available for this finding")
@@ -1610,6 +1835,15 @@ class SmartInsightsPanel(QWidget):
         plot_node = factory(self._pw)
         if config and isinstance(getattr(plot_node, "config", None), dict):
             plot_node.config.update(copy.deepcopy(config))
+
+        direct = self._direct_node(s)
+        if direct is not None:
+            parked = QPointF(-1900, -1900)
+            scene.add_node(plot_node, parked)
+            scene.add_link(direct, "output", plot_node, "input")
+            _place_branch(scene, [plot_node], direct)
+            self._flash_status(f"Added plot, connected to node {self._scope.node_number}")
+            return
 
         selector = self._build_scoped_selector(s, _NODE_FACTORIES, narrow_elements)
         source = selector or _find_source_node(scene)

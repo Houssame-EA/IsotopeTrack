@@ -7,7 +7,7 @@ import numpy as np
 from results.figure_builder.core.common import (
     add_legend, bin_edges, compact, count_label, draw_marks, draw_summary_box, edges_by_width,
     float_or_none, handles, ink, label_n, style_axes, value_groups)
-from results.figure_builder.core.expressions import ExpressionError
+from results.figure_builder.core.expressions import ExpressionError, evaluate
 from results.figure_builder.core.stats import draw_brackets, run_tests
 
 
@@ -194,9 +194,50 @@ def _fit_curve(ax, g, v, edges, log_x, density, panel, report, scale_n=None):
             path_effects=[patheffects.withStroke(linewidth=4, foreground='white')])
 
 
+def replicate_medians(table, values, mask) -> list[tuple[str, float]]:
+    """Median of *values* in each replicate (original sample) among the masked particles.
+
+    A pooled group keeps each particle's original sample, so a group built
+    from three replicates gives three medians; a plain sample gives one.
+    """
+    reps = table.column('replicate')[mask]
+    picked = np.asarray(values)[mask]
+    out = []
+    for name in dict.fromkeys(reps.tolist()):
+        v = picked[reps == name]
+        if v.size:
+            out.append((str(name), float(np.median(v))))
+    return out
+
+
+def _draw_replicates(ax, positions, per_group, log10):
+    """White diamonds at each replicate's median, spread a little across the box."""
+    first = True
+    for pos, meds in zip(positions, per_group):
+        if not meds:
+            continue
+        ys = np.array([m for _n, m in meds], dtype=float)
+        if log10:
+            ys = np.log10(ys)
+        xs = pos + (np.linspace(-0.16, 0.16, len(ys)) if len(ys) > 1 else np.zeros(1))
+        ax.scatter(xs, ys, marker='D', s=34, facecolor='white', edgecolor=ink('#111827'),
+                   linewidths=1.3, zorder=8, label='Replicate medians' if first else None)
+        first = False
+
+
 def draw_distribution(fig, ax, panel, table, report, style):
     """Box or violin plot per group, optional points, mean, notches and brackets."""
-    groups = [(g, v) for g, v in value_groups(panel, table) if v.size]
+    by_rep = bool(panel.get('rep_medians')) or panel.get('test_unit') == 'replicates'
+    rep_meds = []
+    if by_rep:
+        values_all = None
+        triples = [t for t in value_groups(panel, table, with_masks=True) if t[1].size]
+        if triples:
+            values_all = evaluate(panel['value'], table)
+        rep_meds = [replicate_medians(table, values_all, m) for _g, _v, m in triples]
+        groups = [(g, v) for g, v, _m in triples]
+    else:
+        groups = [(g, v) for g, v in value_groups(panel, table) if v.size]
     if not groups:
         raise ExpressionError('No finite values to plot')
     log = bool(panel.get('log_y'))
@@ -284,9 +325,21 @@ def draw_distribution(fig, ax, panel, table, report, style):
     from results.figure_builder.charts.detectability import draw_on_categories
     draw_on_categories(ax, panel, table, report, groups, positions, panel['value'],
                        to_axis=np.log10 if (log and panel['kind'] == 'violin') else None)
-    pairs, lines = run_tests([(g.label, v) for g, v in groups], panel)
+    if panel.get('rep_medians'):
+        _draw_replicates(ax, positions, rep_meds, log and panel['kind'] == 'violin')
+    if panel.get('test_unit') == 'replicates' and rep_meds and all(len(m) >= 2 for m in rep_meds):
+        pairs, lines = run_tests([(g.label, np.array([x for _n, x in m]))
+                                  for (g, _v), m in zip(groups, rep_meds)], panel)
+        lines = [f'{line} (one value per replicate: its median)' for line in lines]
+    else:
+        pairs, lines = run_tests([(g.label, v) for g, v in groups], panel)
+        if panel.get('test_unit') == 'replicates':
+            lines.append('Test on particles: every group needs two or more replicates to be tested '
+                         'on replicate medians')
     report.stats.extend(lines)
     style_axes(ax, panel, table, style, '', panel['value'])
+    if panel.get('rep_medians') and any(rep_meds):
+        add_legend(ax, panel, min_items=1)
     if half:
         ax.set_xlim(0.4, len(groups) + 0.6)
     in_log10 = log and panel['kind'] == 'violin'

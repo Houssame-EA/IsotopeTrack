@@ -18,10 +18,13 @@ Run from the repository root::
 
     python -m results.ai.training generate --backend ollama --model <teacher> --datasets 12 --out ~/Desktop/ai_train
     python -m results.ai.training build --out ~/Desktop/ai_train
+    python -m results.ai.lora_train --config ~/Desktop/ai_train/lora_config.yaml
 
 ``generate`` can be stopped and started again; finished questions are
 skipped. ``build`` splits the examples into ``train.jsonl`` and
 ``valid.jsonl`` for ``mlx_lm.lora`` and writes a ready ``lora_config.yaml``.
+Train with :mod:`results.ai.lora_train` rather than ``mlx_lm.lora`` itself:
+for Qwen3.5-family models plain ``mlx_lm.lora`` needs hundreds of GB.
 """
 from __future__ import annotations
 
@@ -381,7 +384,7 @@ LORA_CONFIG = """model: {model}
 train: true
 data: {data}
 fine_tune_type: lora
-num_layers: 16
+num_layers: 8
 batch_size: 1
 iters: {iters}
 learning_rate: 1.0e-5
@@ -391,7 +394,7 @@ val_batches: 25
 save_every: 100
 adapter_path: {adapters}
 max_seq_length: {max_len}
-grad_checkpoint: true
+grad_checkpoint: false
 mask_prompt: true
 lora_parameters:
   rank: 16
@@ -400,11 +403,39 @@ lora_parameters:
 """
 
 
+def drop_empty_retries(messages):
+    """Remove empty replies and the request that asked for them again.
+
+    Some teachers answer the first question with a call to a tool that does
+    not exist, which leaves the reply empty; the conversation then asks again.
+    The good reply that follows answers the original question, so the empty
+    exchange is left out of the training history.
+
+    Args:
+        messages (list): Chat messages of one example.
+
+    Returns:
+        list: The messages without those pairs.
+    """
+    out, i = [], 0
+    while i < len(messages):
+        m = messages[i]
+        nxt = messages[i + 1] if i + 1 < len(messages) else None
+        if (m.get('role') == 'assistant' and not str(m.get('content') or '').strip() and nxt is not None
+                and nxt.get('role') == 'user' and str(nxt.get('content', '')).startswith(EMPTY_PREFIX)):
+            i += 2
+            continue
+        out.append(m)
+        i += 1
+    return out
+
+
 def build(out_dir, model='mlx-community/Qwen3.5-9B-MLX-4bit', epochs=2, max_len=12288, valid_every=8):
     """Split the examples into training and validation files and write the LoRA config.
 
     Whole datasets go to validation, never single replies, so validation
-    measures questions on data the model did not train on.
+    measures questions on data the model did not train on. Empty replies
+    and their retry requests are left out, see :func:`drop_empty_retries`.
 
     Args:
         out_dir (str): Folder holding ``examples.jsonl``.
@@ -443,7 +474,7 @@ def build(out_dir, model='mlx-community/Qwen3.5-9B-MLX-4bit', epochs=2, max_len=
                 counts['too_long'] += 1
                 continue
             split = 'valid' if r['dataset'] in valid_sets else 'train'
-            files[split].write(json.dumps({'messages': r['messages']}, ensure_ascii=False) + '\n')
+            files[split].write(json.dumps({'messages': drop_empty_retries(r['messages'])}, ensure_ascii=False) + '\n')
             counts[split] += 1
     finally:
         for f in files.values():
@@ -492,6 +523,7 @@ def main(argv=None):
         print(f"{counts['train']} training and {counts['valid']} validation examples "
               f"({counts['too_long']} too long dropped); {counts['iters']} iterations")
         print(f"Config: {os.path.join(out, 'lora_config.yaml')}")
+        print(f"Train:  python3 -m results.ai.lora_train --config {os.path.join(out, 'lora_config.yaml')}")
         return 0
     if args.reference:
         factory, cfg = reference_model, None
