@@ -4,6 +4,11 @@ The user drags on empty paper to draw a panel rectangle (Shift-drag draws
 on top of an existing panel, e.g. for an inset), drags a panel to move it,
 drags its lower-right corner to resize it and presses Delete to remove it. Rectangles are stored as fractions of the page (origin
 top-left), so the same layout scales to any final figure size.
+
+When the selected panel is nearly the same size as another one, or nearly
+lined up with it, a suggestion chip offers to make it match exactly. It is
+only a suggestion: nothing changes until the user applies it, and it can be
+skipped or dismissed. The context menu offers every match at any time.
 """
 
 from __future__ import annotations
@@ -49,6 +54,93 @@ def _snap(v: float) -> float:
     return round(v / _SNAP) * _SNAP
 
 
+NEAR = 0.05
+"""How close, as a fraction of the page, two sizes or edges must be for a suggestion."""
+
+SAME = 1e-3
+"""Below this difference two sizes or edges already match."""
+
+
+def _inside(a, b) -> bool:
+    """Whether rectangle *a* lies inside rectangle *b*, as an inset does."""
+    return (a[0] >= b[0] - SAME and a[1] >= b[1] - SAME
+            and a[0] + a[2] <= b[0] + b[2] + SAME and a[1] + a[3] <= b[1] + b[3] + SAME)
+
+
+def _fit_page(rect) -> list[float]:
+    """Shift a rectangle back onto the page, keeping its size."""
+    x, y, w, h = rect
+    w, h = min(w, 1.0), min(h, 1.0)
+    return [round(min(max(0.0, x), 1.0 - w), 4), round(min(max(0.0, y), 1.0 - h), 4),
+            round(w, 4), round(h, 4)]
+
+
+def matches(rect, other) -> list[tuple[str, list[float], float]]:
+    """Every way *rect* can be made to match *other*.
+
+    Returns:
+        ``(what, new_rect, difference)`` for the size, the width, the height
+        and the four edges; *difference* is how far apart they are now.
+    """
+    x, y, w, h = rect
+    ox, oy, ow, oh = other
+    return [
+        ('the same size as', _fit_page([x, y, ow, oh]), max(abs(w - ow), abs(h - oh))),
+        ('the same width as', _fit_page([x, y, ow, h]), abs(w - ow)),
+        ('the same height as', _fit_page([x, y, w, oh]), abs(h - oh)),
+        ('top-aligned with', _fit_page([x, oy, w, h]), abs(y - oy)),
+        ('left-aligned with', _fit_page([ox, y, w, h]), abs(x - ox)),
+        ('bottom-aligned with', _fit_page([x, oy + oh - h, w, h]), abs((y + h) - (oy + oh))),
+        ('right-aligned with', _fit_page([ox + ow - w, y, w, h]), abs((x + w) - (ox + ow))),
+    ]
+
+
+def suggestions(panels, pid: str, letter=lambda i: chr(97 + i)) -> list[dict]:
+    """Close-but-not-equal matches between one panel and the others, closest first.
+
+    A panel nearly the same size as another, or with an edge nearly lined up
+    with another's, gets a suggestion to match it exactly. A matching size
+    hides the matching width and height it implies. Insets, and the panels
+    they sit in, are left alone.
+
+    Args:
+        panels: The spec's panels.
+        pid: Id of the panel the suggestions are for.
+        letter: Panel index to its letter.
+
+    Returns:
+        Dicts with ``text`` (e.g. ``"Make a the same size as b?"``),
+        ``rect`` (the panel's rectangle after applying) and ``key``
+        (identifying the suggestion, for dismissing it).
+    """
+    index = {p['id']: i for i, p in enumerate(panels)}
+    if pid not in index:
+        return []
+    me = panels[index[pid]]
+    rect = list(me['rect'])
+    found = []
+    for i, other in enumerate(panels):
+        if other['id'] == pid or other.get('caption') or me.get('caption'):
+            continue
+        orect = list(other['rect'])
+        if _inside(rect, orect) or _inside(orect, rect):
+            continue
+        options = {what: (new, diff) for what, new, diff in matches(rect, orect)}
+        size_close = SAME < options['the same size as'][1] <= NEAR
+        for what, (new, diff) in options.items():
+            if not (SAME < diff <= NEAR) or new == [round(v, 4) for v in rect]:
+                continue
+            if size_close and what in ('the same width as', 'the same height as'):
+                continue
+            if what == 'the same size as' and not size_close:
+                continue
+            found.append({'text': f'Make {letter(index[pid])} {what} {letter(i)}?', 'rect': new,
+                          'key': (pid, what, other['id'], tuple(round(v, 4) for v in rect)),
+                          'diff': diff})
+    found.sort(key=lambda d: d['diff'])
+    return found
+
+
 class LayoutSketch(QWidget):
     """Interactive page on which panels are drawn, moved and resized.
 
@@ -72,6 +164,9 @@ class LayoutSketch(QWidget):
         self._draft = None
         self._anchor = (0.0, 0.0)
         self.errors: dict = {}
+        self._suggestions: list[dict] = []
+        self._dismissed: set = set()
+        self._chip: dict = {}
         self.panel_factory = E.make_panel
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -84,7 +179,7 @@ class LayoutSketch(QWidget):
         ids = {p['id'] for p in spec.get('panels', [])}
         if self.selected not in ids:
             self.selected = ''
-        self.update()
+        self.refresh_suggestions()
 
     def page_rect(self) -> QRectF:
         """The paper rectangle in widget pixels, keeping the figure aspect."""
@@ -132,7 +227,86 @@ class LayoutSketch(QWidget):
         if pid != self.selected:
             self.selected = pid
             self.selection_changed.emit(pid)
+        self.refresh_suggestions()
+
+    def _letter(self, i: int) -> str:
+        """The panel letter of panel *i*, in the figure's letter style."""
+        return E.panel_letter(i, self.spec.get('figure', {}).get('letter_style', 'a'))
+
+    def refresh_suggestions(self):
+        """Work out the suggestions for the selected panel and repaint."""
+        found = suggestions(self.spec.get('panels', []), self.selected, self._letter) if self.selected else []
+        self._suggestions = [d for d in found if d['key'] not in self._dismissed]
         self.update()
+
+    def current_suggestion(self) -> dict | None:
+        """The suggestion shown in the chip, or ``None``."""
+        return self._suggestions[0] if self._suggestions else None
+
+    def apply_suggestion(self, suggestion: dict | None = None):
+        """Resize or move the selected panel as a suggestion says."""
+        suggestion = suggestion or self.current_suggestion()
+        panel = self._panel(self.selected)
+        if suggestion is None or panel is None:
+            return
+        panel['rect'] = list(suggestion['rect'])
+        self.layout_changed.emit()
+        self.refresh_suggestions()
+
+    def next_suggestion(self):
+        """Show the next suggestion, putting the current one last."""
+        if len(self._suggestions) > 1:
+            self._suggestions = self._suggestions[1:] + self._suggestions[:1]
+            self.update()
+
+    def dismiss_suggestion(self):
+        """Hide the shown suggestion for this panel's current shape."""
+        current = self.current_suggestion()
+        if current is not None:
+            self._dismissed.add(current['key'])
+        self.refresh_suggestions()
+
+    def _paint_suggestion(self, qp, c):
+        """Outline what the suggestion would do, and draw the chip with Apply, Next and ✕."""
+        self._chip = {}
+        current = self.current_suggestion()
+        if current is None:
+            return
+        accent = QColor(c['accent'])
+        qp.setBrush(Qt.NoBrush)
+        qp.setPen(QPen(accent, 1.4, Qt.DotLine))
+        qp.drawRoundedRect(self._to_px(current['rect']).adjusted(2, 2, -2, -2), 6, 6)
+        f = QFont(self.font())
+        f.setPointSizeF(8.5)
+        qp.setFont(f)
+        fm = qp.fontMetrics()
+        more = len(self._suggestions) > 1
+        parts = [current['text'], 'Apply'] + (['Next'] if more else []) + ['✕']
+        widths = [fm.horizontalAdvance(t) + 12 for t in parts]
+        h = fm.height() + 8
+        total = sum(widths) + 6
+        x = max(4.0, (self.width() - total) / 2)
+        y = self.height() - h - 4
+        qp.setPen(QPen(QColor(c['border']), 1))
+        qp.setBrush(QColor('#ffffff'))
+        qp.drawRoundedRect(QRectF(x, y, min(total, self.width() - 8), h), h / 2, h / 2)
+        cx = x + 3
+        for text, w in zip(parts, widths):
+            r = QRectF(cx, y, w, h)
+            if text == current['text']:
+                qp.setPen(QColor(c['text']))
+            else:
+                qp.setPen(accent)
+                self._chip[{'Apply': 'apply', 'Next': 'next', '✕': 'dismiss'}[text]] = r
+            qp.drawText(r, Qt.AlignCenter, text)
+            cx += w
+
+    def _chip_action(self, pt: QPointF) -> str:
+        """Which chip button is under *pt*: 'apply', 'next', 'dismiss' or ''."""
+        for name, r in self._chip.items():
+            if r.contains(pt):
+                return name
+        return ''
 
     def paintEvent(self, _event):
         c = _theme_colors()
@@ -201,6 +375,8 @@ class LayoutSketch(QWidget):
         if not self.spec.get('panels'):
             qp.setPen(QColor(c['muted']))
             qp.drawText(page, Qt.AlignCenter, 'Drag on the page to draw a panel')
+        if self._mode is None:
+            self._paint_suggestion(qp, c)
         qp.end()
 
     def mousePressEvent(self, ev):
@@ -208,6 +384,11 @@ class LayoutSketch(QWidget):
             return super().mousePressEvent(ev)
         self.setFocus()
         pt = ev.position()
+        action = self._chip_action(pt)
+        if action:
+            {'apply': self.apply_suggestion, 'next': self.next_suggestion,
+             'dismiss': self.dismiss_suggestion}[action]()
+            return
         panel, part = self._hit(pt)
         self._press = pt
         if ev.modifiers() & Qt.ShiftModifier:
@@ -272,6 +453,7 @@ class LayoutSketch(QWidget):
             panel = self._panel(self.selected)
             if panel is not None and panel['rect'] != self._orig:
                 self.layout_changed.emit()
+            self.refresh_suggestions()
 
     def keyPressEvent(self, ev):
         if ev.key() in (Qt.Key_Delete, Qt.Key_Backspace) and self.selected:
@@ -289,8 +471,8 @@ class LayoutSketch(QWidget):
                 x = min(1.0 - w, max(0.0, x + dx * _SNAP))
                 y = min(1.0 - h, max(0.0, y + dy * _SNAP))
             panel['rect'] = [round(x, 4), round(y, 4), round(w, 4), round(h, 4)]
-            self.update()
             self.layout_changed.emit()
+            self.refresh_suggestions()
             return
         super().keyPressEvent(ev)
 
@@ -323,6 +505,24 @@ class LayoutSketch(QWidget):
         self.layout_changed.emit()
         self.update()
 
+    def _match_menu(self, parent, panel):
+        """A "Match another panel" submenu: every size and edge of every other panel."""
+        panels = self.spec.get('panels', [])
+        others = [(i, p) for i, p in enumerate(panels) if p['id'] != panel['id'] and not p.get('caption')]
+        if not others:
+            return None
+        menu = QMenu('Match another panel', parent)
+        menu._subs = []
+        for i, other in others:
+            sub = QMenu(f'Panel {self._letter(i)}', menu)
+            menu.addMenu(sub)
+            menu._subs.append(sub)
+            for what, new, diff in matches(list(panel['rect']), list(other['rect'])):
+                act = sub.addAction(what[0].upper() + what[1:] + f' {self._letter(i)}')
+                act.setEnabled(diff > SAME)
+                act.triggered.connect(lambda _=False, r=new: self.apply_suggestion({'rect': r}))
+        return menu
+
     def contextMenuEvent(self, ev):
         panel, _ = self._hit(QPointF(ev.pos()))
         if panel is None:
@@ -336,6 +536,9 @@ class LayoutSketch(QWidget):
             act.setChecked(panel.get('kind') == key)
             act.triggered.connect(lambda _=False, k=key, pid=panel['id']: self.kind_requested.emit(pid, k))
             kinds.addAction(act)
+        match = self._match_menu(menu, panel)
+        if match is not None:
+            menu.addMenu(match)
         menu.addSeparator()
         menu.addAction('Duplicate', lambda: self._duplicate(panel))
         menu.addAction('Bring to front', lambda: self._restack(panel, True))

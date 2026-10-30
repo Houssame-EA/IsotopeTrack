@@ -398,6 +398,42 @@ def get_sample_correction_config(cfg: dict, sample_name: str = None) -> dict:
     return merged
 
 
+MODE_SAMPLE = 5000
+"""Most ratios the density curve for the mode is fitted to; larger sets are subsampled."""
+
+
+def ratio_mode(ratios, log: bool = False) -> float | None:
+    """The most common ratio: the peak of a smooth density curve fitted to the ratios.
+
+    A histogram's tallest bar would move with the bin width; the peak of a
+    Gaussian kernel density estimate does not. On a log axis the curve is
+    fitted to log10 of the ratios, as they are shown.
+
+    Args:
+        ratios: The particle ratios.
+        log: Fit on log10 values.
+
+    Returns:
+        The mode, or ``None`` with fewer than five usable ratios.
+    """
+    from scipy import stats
+    r = np.asarray(ratios, dtype=float)
+    r = r[np.isfinite(r) & ((r > 0) if log else True)]
+    if r.size < 5:
+        return None
+    v = np.log10(r) if log else r
+    if np.ptp(v) == 0:
+        return float(r[0])
+    if v.size > MODE_SAMPLE:
+        v = np.random.default_rng(0).choice(v, MODE_SAMPLE, replace=False)
+    grid = np.linspace(v.min(), v.max(), 512)
+    try:
+        peak = float(grid[np.argmax(stats.gaussian_kde(v)(grid))])
+    except (np.linalg.LinAlgError, ValueError):
+        return float(np.median(r))
+    return float(10 ** peak) if log else peak
+
+
 def poisson_ratio_sigma(R: float, lambda_B: np.ndarray) -> np.ndarray:
     safe_lB = np.maximum(lambda_B, 1.0)
     return np.sqrt(R * (1.0 + R) / safe_lB)
@@ -727,6 +763,14 @@ class IsotopeSettingsDialog(QDialog):
         self.show_mean = QCheckBox()
         self.show_mean.setChecked(self._cfg.get('show_mean_line', True))
         fl.addRow("Mean Ratio Line:", self.show_mean)
+        self.show_median = QCheckBox()
+        self.show_median.setChecked(self._cfg.get('show_median_line', False))
+        fl.addRow("Median Ratio Line:", self.show_median)
+        self.show_mode = QCheckBox()
+        self.show_mode.setChecked(self._cfg.get('show_mode_line', False))
+        self.show_mode.setToolTip("The most common ratio: the peak of a smooth density curve "
+                                  "fitted to the ratios (on log values when the axis is log)")
+        fl.addRow("Mode Ratio Line:", self.show_mode)
         layout.addWidget(g)
         self._grp_ref_lines = g
 
@@ -1658,6 +1702,8 @@ class IsotopeSettingsDialog(QDialog):
             out['show_natural_line'] = self.show_natural.isChecked()
             out['show_standard_line'] = self.show_standard.isChecked()
             out['show_mean_line'] = self.show_mean.isChecked()
+            out['show_median_line'] = self.show_median.isChecked()
+            out['show_mode_line'] = self.show_mode.isChecked()
             out['show_confidence_intervals'] = self.show_ci.isChecked()
             out['show_box'] = self.show_box_cb.isChecked()
             out['shade_type'] = self.shade_combo.currentText()
@@ -1855,6 +1901,8 @@ class IsotopicRatioDisplayDialog(QDialog):
             ('show_natural_line',  'Natural Abundance Line',  False),
             ('show_standard_line', 'Standard Ratio Line',     False),
             ('show_mean_line',     'Mean Ratio Line',         True),
+            ('show_median_line',   'Median Ratio Line',       False),
+            ('show_mode_line',     'Mode Ratio Line',         False),
             ('show_det_limit',     'Detection Limit Line',    False),
         ]:
             a = tm.addAction(label); a.setCheckable(True)
@@ -2836,7 +2884,7 @@ class IsotopicRatioDisplayDialog(QDialog):
                                    pen=pg.mkPen(color=pen_rgba, width=1.5)))
 
     def _make_legend_proxy(self, color, style='solid', width=2):
-        pen_style = Qt.SolidLine if style == 'solid' else Qt.DashLine
+        pen_style = {'solid': Qt.SolidLine, 'dot': Qt.DotLine}.get(style, Qt.DashLine)
         return pg.PlotDataItem(
             x=[0, 1], y=[0, 0],
             pen=pg.mkPen(color=color, style=pen_style, width=width))
@@ -2876,6 +2924,25 @@ class IsotopicRatioDisplayDialog(QDialog):
                 pen=pg.mkPen(color='red', width=2)))
             legend_items.append(
                 (self._make_legend_proxy('red', 'solid'), f"Mean: {mean_r:.4f}"))
+
+        if cfg.get('show_median_line', False) and len(ratios_linear) > 0:
+            median_r = float(np.median(ratios_linear))
+            display = np.log10(median_r) if (log_y and median_r > 0) else median_r
+            pi.addItem(pg.InfiniteLine(
+                pos=display, angle=0,
+                pen=pg.mkPen(color='#2563EB', style=Qt.DashLine, width=2)))
+            legend_items.append(
+                (self._make_legend_proxy('#2563EB', 'dash'), f"Median: {median_r:.4f}"))
+
+        if cfg.get('show_mode_line', False) and len(ratios_linear) > 0:
+            mode_r = ratio_mode(ratios_linear, log_y)
+            if mode_r is not None:
+                display = np.log10(mode_r) if (log_y and mode_r > 0) else mode_r
+                pi.addItem(pg.InfiniteLine(
+                    pos=display, angle=0,
+                    pen=pg.mkPen(color='#7C3AED', style=Qt.DotLine, width=2)))
+                legend_items.append(
+                    (self._make_legend_proxy('#7C3AED', 'dot'), f"Mode: {mode_r:.4f}"))
 
         shade_type = cfg.get('shade_type', 'None')
         if shade_type != 'None' and len(ratios_linear) > 2:
@@ -3136,6 +3203,8 @@ class IsotopicRatioPlotNode(QObject):
         'show_natural_line': False,
         'show_standard_line': False,
         'show_mean_line': True,
+        'show_median_line': False,
+        'show_mode_line': False,
         'filter_zeros': True,
         'filter_outliers': False,
         'outlier_percentile': 99.0,

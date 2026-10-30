@@ -151,18 +151,29 @@ def _draw_references(ax, panel, table, report):
         else:
             symbols = [R.symbol_of(panel[k]) for k in 'abc']
             placed = []
-            for label, ref in entries:
+            in_legend = bool(panel.get('marks_in_legend'))
+            drawn = []
+            for k, (label, ref) in enumerate(entries):
                 try:
                     t, l, r = R.composition(ref, symbols, basis)
                 except ValueError as exc:
                     report.stats.append(f'Reference {label}: {exc}')
                     continue
-                ax.scatter([t], [l], [r], marker='D', s=46, color=color, edgecolors='white',
-                           linewidths=0.8, zorder=11)
-                txt = ax.text(t, l, r, f'  {label}', fontsize='small', color=color, ha='left',
-                              va='center', zorder=12, path_effects=_halo())
-                txt._fb_cell = True
+                if in_legend:
+                    from results.figure_builder.charts.overlays import SOURCE_COLORS, SOURCE_MARKERS
+                    drawn.append(ax.scatter([t], [l], [r], marker=SOURCE_MARKERS[k % len(SOURCE_MARKERS)],
+                                            s=52, facecolor='white', linewidths=1.6, zorder=11,
+                                            edgecolor=SOURCE_COLORS[k % len(SOURCE_COLORS)], label=label))
+                else:
+                    ax.scatter([t], [l], [r], marker='D', s=46, color=color, edgecolors='white',
+                               linewidths=0.8, zorder=11)
+                    txt = ax.text(t, l, r, f'  {label}', fontsize='small', color=color, ha='left',
+                                  va='center', zorder=12, path_effects=_halo())
+                    txt._fb_cell = True
                 placed.append(f'{label} ({100 * t:.0f}/{100 * l:.0f}/{100 * r:.0f} %)')
+            if drawn:
+                from results.figure_builder.core.common import merge_legend
+                merge_legend(ax, panel, drawn)
             if placed:
                 report.stats.append(f'Reference points ({basis} basis): ' + ', '.join(placed))
     if bulk_text:

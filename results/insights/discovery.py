@@ -1463,6 +1463,26 @@ def isotope_pairs(ctx, max_per_element: int = 3) -> list[tuple[str, str, str]]:
     return pairs
 
 
+def ratio_cut(ctx, num: str, den: str) -> tuple[str, float] | None:
+    """The signal cut an isotope ratio is measured above.
+
+    Args:
+        ctx: Analysis context.
+        num: Numerator isotope.
+        den: Denominator isotope.
+
+    Returns:
+        ``(major, cut)``: the more abundant isotope and the median of its
+        counts in particles carrying both isotopes, or ``None`` when fewer
+        than two particles carry both.
+    """
+    joint = ctx.det_mask[num] & ctx.det_mask[den]
+    if int(joint.sum()) < 2:
+        return None
+    major = num if ctx.det_counts[num] >= ctx.det_counts[den] else den
+    return major, float(np.median(ctx.matrix[major][joint]))
+
+
 def ratio_values(ctx, num: str, den: str) -> tuple[np.ndarray, np.ndarray]:
     """Return the particles usable for a ratio, and the ratio in each.
 
@@ -1481,10 +1501,10 @@ def ratio_values(ctx, num: str, den: str) -> tuple[np.ndarray, np.ndarray]:
         the ratio for the particles it selects.
     """
     joint = ctx.det_mask[num] & ctx.det_mask[den]
-    major = num if ctx.det_counts[num] >= ctx.det_counts[den] else den
-    if int(joint.sum()) < 2:
+    found = ratio_cut(ctx, num, den)
+    if found is None:
         return joint, np.zeros(0)
-    cut = float(np.median(ctx.matrix[major][joint]))
+    major, cut = found
     use = joint & (ctx.matrix[major] >= cut)
     return use, ctx.matrix[num][use] / ctx.matrix[den][use]
 
@@ -1541,6 +1561,7 @@ def analyse_isotope_ratios(ctx, progress=None) -> list:
             continue
         median = float(np.median(ratios))
         natural = _natural_ratio(num, den)
+        facts = {"ratio_cut": ratio_cut(ctx, num, den)}
         natural_text = f", against {natural:.4g} for natural {symbol}" if natural else ""
         out.append(rr.Suggestion(
             title=f"{num}/{den} isotope ratio",
@@ -1557,6 +1578,7 @@ def analyse_isotope_ratios(ctx, progress=None) -> list:
             node_type="isotopic_ratio_plot",
             config=_ratio_config(num, den, den),
             elements=(num, den),
+            facts=facts,
         ))
         if natural:
             gap = median / natural - 1.0
@@ -1578,6 +1600,7 @@ def analyse_isotope_ratios(ctx, progress=None) -> list:
                     node_type="isotopic_ratio_plot",
                     config=_ratio_config(num, den, den),
                     elements=(num, den),
+                    facts=facts,
                 ))
         split = (rr._detect_bimodality(ratios, ISOTOPE_MODE_SEPARATION)
                  if n >= rr.MIN_BIMODALITY_PARTICLES else None)
@@ -1600,6 +1623,7 @@ def analyse_isotope_ratios(ctx, progress=None) -> list:
                 node_type="isotopic_ratio_plot",
                 config=_ratio_config(num, den, den),
                 elements=(num, den),
+                facts=facts,
             ))
         log_ratio_all = np.full(ctx.n, np.nan)
         log_ratio_all[use] = np.log10(ratios)
@@ -1646,6 +1670,7 @@ def analyse_isotope_ratios(ctx, progress=None) -> list:
                 node_type="isotopic_ratio_plot",
                 config=_ratio_config(num, den, other),
                 elements=(num, den, other),
+                facts={"ratio_cut": ratio_cut(ctx, num, den)},
             ))
     return out
 
@@ -1741,6 +1766,7 @@ def analyse_isotope_groups(ctx, progress=None) -> list:
             node_type="isotopic_ratio_plot",
             config=_ratio_config(num, den, den),
             elements=(num, den),
+            facts={"ratio_cut": ratio_cut(ctx, num, den)},
             **rr._group_selection([hi_g, lo_g]),
         ))
     return out

@@ -19,7 +19,7 @@ import time
 import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
-from PySide6.QtCore import QObject, QPoint, QRectF, QSettings, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, QSettings, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut)
 from PySide6.QtWidgets import (
@@ -378,6 +378,12 @@ class PreviewLabel(QLabel):
     ``drag_resolver(fx, fy)`` (set by the window) says what a drag starting at a
     point does: it returns ``(mode, box)`` or None.
 
+    The preview can be magnified to look at details, without changing the
+    figure: a mouse wheel, a trackpad pinch or Cmd/Ctrl + scroll zooms
+    around the pointer, a trackpad swipe, a middle-button drag or
+    Space + drag moves around, and :meth:`set_zoom` sets the level, 1 being
+    the whole figure fitted to the window.
+
     Signals:
         resized(): the widget changed size.
         clicked(float, float): left click (no drag).
@@ -385,8 +391,14 @@ class PreviewLabel(QLabel):
         context_requested(float, float, QPoint): right click, with the global position.
         hovered(float, float, QPoint): mouse moved without a button (fx < 0 when it left).
         drag_finished(str, float, float, float, float): mode, start and end of a drag.
+        zoom_changed(float): the magnification changed.
     """
 
+    ZOOM_MIN = 1.0
+    ZOOM_MAX = 8.0
+    ZOOM_STEP = 1.25
+
+    zoom_changed = Signal(float)
     resized = Signal()
     clicked = Signal(float, float)
     double_clicked = Signal(float, float)
@@ -407,11 +419,142 @@ class PreviewLabel(QLabel):
         self._drag = None
         self._current = None
         self.drag_resolver = None
+        self._zoom = 1.0
+        self._offset = QPointF(0.0, 0.0)
+        self._pan = None
+        self._space = False
+        self.setFocusPolicy(Qt.StrongFocus)
 
     def set_figure_pixmap(self, pm: QPixmap):
         """Store and display a freshly rendered pixmap."""
         self._pixmap = pm
         self._rescale()
+
+    def zoom(self) -> float:
+        """The magnification: 1 shows the whole figure fitted to the window."""
+        return self._zoom
+
+    def set_zoom(self, value: float, anchor: QPointF | None = None):
+        """Magnify the preview, keeping the point under *anchor* in place.
+
+        Args:
+            value: The new magnification, kept between :attr:`ZOOM_MIN` and
+                :attr:`ZOOM_MAX`.
+            anchor: Widget position that stays put, the centre when omitted.
+        """
+        value = max(self.ZOOM_MIN, min(self.ZOOM_MAX, float(value)))
+        if abs(value - self._zoom) < 1e-6:
+            return
+        if anchor is None:
+            anchor = QPointF(self.width() / 2, self.height() / 2)
+        g = self._geometry()
+        frac = None
+        if g is not None:
+            frac = ((anchor.x() - g[0]) / max(1.0, g[2]), (anchor.y() - g[1]) / max(1.0, g[3]))
+        self._zoom = value
+        fit = self._fit_size()
+        if frac is not None and fit is not None:
+            w, h = fit[0] * value, fit[1] * value
+            self._offset = QPointF(anchor.x() - frac[0] * w - (self.width() - w) / 2,
+                                   anchor.y() - frac[1] * h - (self.height() - h) / 2)
+        self._clamp_offset()
+        self._rescale()
+        self.zoom_changed.emit(self._zoom)
+
+    def zoom_in(self):
+        """Magnify one step around the centre."""
+        self.set_zoom(self._zoom * self.ZOOM_STEP)
+
+    def zoom_out(self):
+        """Step back towards the whole figure."""
+        self.set_zoom(self._zoom / self.ZOOM_STEP)
+
+    def zoom_fit(self):
+        """Show the whole figure again."""
+        self._offset = QPointF(0.0, 0.0)
+        if self._zoom != 1.0:
+            self.set_zoom(1.0)
+        else:
+            self._rescale()
+
+    def pan_by(self, dx: float, dy: float):
+        """Move the magnified figure by *dx*, *dy* pixels."""
+        self._offset = QPointF(self._offset.x() + dx, self._offset.y() + dy)
+        self._clamp_offset()
+        self._rescale()
+
+    def _fit_size(self):
+        """Size, in pixels, of the whole figure fitted to the widget."""
+        if self._pixmap is None or self._pixmap.isNull():
+            return None
+        aspect = self._pixmap.width() / max(1, self._pixmap.height())
+        w, h = float(self.width()), float(self.height())
+        if w / max(1.0, h) > aspect:
+            return h * aspect, h
+        return w, w / aspect
+
+    def _clamp_offset(self):
+        """Keep the magnified figure covering the window, and centred when it fits."""
+        fit = self._fit_size()
+        if fit is None:
+            self._offset = QPointF(0.0, 0.0)
+            return
+        w, h = fit[0] * self._zoom, fit[1] * self._zoom
+        mx = max(0.0, (w - self.width()) / 2)
+        my = max(0.0, (h - self.height()) / 2)
+        self._offset = QPointF(max(-mx, min(mx, self._offset.x())),
+                               max(-my, min(my, self._offset.y())))
+
+    @staticmethod
+    def _is_trackpad(event) -> bool:
+        """Whether a wheel event comes from a trackpad swipe rather than a mouse wheel."""
+        try:
+            if event.phase() != Qt.NoScrollPhase:
+                return True
+        except Exception:
+            pass
+        return not event.pixelDelta().isNull()
+
+    def wheelEvent(self, ev):
+        """Swipe on a trackpad to move around; a mouse wheel or Cmd/Ctrl + scroll zooms."""
+        zoom_key = bool(ev.modifiers() & (Qt.ControlModifier | Qt.MetaModifier))
+        if self._is_trackpad(ev) and not zoom_key:
+            d = ev.pixelDelta()
+            self.pan_by(d.x(), d.y())
+            ev.accept()
+            return
+        dy = ev.angleDelta().y() or ev.pixelDelta().y()
+        if dy:
+            self.set_zoom(self._zoom * 1.15 ** max(-3.0, min(3.0, dy / 120.0)), ev.position())
+        ev.accept()
+
+    def event(self, ev):
+        """Zoom on a trackpad pinch."""
+        if ev.type() == QEvent.NativeGesture:
+            try:
+                if ev.gestureType() == Qt.ZoomNativeGesture:
+                    self.set_zoom(self._zoom * (1.0 + float(ev.value())), ev.position())
+                    return True
+            except Exception:
+                _log.exception('Pinch zoom failed')
+        return super().event(ev)
+
+    def keyPressEvent(self, ev):
+        """Hold Space to move around by dragging."""
+        if ev.key() == Qt.Key_Space and not ev.isAutoRepeat():
+            self._space = True
+            if self._zoom > 1.0:
+                self.setCursor(Qt.OpenHandCursor)
+            return
+        super().keyPressEvent(ev)
+
+    def keyReleaseEvent(self, ev):
+        """Release Space to stop moving around."""
+        if ev.key() == Qt.Key_Space and not ev.isAutoRepeat():
+            self._space = False
+            self.unsetCursor()
+            return
+        super().keyReleaseEvent(ev)
 
     def set_selection(self, rect):
         """Outline ``rect`` (figure fractions, top-left origin), or nothing when None."""
@@ -421,19 +564,24 @@ class PreviewLabel(QLabel):
     def _rescale(self):
         if self._pixmap is None:
             return
-        dpr = self.devicePixelRatioF()
-        target = QSize(int(self.width() * dpr), int(self.height() * dpr))
-        pm = self._pixmap.scaled(target, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        pm.setDevicePixelRatio(dpr)
-        self._shown = pm
-        self.setPixmap(pm)
+        if self._zoom <= 1.0:
+            dpr = self.devicePixelRatioF()
+            target = QSize(int(self.width() * dpr), int(self.height() * dpr))
+            pm = self._pixmap.scaled(target, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            pm.setDevicePixelRatio(dpr)
+            self._shown = pm
+        else:
+            self._shown = None
+        self.update()
 
     def _geometry(self):
-        if self._shown is None:
+        """Where the figure is drawn: ``(left, top, width, height)`` in widget pixels."""
+        fit = self._fit_size()
+        if fit is None:
             return None
-        dpr = self._shown.devicePixelRatio()
-        w, h = self._shown.width() / dpr, self._shown.height() / dpr
-        return (self.width() - w) / 2, (self.height() - h) / 2, w, h
+        w, h = fit[0] * self._zoom, fit[1] * self._zoom
+        return ((self.width() - w) / 2 + self._offset.x(),
+                (self.height() - h) / 2 + self._offset.y(), w, h)
 
     def _to_fraction(self, pos, clamp=False):
         g = self._geometry()
@@ -454,6 +602,7 @@ class PreviewLabel(QLabel):
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
+        self._clamp_offset()
         self._rescale()
         self.resized.emit()
 
@@ -466,6 +615,11 @@ class PreviewLabel(QLabel):
         accent = QColor(look.palette().accent)
         qp = QPainter(self)
         qp.setRenderHint(QPainter.Antialiasing)
+        qp.setRenderHint(QPainter.SmoothPixmapTransform)
+        if self._shown is not None:
+            qp.drawPixmap(QPointF(x0, y0), self._shown)
+        else:
+            qp.drawPixmap(QRectF(x0, y0, w, h), self._pixmap, QRectF(self._pixmap.rect()))
         if self._selection and self._drag is None:
             x, y, rw, rh = self._selection
             qp.setPen(QPen(accent, 1.4, Qt.DashLine))
@@ -494,6 +648,11 @@ class PreviewLabel(QLabel):
         qp.end()
 
     def mousePressEvent(self, ev):
+        self.setFocus()
+        if ev.button() == Qt.MiddleButton or (ev.button() == Qt.LeftButton and self._space):
+            self._pan = ev.position()
+            self.setCursor(Qt.ClosedHandCursor)
+            return
         pt = self._to_fraction(ev.position())
         if pt is None:
             return super().mousePressEvent(ev)
@@ -509,6 +668,11 @@ class PreviewLabel(QLabel):
             self.context_requested.emit(pt[0], pt[1], ev.globalPosition().toPoint())
 
     def mouseMoveEvent(self, ev):
+        if self._pan is not None:
+            d = ev.position() - self._pan
+            self._pan = ev.position()
+            self.pan_by(d.x(), d.y())
+            return
         if self._press is not None and ev.buttons() & Qt.LeftButton:
             pt = self._to_fraction(ev.position(), clamp=True)
             self._current = pt
@@ -529,6 +693,13 @@ class PreviewLabel(QLabel):
             self.hovered.emit(pt[0], pt[1], ev.globalPosition().toPoint())
 
     def mouseReleaseEvent(self, ev):
+        if self._pan is not None:
+            self._pan = None
+            if self._space and self._zoom > 1.0:
+                self.setCursor(Qt.OpenHandCursor)
+            else:
+                self.unsetCursor()
+            return
         if ev.button() != Qt.LeftButton or self._press is None:
             return super().mouseReleaseEvent(ev)
         start = self._press
@@ -767,7 +938,27 @@ class FigureBuilderDialog(QDialog):
 
         fl = QVBoxLayout(frame)
         fl.setContentsMargins(10, 10, 10, 10)
+        fl.setSpacing(4)
         self.preview = PreviewLabel()
+        zoom_row = QHBoxLayout()
+        zoom_row.setSpacing(2)
+        zoom_row.addStretch()
+        self.zoom_out_btn = self._tool('', 'fa6s.magnifying-glass-minus', 'Zoom out (Ctrl+−)',
+                                       self.preview.zoom_out)
+        self.zoom_label = QPushButton('Fit')
+        self.zoom_label.setObjectName('fbZoomLabel')
+        self.zoom_label.setFlat(True)
+        self.zoom_label.setToolTip('Show the whole figure (Ctrl+0)')
+        self.zoom_label.setMinimumWidth(68)
+        self.zoom_label.clicked.connect(self.preview.zoom_fit)
+        self.zoom_in_btn = self._tool('', 'fa6s.magnifying-glass-plus', 'Zoom in (Ctrl++) · mouse wheel '
+                                      'or pinch to zoom · swipe, middle-drag or Space-drag to move',
+                                      self.preview.zoom_in)
+        for widget in (self.zoom_out_btn, self.zoom_label, self.zoom_in_btn):
+            zoom_row.addWidget(widget)
+        fl.addLayout(zoom_row)
+        self.zoom_out_btn.setEnabled(False)
+        self.preview.zoom_changed.connect(self._on_zoom)
         self.preview.resized.connect(self._schedule)
         self.preview.clicked.connect(self._on_preview_click)
         self.preview.double_clicked.connect(self._on_preview_double)
@@ -829,7 +1020,11 @@ class FigureBuilderDialog(QDialog):
                           (QKeySequence('Ctrl+Shift+Z'), self.redo),
                           (QKeySequence('Ctrl+D'), self.sketch.duplicate_selected),
                           (QKeySequence('Ctrl+Shift+C'), self._copy),
-                          (QKeySequence('Ctrl+E'), self._export)):
+                          (QKeySequence('Ctrl+E'), self._export),
+                          (QKeySequence.ZoomIn, self.preview.zoom_in),
+                          (QKeySequence('Ctrl+='), self.preview.zoom_in),
+                          (QKeySequence.ZoomOut, self.preview.zoom_out),
+                          (QKeySequence('Ctrl+0'), self.preview.zoom_fit)):
             sc = QShortcut(seq, self)
             sc.setContext(Qt.WindowShortcut)
             sc.activated.connect(slot)
@@ -1369,13 +1564,29 @@ class FigureBuilderDialog(QDialog):
     def _schedule(self):
         self._timer.start()
 
+    PREVIEW_MAX_PIXELS = 16e6
+    """Most pixels a magnified preview is rendered with, to keep zooming responsive."""
+
     def _preview_dpi(self) -> float:
+        """Resolution of the preview: enough to fill the window, more when magnified."""
         fig = self.spec['figure']
         dpr = self.preview.devicePixelRatioF()
         w = max(100, self.preview.width()) * dpr
         h = max(100, self.preview.height()) * dpr
         dpi = min(w / float(fig['width']), h / float(fig['height']))
-        return float(max(40.0, min(240.0, dpi)))
+        dpi = float(max(40.0, min(240.0, dpi)))
+        zoom = self.preview.zoom()
+        if zoom > 1.0:
+            area = float(fig['width']) * float(fig['height'])
+            dpi = min(dpi * zoom, (self.PREVIEW_MAX_PIXELS / max(area, 1e-6)) ** 0.5)
+        return dpi
+
+    def _on_zoom(self, zoom: float):
+        """Show the magnification and render sharper for it."""
+        self.zoom_label.setText('Fit' if zoom <= 1.0 else f'{zoom * 100:.0f}%')
+        self.zoom_out_btn.setEnabled(zoom > self.preview.ZOOM_MIN)
+        self.zoom_in_btn.setEnabled(zoom < self.preview.ZOOM_MAX)
+        self._schedule()
 
     def _render(self):
         t0 = time.perf_counter()

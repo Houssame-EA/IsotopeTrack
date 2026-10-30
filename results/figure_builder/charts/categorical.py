@@ -6,7 +6,7 @@ import numpy as np
 
 from results.figure_builder.core.common import (
     add_legend, compact, count_label, draw_marks, handles, ink, item_exprs, item_label,
-    legend_kwargs, panel_palette, particle_weights, resolve_groups, style_axes)
+    legend_kwargs, panel_palette, particle_weights, resolve_groups, style_axes, xtick_rotation)
 from results.figure_builder.core.expressions import ExpressionError, evaluate, pretty, split_list
 from results.figure_builder.core.stats import draw_brackets, run_tests
 
@@ -254,8 +254,11 @@ def _pie_items(panel, table, style):
             return (['Single element', 'Multiple elements'],
                     [float(np.sum(w[single])), float(np.sum(w[multi]))],
                     [pal[0], pal[1 % len(pal)]], int(keep.sum()), True)
-        uniq = list(dict.fromkeys(keys[keep].tolist()))
-        sizes = [float(np.sum(w[keep & (keys == u)])) for u in uniq]
+        found, first, inv = np.unique(keys[keep].astype(str), return_index=True, return_inverse=True)
+        totals = np.bincount(np.asarray(inv).reshape(-1), weights=w[keep], minlength=len(found))
+        seen = np.argsort(first, kind='stable')
+        uniq = [str(found[i]) for i in seen]
+        sizes = [float(totals[i]) for i in seen]
         order = np.argsort(-np.asarray(sizes), kind='stable')
         top = max(1, int(panel.get('top_n') or 8))
         labels = [names.get(uniq[i]) or uniq[i] for i in order[:top]]
@@ -439,7 +442,7 @@ def draw_combinations(fig, ax, panel, table, report, style):
             ax.set_xscale('log')
     else:
         ax.set_xticks(pos)
-        ax.set_xticklabels(names, rotation=float(panel.get('xtick_rotation') or 45),
+        ax.set_xticklabels(names, rotation=xtick_rotation(panel),
                            ha='right', rotation_mode='anchor')
         ax.set_ylabel(panel.get('y_label') or vlab)
         if panel.get('x_label'):
@@ -638,7 +641,7 @@ def draw_sunburst(ax, panel, table, report):
             ax.add_patch(w_out)
             records.append((w_out, f'{el} {mates}', w2, 100 * w2 / total))
             m2 = np.deg2rad(s2 - span2 / 2)
-            if span2 >= 9:
+            if span2 >= max(9.0, 1.6 * len(str(mates))):
                 t = ax.text(0.8 * np.cos(m2), 0.8 * np.sin(m2), mates, ha='center', va='center',
                             fontsize='x-small', color='#1f2937', path_effects=halo)
                 t._fb_cell = True

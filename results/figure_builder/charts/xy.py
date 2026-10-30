@@ -8,8 +8,8 @@ from results.figure_builder.core.common import (
     add_colorbar, add_legend, bin_edges, cmap_name, draw_marks, edge_kwargs, finite_mask, handles,
     label_n, marker_sizes, nonzero_mask, panel_palette, resolve_groups, style_axes, trim_bounds)
 from results.figure_builder.charts.overlays import (
-    add_marginals, add_zoom_inset, draw_group_shapes, draw_trends, fit_band, natural_line, poisson_band,
-    sd_envelope)
+    add_marginals, add_zoom_inset, draw_group_shapes, draw_trends, fit_band, isotope_references,
+    natural_line, poisson_band, sd_envelope)
 from results.figure_builder.core.expressions import ExpressionError, evaluate, pretty
 from results.figure_builder.core.spec import PALETTE
 
@@ -89,8 +89,9 @@ def draw_scatter(fig, ax, panel, table, report, style):
     draw_series(ax, panel, table, style, log_x, log_y)
     draw_group_shapes(ax, panel, drawn, log_x, log_y)
     draw_trends(ax, panel, drawn, log_x, log_y)
-    poisson_band(ax, panel, drawn, report)
+    poisson_band(ax, panel, drawn, report, table)
     natural_line(ax, panel, table, report)
+    isotope_references(ax, panel, table, report)
     if panel.get('diagonal'):
         lo = max(ax.get_xlim()[0], ax.get_ylim()[0])
         hi = min(ax.get_xlim()[1], ax.get_ylim()[1])
@@ -130,7 +131,7 @@ def draw_scatter(fig, ax, panel, table, report, style):
     from results.figure_builder.charts.detectability import draw_on_scatter
     draw_on_scatter(ax, panel, table, report, panel['x'], panel['y'])
     add_legend(ax, panel, [extra] if extra is not None else None)
-    add_marginals(fig, ax, panel, drawn, log_x, log_y, report)
+    add_marginals(fig, ax, panel, drawn, log_x, log_y, report, table, style)
     add_zoom_inset(ax, panel, report)
 
 
@@ -239,10 +240,42 @@ def draw_lines(ax, trends, fx, g, panel, report, log_x, log_y, n_groups):
             ratio = (f', ratio {10 ** line.intercept:.3g}' if log_x and log_y
                      and abs(line.slope - 1) <= 0.1 else '')
             t = ax.text(0.03, 0.97 - existing * 0.07,
-                        f'{"" if n_groups == 1 else g.label + " "}line {j + 1}: r = {line.r:.3f}{ratio}',
+                        f'{"" if n_groups == 1 else g.label + " "}line {j + 1}: '
+                        f'{line_equation(line.slope, line.intercept, log_x, log_y)}{ratio}',
                         transform=ax.transAxes, ha='left', va='top', color=color,
                         fontsize='small')
             t._fb_r = True
+
+
+def _num(v: float) -> str:
+    """A coefficient for an equation on the plot."""
+    return f'{v:.3g}'
+
+
+def line_equation(slope: float, intercept: float, log_x: bool, log_y: bool) -> str:
+    """The fitted line written for the plot's axes.
+
+    The fit is a straight line in plotted space, so on log–log axes it is the
+    power law ``y = A·x^b``, whose exponent ``b`` is the slope; with one log
+    axis it is a straight line in the logarithm of that axis.
+
+    Args:
+        slope: Slope in plotted space.
+        intercept: Intercept in plotted space.
+        log_x: Whether X is drawn on a log axis.
+        log_y: Whether Y is drawn on a log axis.
+
+    Returns:
+        Text such as ``"y = 2.1x + 0.35"`` or ``"y = 0.82·x$^{1.02}$"``.
+    """
+    sign = '−' if intercept < 0 else '+'
+    if log_x and log_y:
+        return f'y = {_num(10 ** intercept)}·x$^{{{_num(slope)}}}$'
+    if log_y:
+        return f'log y = {_num(slope)}x {sign} {_num(abs(intercept))}'
+    if log_x:
+        return f'y = {_num(slope)}·log x {sign} {_num(abs(intercept))}'
+    return f'y = {_num(slope)}x {sign} {_num(abs(intercept))}'
 
 
 def draw_fit(ax, x, y, g, panel, report, log_x, log_y):
@@ -275,7 +308,7 @@ def draw_fit(ax, x, y, g, panel, report, log_x, log_y):
     if panel.get('show_r'):
         existing = sum(1 for t in ax.texts if getattr(t, '_fb_r', False))
         t = ax.text(0.03, 0.97 - existing * 0.07,
-                    f'r = {res.rvalue:.3f}  R² = {res.rvalue ** 2:.3f}',
+                    line_equation(res.slope, res.intercept, log_x, log_y),
                     transform=ax.transAxes, ha='left', va='top', color=g.color,
                     fontsize='small')
         t._fb_r = True

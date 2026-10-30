@@ -859,7 +859,7 @@ Terminal=false
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
             'sample_config', 'sample_filters', 'selected_sources', 'merged_name',
             'merge_singles', 'sample_groups', 'duplicate_resolutions',
-            'dilution_resolution', 'dilution_resolutions',
+            'dilution_resolution', 'dilution_resolutions', 'insights_number',
             'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
             # Particle Classifier (tools/particle_classifier_node.py)
             'definitions', 'groups', 'overlap_mode', 'unmatched_mode',
@@ -1078,7 +1078,7 @@ Terminal=false
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
             'sample_config', 'sample_filters', 'selected_sources', 'merged_name',
             'merge_singles', 'sample_groups', 'duplicate_resolutions',
-            'dilution_resolution', 'dilution_resolutions',
+            'dilution_resolution', 'dilution_resolutions', 'insights_number',
             'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
             # Particle Classifier (tools/particle_classifier_node.py)
             'definitions', 'groups', 'overlap_mode', 'unmatched_mode',

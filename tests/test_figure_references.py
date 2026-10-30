@@ -292,9 +292,10 @@ def test_reference_dialog_keeps_only_changes(app):
     last = dlg.mineral_table.rowCount() - 1
     dlg.mineral_table.item(last, 0).setText("my clay")
     dlg.mineral_table.item(last, 1).setText("Al2Si4O10(OH)2")
-    assert dlg.values() == {"crust": {"Ti": 4000.0}, "minerals": {"my clay": "Al2Si4O10(OH)2"}}
+    assert dlg.values() == {"crust": {"Ti": 4000.0}, "minerals": {"my clay": "Al2Si4O10(OH)2"},
+                            "isotope_sources": {}}
     dlg.crust_table.item(rows["Ti"], 2).setText("abc")
     with pytest.raises(ValueError):
         dlg.values()
     dlg._restore()
-    assert dlg.values() == {"crust": {}, "minerals": {}}
+    assert dlg.values() == {"crust": {}, "minerals": {}, "isotope_sources": {}}
