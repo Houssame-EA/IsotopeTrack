@@ -58,6 +58,7 @@
 |--------|-----------|-------------|
 | `__init__` | `(self, workflow_node, parent=None)` |  |
 | `paint_icon_node` | `(self, painter, grad_colors, icon_name, label_text, badge_text='', bad` | Paint a circular icon node with its label. |
+| `paint_number_badge` | `(self, painter, number)` | Draw the node's Insights number in a small disc on the upper left of its circle. |
 | `paint` | `(self, painter, option, widget=None)` |  |
 | `_create_anchors` | `(self)` |  |
 | `get_anchor` | `(self, channel_name)` |  |
@@ -322,6 +323,7 @@ Adds status badge rendering to icon nodes.
 | `_run_calculation_async` | `(self)` | Compute this node's output in a background thread, then push the |
 | `_on_calc_done` | `(self, result)` | Deliver the freshly computed output to every connected sink. |
 | `_on_calc_failed` | `(self, message)` | Handle a failed background calculation. |
+| `_cleanup_finished_worker` | `(self)` | Release the worker that just finished, on the GUI thread. |
 | `_cleanup_worker` | `(self, worker)` | Drop a finished worker so it can be garbage-collected. |
 
 ### `SampleSelectorNodeItem` *(extends `NodeItem, _StatusNodeMixin`)*
@@ -502,6 +504,7 @@ AI sparkle icon.
 | `arrange_nodes` | `(self, animate=True)` | Tidy every node into columns by data flow; Ctrl+Z puts them back. |
 | `_animate_to` | `(self, positions, animate=True, msec=320)` | Move node items to *positions* (``workflow node -> QPointF``), gliding when asked. |
 | `select_all_items` | `(self)` |  |
+| `_assign_insights_number` | `(self, wf_node)` | Give a Single or Multi-Sample node a number no other node on the canvas carries. |
 | `add_node` | `(self, wf_node, pos)` |  |
 | `_reaches` | `(self, start, target)` | True if ``target`` is reachable downstream from ``start``. |
 | `_direct_link_allowed` | `(self, src_node, snk_node)` | Whether src_node -> snk_node is a valid link on its own terms. |

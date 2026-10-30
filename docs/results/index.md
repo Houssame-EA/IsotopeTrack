@@ -32,12 +32,12 @@ Concentration-Comparison Plot Node – dot-and-circle strip chart.
 ### [`results_heatmap.py`](results-heatmap.md)
 
 
-**3** classes &nbsp;·&nbsp; **17** functions &nbsp;·&nbsp; **53** methods
+**3** classes &nbsp;·&nbsp; **21** functions &nbsp;·&nbsp; **53** methods
 
 ### [`results_isotope.py`](results-isotope.md)
 
 
-**5** classes &nbsp;·&nbsp; **16** functions &nbsp;·&nbsp; **87** methods
+**5** classes &nbsp;·&nbsp; **17** functions &nbsp;·&nbsp; **87** methods
 
 ### [`results_matrix.py`](results-matrix.md)
 Correlation-Matrix Plot Node – pairwise Pearson-r heat-maps.

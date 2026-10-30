@@ -158,6 +158,7 @@ nav:
     - Overview: insights/index.md
     - "discovery.py": insights/discovery.md
     - "engine.py": insights/engine.md
+    - "evidence.py": insights/evidence.md
     - "explain.py": insights/explain.md
     - "figures.py": insights/figures.md
     - "panel.py": insights/panel.md
@@ -183,6 +184,7 @@ nav:
     - "dialog.py": ai/dialog.md
     - "exploration.py": ai/exploration.md
     - "figures.py": ai/figures.md
+    - "lora_train.py": ai/lora-train.md
     - "memory.py": ai/memory.md
     - "node.py": ai/node.md
     - "prompts.py": ai/prompts.md

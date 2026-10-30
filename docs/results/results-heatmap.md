@@ -13,7 +13,8 @@
 | `PANEL_GROUP_CONFIG_KEY` | `'classifier_panel_group'` |
 | `UNDERLINE_CONFIG_KEY` | `'underlined_combos'` |
 | `LEGACY_UNDERLINE_CONFIG_KEY` | `'highlighted_combos'` |
-| `HEATMAP_SORT_MODES` | `['Particle count', 'Mass share (%)']` |
+| `HEATMAP_SORT_MODES` | `['Particle count', 'Mass share (%)', 'Total of one elemen…` |
+| `ELEMENT_SORT_MODES` | `('Total of one element', 'Mean of one element')` |
 | `CELL_STAT_OPTIONS` | `['Mean', 'Median', 'Mode', 'Geometric Mean']` |
 | `CELL_SPREAD_OPTIONS` | `['None', 'SD', 'SEM', 'IQR (Q1–Q3)', 'Min–Max', 'CV %']` |
 
@@ -109,6 +110,10 @@ Heatmap plot node with multiple sample support.
 | `_fmt_cell_number` | `(v)` | Format one numeric cell value with the heatmap's standard precision. |
 | `_per_particle_percentages` | `(total_values)` | Convert a combination's raw per-element values into per-particle %. |
 | `_bulk_percentages` | `(total_values)` | Bulk composition %: each element's summed signal over the grand total. |
+| `_label_symbol` | `(label: str) → str` | Element symbol of a label such as ``"208Pb"``, ``"Pb208"`` or ``"Pb"``. |
+| `_element_total` | `(combo_data, element: str) → float` | Summed amount of one element over a combination's particles. |
+| `_label_elements` | `(combo: str, total_values: dict, limit: int)` | Shorten a combination label to the *limit* elements with the most signal. |
+| `_element_mean` | `(combo_data, element: str) → float` | Mean amount of one element in a single particle of a combination. |
 | `_combination_mass_shares` | `(sample_data)` | Return each combination's share of the sample's total signal. |
 | `draw_combinations_heatmap` | `(ax, fig, sample_data, cfg, title='', is_multi=False, row_label_raw=Fa` | Draw a combinations heatmap onto an arbitrary axes/figure. |
 | `_combo_signature` | `(particle, data_key)` | One particle's contribution to a combination row for ``data_key``. |

@@ -29,6 +29,7 @@ is never dropped, and small windows get a compact dataset brief.
 | `_DOMAIN` | `'SPICP-TOF-MS\n- One event is one particle passing the pl…` |
 | `_EXAMPLE` | `"EXAMPLE\nUser: is Ti bigger in some samples?\nComparing …` |
 | `MASS_BASES` | `('element', 'particle')` |
+| `NO_TOOLS` | `'You have no tools: do not call bash, python or any other…` |
 | `NO_CODE_PREFIX` | `'[NO CODE]'` |
 | `EMPTY_PREFIX` | `'[EMPTY REPLY]'` |
 | `_RESULT_NUMBER_RE` | `re.compile('(?<![A-Za-z\\d._\\-])\\d+(?:[.,]\\d+)*(?![A-Z…` |

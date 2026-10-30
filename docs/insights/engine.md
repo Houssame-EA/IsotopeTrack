@@ -5,9 +5,12 @@ The Insights engine: what to search, and the detectors that search it.
 The pipeline has four stages:
 
 ``resolve_scope``
-    Collects every loaded sample and works out its replicate groups (see
-    :mod:`results.insights.replicates`). Canvas selection and element choices
-    are never consulted, so a finding can surface anywhere.
+    Collects the samples checked in the Single and Multi-Sample nodes on the
+    canvas, or every loaded sample when there is no such node, none has a
+    sample checked, or there are more than :data:`MAX_SELECTOR_NODES` of them,
+    and works out their replicate groups (see
+    :mod:`results.insights.replicates`). Element choices are never consulted,
+    so a finding can surface in any element.
 
 ``gather_scope_data``
     Collects the raw particle dicts for that scope. Cheap enough for the GUI
@@ -47,8 +50,11 @@ the extra detectors in :mod:`results.insights.discovery`.
 | `SIGNATURE_ABSENCE_RATIO` | `0.3` |
 | `SIGNATURE_MIN_COMBO_GAP` | `0.12` |
 | `_SAMPLE_NODE_TYPES` | `('sample_selector', 'multiple_sample_selector')` |
+| `MAX_SELECTOR_NODES` | `10` |
+| `SELECTOR_TYPES` | `('sample_selector', 'multiple_sample_selector')` |
 | `_CTX_CACHE_MAX` | `3` |
 | `_CTX_LOCK` | `threading.Lock()` |
+| `ELEMENT_KEYS` | `('elements', 'element_mass_fg', 'particle_mass_fg', 'elem…` |
 | `MIN_GROUP_FOLD` | `1.5` |
 | `_REGISTRY` | `(('interference', _disc.analyse_interference, 'within', {…` |
 | `_DEFAULT_CARD_LIMIT` | `1` |
@@ -89,6 +95,9 @@ Attributes:
         describes this finding; the category when empty.
     details: ``(label, value)`` pairs with the numbers behind the finding,
         shown in the card's details section.
+    facts: Numbers behind the finding in machine-readable form, for the
+        explained figure, such as ``{"ratio_cut": ("208Pb", 45.0)}``
+        for the signal cut an isotope ratio was measured above.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -98,21 +107,28 @@ Attributes:
 
 Which samples the Insights engine looks at, and how they group.
 
-Insights always searches every loaded sample and every element, whatever
-is selected on the canvas, so that a finding can surface anywhere. Each
-card then narrows the node it builds to the samples and elements the
-finding is about.
+Insights searches the samples checked in the sample selector nodes on the
+canvas, and every loaded sample when there is no selector, none has a
+sample checked, or there are too many selectors to follow. Every element
+is always searched. Each card then narrows the node it builds to the
+samples and elements the finding is about.
 
 Attributes:
     sample_names: The samples to analyse, in load order.
-    origin: Where the samples came from. ``"all"`` for the loaded pool;
-        ``"batch"`` when a batch node supplies them.
+    origin: Where the samples came from. ``"node"`` for the samples
+        checked in one numbered selector node; ``"canvas"`` for the
+        samples checked in every selector node; ``"all"`` for the loaded
+        pool; ``"batch"`` when a batch node supplies them.
     counts: Particle count per entry in *sample_names*, index aligned.
     pool_ids: Identity of each sample's particle list, index aligned. Two
         different datasets can share a name and a particle count, so the
         counts alone are not enough to tell cached contexts apart.
     groups: Replicate groups covering *sample_names*, see
         :mod:`results.insights.replicates`.
+    selectors: How many Single and Multi-Sample nodes are on the canvas.
+    node_number: The number of the selector node searched, or 0 when the
+        search is not tied to one node.
+    labels: The isotopes that node sends on; empty means every element.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -123,6 +139,14 @@ Attributes:
 | `origin_label` | `(self) → str` | Return a human-readable form of :attr:`origin` for the panel. |
 | `grouping_label` | `(self) → str` | Return a short description of the replicate grouping. |
 | `group_of` | `(self, sample: str) → ReplicateGroup \| None` | Return the replicate group holding *sample*, if any. |
+
+### `_OneNode`
+
+A scene holding one node, for reading that node's own replicate groups.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, node)` | Hold *node* as the only workflow node. |
 
 ### `AnalysisContext`
 
@@ -222,8 +246,17 @@ Signals:
 | `_find_batch_node` | `(scene)` | Find the batch node feeding the canvas, if there is one. |
 | `_samples_of_node` | `(node) → list[str]` | List the samples a selector node refers to. |
 | `_dedupe` | `(seq) → list[str]` | Drop duplicates and falsy entries while preserving order. |
+| `_split_batch` | `(batch: list) → dict[str, list[dict]]` | Split a batch's particles by sample, reusing the split while the batch is unchanged. |
 | `_raw_pool` | `(scene, parent_window) → dict[str, list[dict]]` | Collect every loaded particle, grouped by sample, with all elements intact. |
-| `resolve_scope` | `(scene, parent_window) → AnalysisScope` | Collect every loaded sample and work out its replicate groups. |
+| `selector_nodes` | `(scene) → list` | The Single and Multi-Sample nodes on the canvas, in the order they were added. |
+| `checked_samples` | `(node) → list[str]` | The samples a selector node has checked. |
+| `node_number` | `(node) → int` | The number a selector node shows on the canvas, or 0 when it has none. |
+| `numbered_selectors` | `(scene) → list` | The numbered Single and Multi-Sample nodes, in number order. |
+| `find_selector` | `(scene, number: int)` | The selector node carrying *number*, or ``None``. |
+| `node_labels` | `(node) → tuple[str, ...]` | The isotope labels a selector node sends on; empty when it keeps every element. |
+| `canvas_samples` | `(scene) → tuple[list[str], int]` | The samples checked across the canvas's selector nodes. |
+| `resolve_scope` | `(scene, parent_window, number: int=0) → AnalysisScope` | Collect the samples to search and work out their replicate groups. |
+| `keep_elements` | `(particles: list[dict], labels) → list[dict]` | Particles reduced to the given isotopes, as a selector node sends them on. |
 | `gather_scope_data` | `(scene, parent_window, scope: AnalysisScope) → tuple[list[dict], np.nd` | Collect the particle list for *scope*. |
 | `build_context_from` | `(scope: AnalysisScope, particles: list[dict], sample_idx: np.ndarray) ` | Build an :class:`AnalysisContext`, reusing a cached one when possible. |
 | `build_context` | `(scene, parent_window, scope: AnalysisScope \| None=None) → AnalysisCon` | Resolve, gather and build a context in one call. |

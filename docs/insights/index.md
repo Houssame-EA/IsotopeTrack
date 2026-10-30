@@ -7,12 +7,17 @@ The discovery engine behind the Insights panel: replicate grouping and the detec
 ### [`discovery.py`](discovery.md)
 Detectors that search particle data for findings worth a plot node.
 
-**0** classes &nbsp;·&nbsp; **44** functions &nbsp;·&nbsp; **0** methods
+**0** classes &nbsp;·&nbsp; **45** functions &nbsp;·&nbsp; **0** methods
 
 ### [`engine.py`](engine.md)
 The Insights engine: what to search, and the detectors that search it.
 
-**5** classes &nbsp;·&nbsp; **49** functions &nbsp;·&nbsp; **24** methods
+**6** classes &nbsp;·&nbsp; **58** functions &nbsp;·&nbsp; **25** methods
+
+### [`evidence.py`](evidence.md)
+Numbers behind a finding's figure, measured on the particles the figure draws.
+
+**1** classes &nbsp;·&nbsp; **24** functions &nbsp;·&nbsp; **2** methods
 
 ### [`explain.py`](explain.md)
 Plain-language explanations of each kind of finding.
@@ -22,12 +27,12 @@ Plain-language explanations of each kind of finding.
 ### [`figures.py`](figures.md)
 Figures that tell the story behind a finding.
 
-**1** classes &nbsp;·&nbsp; **45** functions &nbsp;·&nbsp; **0** methods
+**1** classes &nbsp;·&nbsp; **79** functions &nbsp;·&nbsp; **0** methods
 
 ### [`panel.py`](panel.md)
 The Insights side panel of the results canvas.
 
-**5** classes &nbsp;·&nbsp; **21** functions &nbsp;·&nbsp; **59** methods
+**5** classes &nbsp;·&nbsp; **23** functions &nbsp;·&nbsp; **70** methods
 
 ### [`replicates.py`](replicates.md)
 Work out which samples are replicates of one another.

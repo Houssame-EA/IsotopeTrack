@@ -42,12 +42,17 @@ The AI Data Assistant chat window.
 ### [`exploration.py`](exploration.md)
 State of an agentic exploration: the plan, the findings and the steps.
 
-**3** classes &nbsp;·&nbsp; **17** functions &nbsp;·&nbsp; **13** methods
+**3** classes &nbsp;·&nbsp; **27** functions &nbsp;·&nbsp; **15** methods
 
 ### [`figures.py`](figures.md)
 Figures the model draws itself, with matplotlib, inside the sandbox.
 
 **6** classes &nbsp;·&nbsp; **18** functions &nbsp;·&nbsp; **33** methods
+
+### [`lora_train.py`](lora-train.md)
+LoRA training of Qwen3.5-family models with mlx-lm in a fraction of the memory.
+
+**1** classes &nbsp;·&nbsp; **14** functions &nbsp;·&nbsp; **3** methods
 
 ### [`memory.py`](memory.md)
 How much memory this computer has, how much a model needs, and which model fits.
@@ -72,7 +77,7 @@ Export a conversation as one self-contained HTML report.
 ### [`sandbox.py`](sandbox.md)
 Running the Python the model writes, safely enough for a local tool.
 
-**1** classes &nbsp;·&nbsp; **22** functions &nbsp;·&nbsp; **1** methods
+**1** classes &nbsp;·&nbsp; **24** functions &nbsp;·&nbsp; **1** methods
 
 ### [`servers.py`](servers.md)
 Local model servers: discovery, launching, stopping and thread housekeeping.
@@ -102,7 +107,7 @@ Colours, font sizes and markdown rendering shared by the AI chat widgets.
 ### [`training.py`](training.md)
 Training data for fine-tuning the assistant's model on IsotopeTrack work.
 
-**1** classes &nbsp;·&nbsp; **16** functions &nbsp;·&nbsp; **2** methods
+**1** classes &nbsp;·&nbsp; **17** functions &nbsp;·&nbsp; **2** methods
 
 ### [`widgets.py`](widgets.md)
 Chat window building blocks: message bubbles, tables, figures and inputs.

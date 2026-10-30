@@ -11,6 +11,7 @@
 | `DISPLAY_MODES` | `['Overlaid (Different Colors)', 'Side by Side Subplots', …` |
 | `JET_POSITIONS` | `np.array([0.0, 0.11, 0.34, 0.65, 0.89, 1.0])` |
 | `JET_COLORS` | `np.array([[0, 0, 143, 255], [0, 0, 255, 255], [0, 255, 25…` |
+| `MODE_SAMPLE` | `5000` |
 
 ## Classes
 
@@ -146,5 +147,6 @@ Draws an inset legend-style colorbar inside the plot.
 | `build_equation_text` | `(config: dict, sample_name: str=None) → str` |  |
 | `_default_sample_correction` | `() → dict` |  |
 | `get_sample_correction_config` | `(cfg: dict, sample_name: str=None) → dict` |  |
+| `ratio_mode` | `(ratios, log: bool=False) → float \| None` | The most common ratio: the peak of a smooth density curve fitted to the ratios. |
 | `poisson_ratio_sigma` | `(R: float, lambda_B: np.ndarray) → np.ndarray` |  |
 | `poisson_ci_curves` | `(R: float, x_range: np.ndarray, k: float=2.0)` |  |
