@@ -1,0 +1,5 @@
+# Minimal deps for building docs on Read the Docs.
+# docs_gen.py uses only the Python standard library.
+mkdocs==1.6.1
+mkdocs-material==9.5.50
+mike==2.2.0
