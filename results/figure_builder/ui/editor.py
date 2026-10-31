@@ -11,11 +11,57 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QGroupBox,
-    QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QScrollArea, QSpinBox,
-    QTabWidget, QToolButton, QVBoxLayout, QWidget,
+    QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QGroupBox,
+    QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy,
+    QSpinBox, QTabWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
+
+class _WrapTabStrip(QWidget):
+    """Tab buttons for a QTabWidget that wrap onto more lines instead of being cut."""
+
+    def __init__(self, tabs, extra=None):
+        super().__init__()
+        self._tabs = tabs
+        self._buttons = []
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        self._flow = _FlowLayout(self)
+        self._extra = extra
+        policy = QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+        tabs.currentChanged.connect(lambda *_: self.refresh())
+
+    def refresh(self):
+        """Match the buttons to the tabs: names, which are shown, which is current."""
+        while len(self._buttons) < self._tabs.count():
+            index = len(self._buttons)
+            btn = QToolButton()
+            btn.setObjectName('fbWrapTab')
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda _=False, i=index: self._tabs.setCurrentIndex(i))
+            self._group.addButton(btn)
+            self._buttons.append(btn)
+            if self._extra is not None:
+                self._flow.removeWidget(self._extra)
+            self._flow.addWidget(btn)
+            if self._extra is not None:
+                self._flow.addWidget(self._extra)
+        for i, btn in enumerate(self._buttons):
+            btn.setText(self._tabs.tabText(i))
+            btn.setVisible(self._tabs.isTabVisible(i))
+            btn.setChecked(i == self._tabs.currentIndex())
+        self.updateGeometry()
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._flow.heightForWidth(width)
+
+from widget.flow_layout import FlowLayout as _FlowLayout
 from results.figure_builder.core import engine as E
 from results.figure_builder.charts.categorical import BAR_SORTS, PIE_LABELS, PIE_MODES
 from results.figure_builder.charts.distributions import MARKS
@@ -495,13 +541,16 @@ class PanelEditor(QWidget):
         self.insert_btn.setAutoRaise(True)
         self.insert_menu = QMenu(self.insert_btn)
         self.insert_btn.setMenu(self.insert_menu)
-        self.tabs.setCornerWidget(self.insert_btn, Qt.TopRightCorner)
+        self.tabs.tabBar().hide()
+        self.tab_strip = _WrapTabStrip(self.tabs, self.insert_btn)
+        root.addWidget(self.tab_strip)
         root.addWidget(self.tabs, 1)
         for tab, section, key, label, kind, _kinds, opts in FIELDS:
             if tab not in self.tab_pages:
                 scroll = QScrollArea()
                 scroll.setWidgetResizable(True)
                 scroll.setFrameShape(QFrame.NoFrame)
+                scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
                 page = QWidget()
                 lay = QVBoxLayout(page)
                 lay.setContentsMargins(2, 4, 2, 4)
@@ -518,7 +567,8 @@ class PanelEditor(QWidget):
                 box = QGroupBox(section)
                 form = QFormLayout(box)
                 form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
-                form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+                form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 form.setVerticalSpacing(4)
                 form.setHorizontalSpacing(8)
                 form.setContentsMargins(6, 4, 6, 4)
@@ -532,10 +582,18 @@ class PanelEditor(QWidget):
                 self.rows[key] = (None, w)
             else:
                 form.addRow(label, w)
-                self.rows[key] = (form.labelForField(w), w)
+                lab = form.labelForField(w)
+                if isinstance(lab, QLabel):
+                    lab.setWordWrap(True)
+                if isinstance(w, QComboBox):
+                    w.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+                    w.setMinimumContentsLength(8)
+                self.rows[key] = (lab, w)
         for _scroll, lay in self.tab_pages.values():
             lay.addStretch()
+        self.tab_strip.refresh()
         self.tabs.hide()
+        self.tab_strip.hide()
 
     def _make(self, key, kind, opts):
         """Create the widget for one field and wire it to the panel."""
@@ -693,6 +751,7 @@ class PanelEditor(QWidget):
         self.panel = panel
         self.empty.setVisible(panel is None)
         self.tabs.setVisible(panel is not None)
+        self.tab_strip.setVisible(panel is not None)
         if panel is None:
             self.error.hide()
             return
@@ -901,6 +960,7 @@ class PanelEditor(QWidget):
         for i in range(self.tabs.count()):
             name = self.tabs.tabText(i)
             self.tabs.setTabVisible(i, tab_any.get(name, False))
+        self.tab_strip.refresh()
 
     def _check_expressions(self):
         """Mark expression fields that do not evaluate on the current data."""

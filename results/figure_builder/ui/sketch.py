@@ -312,7 +312,8 @@ class LayoutSketch(QWidget):
         c = _theme_colors()
         qp = QPainter(self)
         qp.setRenderHint(QPainter.Antialiasing)
-        qp.fillRect(self.rect(), QColor(c['bg']))
+        if not getattr(self, 'transparent_background', False):
+            qp.fillRect(self.rect(), QColor(c['bg']))
         page = self.page_rect()
         qp.setPen(QPen(QColor(c['border']), 1))
         qp.setBrush(QColor(c['paper']))

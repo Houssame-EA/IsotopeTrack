@@ -10,11 +10,11 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
     QLineEdit, QWidget, QMenu, QScrollArea, QDialogButtonBox, QMessageBox,
-    QFileDialog, QTabWidget, QTableWidget, QTableWidgetItem,
-    QAbstractItemView,
+    QFileDialog, QTabWidget,
 )
 from PySide6.QtCore import Qt, Signal, QObject
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QBrush, QColor
+from widget.results_table_view import ResultsTableView
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import numpy as np
@@ -1019,10 +1019,11 @@ class SingleMultipleElementDisplayDialog(QDialog):
         table_lay.setContentsMargins(0, 0, 0, 0)
         table_lay.setSpacing(4)
 
-        self.table = QTableWidget()
+        self.table = ResultsTableView()
         self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.set_row_brush(self._summary_row_brush)
+        self.table.setSortingEnabled(False)
         table_lay.addWidget(self.table)
 
         table_btn_row = QHBoxLayout()
@@ -1157,7 +1158,8 @@ class SingleMultipleElementDisplayDialog(QDialog):
         df = SingleMultipleElementHelper.statistics_table(
             ad, self._multi, cfg.get('use_particles_per_ml'),
             self.parent_window, cfg.get('dilution_factor', 1.0),
-            cfg.get('label_mode', 'Symbol'))
+            cfg.get('label_mode', 'Symbol'),
+            cfg.get('quantity_basis', 'Particle Count'))
         path, _ = QFileDialog.getSaveFileName(self, "Save Table", "statistics.csv", "CSV (*.csv);;All (*)")
         if path:
             try:
@@ -1598,6 +1600,14 @@ class SingleMultipleElementDisplayDialog(QDialog):
             f"Single: {format_quantity(calc(sc), basis)}  |  "
             f"Multiple: {format_quantity(calc(mc), basis)}")
 
+    @staticmethod
+    def _summary_row_brush(row):
+        """Tint SUMMARY rows with the theme's soft accent colour."""
+        if row and str(row[0]) == 'SUMMARY':
+            from tools.theme import theme
+            return QBrush(QColor(theme.palette.accent_soft))
+        return None
+
     def _update_table(self, ad):
         try:
             cfg = self.node.config
@@ -1606,15 +1616,8 @@ class SingleMultipleElementDisplayDialog(QDialog):
                 self.parent_window, cfg.get('dilution_factor', 1.0),
                 cfg.get('label_mode', 'Symbol'),
                 cfg.get('quantity_basis', 'Particle Count'))
-            self.table.setRowCount(len(df))
-            self.table.setColumnCount(len(df.columns))
-            self.table.setHorizontalHeaderLabels(df.columns.tolist())
-            for i, row in df.iterrows():
-                for j, val in enumerate(row):
-                    item = QTableWidgetItem(str(val))
-                    if j == 0 and str(val) == 'SUMMARY':
-                        item.setBackground(QColor('#E6F3FF'))
-                    self.table.setItem(i, j, item)
+            rows = [[str(v) for v in r] for r in df.itertuples(index=False, name=None)]
+            self.table.set_table([str(c) for c in df.columns], rows)
             self.table.resizeColumnsToContents()
         except Exception as e:
             _itk_log.exception("Handled exception in _update_table")

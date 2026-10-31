@@ -1924,6 +1924,12 @@ class EnhancedPlotWidget(pg.PlotWidget):
         fg = QColor(p.plot_fg)
         bg = QColor(p.plot_bg)
         legend.setLabelTextColor(fg)
+        for _sample, label in getattr(legend, 'items', []):
+            try:
+                label.setAttr('color', fg)
+                label.setText(label.text)
+            except (AttributeError, RuntimeError):
+                continue
         legend.setBrush(pg.mkBrush(bg.red(), bg.green(), bg.blue(), 150))
         legend.setPen(pg.mkPen(color=fg, width=1, style=Qt.SolidLine,
                                cosmetic=True, alpha=120))
@@ -2497,6 +2503,26 @@ class BasicPlotWidget(pg.PlotWidget):
         self.getPlotItem().setTitle(title)
 
 
+class StyledPlotWidget(EnhancedPlotWidget):
+    """IsotopeTrack-styled plot for non-time data (regressions, histograms).
+
+    Same fonts, axes, legend and light/dark theming as the main time plot, but
+    without the crosshair and the time-exclusion right-click entries.
+    """
+
+    def setup_interaction_features(self):
+        """Mouse zoom only; no crosshair lines."""
+        self.setMouseEnabled(x=True, y=True)
+        vb = self.getPlotItem().getViewBox()
+        vb.setMouseMode(vb.RectMode)
+        self.vertical_line = None
+        self.horizontal_line = None
+        self._install_autorange_button()
+
+    def _install_exclusion_context_menu(self):
+        """Time-exclusion bands do not apply to these plots."""
+
+
 class CalibrationPlotWidget(EnhancedPlotWidget):
     """
     Calibration plot with interactive exclusion of outlier points.
@@ -2522,6 +2548,7 @@ class CalibrationPlotWidget(EnhancedPlotWidget):
 
         self._setup_calibration_appearance()
         self._build_calibration_items()
+        self.apply_theme()
 
         from PySide6.QtCore import QTimer
         self._click_timer = QTimer(self)
@@ -2542,23 +2569,35 @@ class CalibrationPlotWidget(EnhancedPlotWidget):
         self._install_autorange_button()
 
     def _setup_calibration_appearance(self):
-        self.setBackground('white')
         pi = self.getPlotItem()
         pi.showGrid(x=False, y=False)
         pi.hideButtons()
-        ap = QPen(QColor("#000000"), 1)
-        tc = QColor("#000000")
         tf = QFont('Times New Roman', 20)
         tf.setBold(True)
         for axis in ['left', 'bottom']:
             ax = pi.getAxis(axis)
-            ax.setPen(ap)
-            ax.setTextPen(tc)
             ax.setFont(tf)
             ax.setStyle(tickFont=tf, tickTextOffset=10, tickLength=10)
-        self.legend = self.addLegend()
-        self.legend.setBrush(pg.mkBrush(255, 255, 255, 150))
-        self.legend.setPen(pg.mkPen(color="#000000", width=1, alpha=100))
+        self.legend.anchor((1, 1), (1, 1), offset=(-20, -60))
+        self.apply_theme()
+
+    def apply_theme(self, *args):
+        """Theme the axes and legend, plus the error bars, markers and labels."""
+        super().apply_theme(*args)
+        if not hasattr(self, '_equation_text'):
+            return
+        p = _app_theme.palette
+        fg = QColor(p.plot_fg)
+        try:
+            self._err_item.setData(pen=pg.mkPen(fg, width=1))
+            self._scatter_included.setPen(pg.mkPen(p.plot_bg, width=1))
+            self._equation_text.setColor(fg)
+            self._tooltip.setColor(QColor(p.text_primary))
+            self._tooltip.fill = pg.mkBrush(QColor(p.bg_secondary))
+            self._tooltip.border = pg.mkPen(QColor(p.border))
+            self._tooltip.update()
+        except RuntimeError:
+            _itk_log.exception("Handled exception in CalibrationPlotWidget.apply_theme")
 
     # ── Persistent plot items ────────────────────────────────────────────
 

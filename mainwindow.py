@@ -29,6 +29,7 @@ from widget.custom_plot_widget import EnhancedPlotWidget, MzBarPlotWidget, make_
 from calibration_methods.TE import TransportRateCalibrationWindow
 from calibration_methods import calibration_registry
 from widget.numeric_table import NumericTableWidgetItem
+from widget.results_table_view import ResultsTableView
 from widget.calibration_info import CalibrationInfoDialog
 from loading.data_thread import DataProcessThread
 from tools.Info_table import InfoTooltip
@@ -45,12 +46,13 @@ import utils.isobaric_correction as isobaric
 from tools.logging_utils import logging_manager, log_user_action, set_current_window
 import logging
 from widget.colors import element_colors
+from tools import window_glass
 from tools.theme import (
     theme,
     main_window_qss,
+    glass_window_qss,
     sidebar_qss,
     edge_strip_qss,
-    sidebar_logo_qss,
     sidebar_list_label_qss,
     calibration_panel_qss,
     sample_table_qss,
@@ -65,14 +67,12 @@ from tools.theme import (
     groupbox_qss,
     summary_label_qss,
     results_container_qss,
-    results_header_qss,
+    results_tabs_qss,
     results_title_qss,
-    perf_tip_qss,
     enhanced_checkbox_qss,
     results_table_qss,
     dialog_qss,
     tier_colors,
-    table_header_label_qss,
     html_table_css,
 )
 
@@ -290,6 +290,8 @@ class MainWindow(QMainWindow):
             "Number based": {},
             "Mass based": {},
             "Ionic Calibration": {}}
+        self._glass_active = False
+        window_glass.prepare(self)
         self.setup_window_size()
         self.create_central_widget()
         self.create_menu_bar()
@@ -510,8 +512,8 @@ class MainWindow(QMainWindow):
 
         self.sample_table.setRowCount(0)
         self.parameters_table.setRowCount(0)
-        self.results_table.setRowCount(0)
-        self.multi_element_table.setRowCount(0)
+        self.results_table.clear_rows()
+        self.multi_element_table.clear_rows()
 
         self.plot_widget.clear()
 
@@ -600,6 +602,7 @@ class MainWindow(QMainWindow):
         content_widget = QWidget()
         content_widget.setObjectName("contentWidget")
         content_layout = QVBoxLayout(content_widget)
+        self._content_layout = content_layout
 
         from PySide6.QtWidgets import QFrame
         scroll_area = QScrollArea()
@@ -812,7 +815,7 @@ class MainWindow(QMainWindow):
             self.detected_peaks = {}
             self.multi_element_particles = []
             try:
-                self.results_table.setRowCount(0)
+                self.results_table.clear_rows()
             except Exception:
                 _itk_log.exception("Handled exception in _invalidate_particle_detection")
             try:
@@ -877,16 +880,15 @@ class MainWindow(QMainWindow):
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setSpacing(0)
         sidebar_layout.setContentsMargins(0, 6, 6, 6)
+        self._sidebar_layout = sidebar_layout
         header_container = QWidget()
         header_container.setFixedHeight(60)
+        self._sidebar_header = header_container
         header_layout = QHBoxLayout(header_container)
         header_layout.setContentsMargins(5, 0, 5, 0)
         header_layout.setSpacing(10)
 
-        logo = QLabel("Tools")
-        self._sidebar_logo = logo
-        logo.setStyleSheet(sidebar_logo_qss(theme.palette))
-        header_layout.addWidget(logo)
+        header_layout.addStretch()
 
         self.toggle_button = QPushButton()
         self.toggle_button.setIconSize(QSize(24, 24))
@@ -1233,8 +1235,11 @@ class MainWindow(QMainWindow):
         _saved_size = self.size()
 
         p = theme.palette
+        glass = getattr(self, '_glass_active', False)
+        if glass:
+            window_glass.apply(self, theme.is_dark)
 
-        self.setStyleSheet(main_window_qss(p))
+        self.setStyleSheet(main_window_qss(p) + (glass_window_qss(p) if glass else ""))
 
         # --- pyqtgraph global background / foreground -----------------------
         try:
@@ -1244,19 +1249,24 @@ class MainWindow(QMainWindow):
                 self.plot_widget.setBackground(p.plot_bg)
         except Exception as e:
             self.logger.debug(f"Could not apply pyqtgraph theme: {e}")
+        if getattr(self, '_last_plot_theme', p.name) != p.name:
+            QTimer.singleShot(0, self._redraw_plot_for_theme)
+        self._last_plot_theme = p.name
 
         # --- Sidebar and its members ---------------------------------------
         if hasattr(self, 'sidebar'):
-            self.sidebar.setStyleSheet(sidebar_qss(p))
+            self.sidebar.setStyleSheet(sidebar_qss(p, glass))
         if hasattr(self, 'edge_strip'):
             self.edge_strip.setStyleSheet(edge_strip_qss(p))
         self._apply_sidebar_grip_style()
-        if hasattr(self, '_sidebar_logo'):
-            self._sidebar_logo.setStyleSheet(sidebar_logo_qss(p))
+        if hasattr(self, '_title_label'):
+            self._title_label.setStyleSheet(
+                f"QLabel#windowTitleLabel {{ color: {p.text_secondary}; font-size: 13px;"
+                " font-weight: 600; background: transparent; }")
         if hasattr(self, '_sample_list_label'):
             self._sample_list_label.setStyleSheet(sidebar_list_label_qss(p))
         if hasattr(self, 'calibration_info_panel'):
-            self.calibration_info_panel.setStyleSheet(calibration_panel_qss(p))
+            self.calibration_info_panel.setStyleSheet(calibration_panel_qss(p, glass))
 
         for btn, icon_name in getattr(self, '_sidebar_icon_buttons', []):
             btn.setIcon(qta.icon(icon_name, color=p.text_on_sidebar))
@@ -1264,13 +1274,12 @@ class MainWindow(QMainWindow):
         self._set_results_attention(getattr(self, '_results_attention', False))
 
         if hasattr(self, 'toggle_button'):
-            arrow_icon = 'fa6s.arrow-left' if self.sidebar_visible else 'fa6s.arrow-right'
-            self.toggle_button.setIcon(qta.icon(arrow_icon, color=p.text_on_sidebar))
+            self._update_toggle_icon()
             self.toggle_button.setStyleSheet(sidebar_toggle_button_qss(p))
 
         # --- Sample table (lives inside the sidebar) -----------------------
         if hasattr(self, 'sample_table'):
-            self.sample_table.setStyleSheet(sample_table_qss(p))
+            self.sample_table.setStyleSheet(sample_table_qss(p, glass))
 
         # --- Menu icons ----------------------------------------------------
         for item, icon_name in getattr(self, '_menu_icon_items', []):
@@ -1308,6 +1317,10 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, 'parameters_table'):
             self.parameters_table.setStyleSheet(parameters_table_qss(p))
+            try:
+                self.color_parameters_table_rows()
+            except Exception:
+                _itk_log.exception("Could not recolour parameter rows after theme change")
 
         primary_style = primary_button_qss(p)
         secondary_style = secondary_action_button_qss(p)
@@ -1326,15 +1339,13 @@ class MainWindow(QMainWindow):
         if hasattr(self, '_results_container'):
             self._results_container.setStyleSheet(results_container_qss(p))
         if hasattr(self, '_results_header_widget'):
-            self._results_header_widget.setStyleSheet(results_header_qss(p))
+            tabs_style = results_tabs_qss(p)
+            self._results_header_widget.setStyleSheet(tabs_style)
+            for btn in (self.show_element_results_checkbox, self.show_particle_results_checkbox):
+                btn.setStyleSheet(tabs_style)
+            self._results_info_label.setStyleSheet(tabs_style)
         if hasattr(self, '_results_title_label'):
             self._results_title_label.setStyleSheet(results_title_qss(p))
-        if hasattr(self, '_perf_tip_label'):
-            self._perf_tip_label.setStyleSheet(perf_tip_qss(p))
-
-        checkbox_style = enhanced_checkbox_qss(p)
-        for cb in getattr(self, '_enhanced_checkboxes', []):
-            cb.setStyleSheet(checkbox_style)
 
         rt_style = results_table_qss(p)
         if hasattr(self, 'results_table'):
@@ -1344,22 +1355,6 @@ class MainWindow(QMainWindow):
             self.multi_element_table.setStyleSheet(rt_style)
             self.multi_element_table.setAlternatingRowColors(True)
 
-        if hasattr(self, '_element_header_label'):
-            if theme.is_dark:
-                bg, fg = p.bg_tertiary, p.accent
-            else:
-                bg, fg = self._element_header_colors
-            self._element_header_label.setStyleSheet(
-                table_header_label_qss(p, bg, fg)
-            )
-        if hasattr(self, '_particle_header_label'):
-            if theme.is_dark:
-                bg, fg = p.bg_tertiary, "#eb9c4a"
-            else:
-                bg, fg = self._particle_header_colors
-            self._particle_header_label.setStyleSheet(
-                table_header_label_qss(p, bg, fg)
-            )
 
         last_args = getattr(self, '_last_summary_args', None)
         if last_args is not None:
@@ -1650,66 +1645,52 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(15, 10, 15, 10)
         layout.setSpacing(8)
         header_widget = QWidget()
+        header_widget.setObjectName("resultsTabBar")
         self._results_header_widget = header_widget
-        header_layout = QVBoxLayout(header_widget)
-        header_layout.setContentsMargins(15, 12, 15, 12)
-        header_layout.setSpacing(8)
+        header_layout = QHBoxLayout(header_widget)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(4)
 
-        title_row = QHBoxLayout()
-        title_row.setContentsMargins(0, 0, 0, 0)
-
-        title_label = QLabel("Results Display")
+        title_label = QLabel("Results")
         self._results_title_label = title_label
-        title_row.addWidget(title_label)
+        header_layout.addWidget(title_label)
+        header_layout.addSpacing(14)
 
-        title_row.addStretch()
+        self.show_element_results_checkbox = QPushButton("Single Element")
+        self.show_particle_results_checkbox = QPushButton("Multi-Element Particles")
+        self.show_element_results_checkbox.setToolTip(
+            "Detected peaks of the selected element in the selected sample")
+        self.show_particle_results_checkbox.setToolTip(
+            "Particles containing several elements in the selected sample")
+        from PySide6.QtWidgets import QButtonGroup
+        self._results_tab_group = QButtonGroup(self)
+        self._results_tab_group.setExclusive(True)
+        for btn in (self.show_element_results_checkbox, self.show_particle_results_checkbox):
+            btn.setObjectName("resultsTab")
+            btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._results_tab_group.addButton(btn)
+            header_layout.addWidget(btn)
+        header_layout.addStretch()
 
-        perf_tip = QLabel("Tip: Keep tables unchecked for better performance during analysis")
-        self._perf_tip_label = perf_tip
-        title_row.addWidget(perf_tip)
+        self._results_info_label = QLabel("")
+        self._results_info_label.setObjectName("resultsInfo")
+        header_layout.addWidget(self._results_info_label)
 
-        header_layout.addLayout(title_row)
-        checkboxes_layout = QHBoxLayout()
-        checkboxes_layout.setContentsMargins(0, 5, 0, 0)
-        checkboxes_layout.setSpacing(20)
-        self.show_element_results_checkbox = self.create_enhanced_checkbox(
-            "Single Element Results",
-            "Show detailed results for individual element detection.\n"
-            "Note: Updating this table can slow down analysis when processing many peaks."
-        )
-
-        self.show_particle_results_checkbox = self.create_enhanced_checkbox(
-            "Multi-Element Particles",
-            "Show particles containing multiple elements.\n"
-            "Note: This table updates after particle detection and can be resource-intensive."
-        )
-
-        checkboxes_layout.addWidget(self.show_element_results_checkbox)
-        checkboxes_layout.addWidget(self.show_particle_results_checkbox)
-        checkboxes_layout.addStretch()
-
-        header_layout.addLayout(checkboxes_layout)
         layout.addWidget(header_widget)
+
         self.element_results_container = QWidget()
         element_layout = QVBoxLayout(self.element_results_container)
-        element_layout.setContentsMargins(0, 5, 0, 0)
-
-        element_header = self.create_table_header("Single Element Results", "#e3f2fd", "#1976d2")
-        self._element_header_label = element_header
-        self._element_header_colors = ("#e3f2fd", "#1976d2")
-        element_layout.addWidget(element_header)
+        element_layout.setContentsMargins(0, 0, 0, 0)
         element_layout.addWidget(self.create_results_table())
 
         self.particle_results_container = QWidget()
         particle_layout = QVBoxLayout(self.particle_results_container)
-        particle_layout.setContentsMargins(0, 5, 0, 0)
-
-        particle_header = self.create_table_header("Multi-Element Particle Results", "#e4cbb8", "#eb7318")
-        self._particle_header_label = particle_header
-        self._particle_header_colors = ("#e4cbb8", "#eb7318")
-        particle_layout.addWidget(particle_header)
+        particle_layout.setContentsMargins(0, 0, 0, 0)
         particle_layout.addWidget(self.create_multi_element_table())
-        self.element_results_container.setVisible(False)
+
+        self.show_element_results_checkbox.setChecked(True)
+        self.element_results_container.setVisible(True)
         self.particle_results_container.setVisible(False)
 
         layout.addWidget(self.element_results_container)
@@ -1717,6 +1698,7 @@ class MainWindow(QMainWindow):
 
         self.show_element_results_checkbox.toggled.connect(self.toggle_element_results)
         self.show_particle_results_checkbox.toggled.connect(self.toggle_particle_results)
+        self._update_results_tabs()
 
         return container
 
@@ -1741,37 +1723,38 @@ class MainWindow(QMainWindow):
 
         return self.sample_table
 
+    _RESULTS_HEADERS = [
+        'Element', 'Peak Start (s)', 'Peak End (s)', 'Total Counts',
+        'Peak Height (counts)', 'Height/Threshold'
+    ]
+    _RESULTS_FORMATS = [None, '.4f', '.4f', '.0f', '.0f', '.2f']
+
     def create_results_table(self):
         """Create table for single element detection results.
 
         Returns:
-            QTableWidget: Configured results table
+            ResultsTableView: Configured results table
         """
-        self.results_table = QTableWidget()
-        self.results_table.setColumnCount(6)
-        headers = [
-            'Element', 'Peak Start (s)', 'Peak End (s)', 'Total Counts',
-            'Peak Height (counts)', 'Height/Threshold'
-        ]
-        self.results_table.setHorizontalHeaderLabels(headers)
+        self.results_table = ResultsTableView()
+        self.results_table.set_table(self._RESULTS_HEADERS, [])
         self.results_table.hideColumn(0)
 
         self.results_table.horizontalHeader().setStretchLastSection(True)
         self.results_table.setMinimumHeight(200)
-        self.results_table.itemSelectionChanged.connect(self.highlight_selected_particle)
-        self.results_table.setSortingEnabled(True)
+        self.results_table.selectionModel().selectionChanged.connect(
+            lambda *_: self.highlight_selected_particle())
         return self.results_table
 
     def create_multi_element_table(self):
         """Create table for multi-element particle results.
 
         Returns:
-            QTableWidget: Configured multi-element table
+            ResultsTableView: Configured multi-element table
         """
-        self.multi_element_table = QTableWidget()
+        self.multi_element_table = ResultsTableView()
         self.multi_element_table.setMinimumHeight(200)
-        self.multi_element_table.setSortingEnabled(True)
-        self.multi_element_table.itemSelectionChanged.connect(self.highlight_multi_element_particle)
+        self.multi_element_table.selectionModel().selectionChanged.connect(
+            lambda *_: self.highlight_multi_element_particle())
         return self.multi_element_table
 
     def create_table_header(self, title, bg_color, text_color):
@@ -1836,12 +1819,12 @@ class MainWindow(QMainWindow):
         if opening:
             self.sidebar.show()
             self.toggle_button.show()
-            self.toggle_button.setIcon(qta.icon('fa6s.arrow-left', color=theme.palette.text_on_sidebar))
             self.edge_strip.hide()
             if hasattr(self, 'sidebar_grip'):
                 self.sidebar_grip.show()
         else:
-            self.toggle_button.hide()
+            if not getattr(self, '_toggle_in_titlebar', False):
+                self.toggle_button.hide()
             self.edge_strip.show()
             if hasattr(self, 'sidebar_grip'):
                 self.sidebar_grip.hide()
@@ -1873,6 +1856,24 @@ class MainWindow(QMainWindow):
         self.animation_group.start()
 
         self.sidebar_visible = opening
+        QSettings("IsotopeTrack", "IsotopeTrack").setValue("ui/sidebar_visible", opening)
+        self._update_toggle_icon()
+
+    def _update_toggle_icon(self):
+        """Point the sidebar toggle arrow the right way and keep it readable.
+
+        In the title bar the button sits over the sidebar while it is open and
+        over the content area once it is collapsed, so its colour follows.
+        """
+        if not hasattr(self, 'toggle_button'):
+            return
+        p = theme.palette
+        opened = getattr(self, 'sidebar_visible', True)
+        icon = 'mdi6.dock-left'
+        color = p.text_on_sidebar
+        if getattr(self, '_toggle_in_titlebar', False) and not opened:
+            color = p.text_secondary
+        self.toggle_button.setIcon(qta.icon(icon, color=color))
 
     def _set_content_frozen(self, frozen):
         """Suspend/resume repaints of the heavy plot widget during the slide.
@@ -1960,7 +1961,8 @@ class MainWindow(QMainWindow):
         self._set_content_frozen(False)
         if not self.sidebar_visible:
             self.sidebar.hide()
-            self.toggle_button.hide()
+            if not getattr(self, '_toggle_in_titlebar', False):
+                self.toggle_button.hide()
             self.edge_strip.show()
         else:
             self.toggle_button.show()
@@ -2045,6 +2047,86 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, 'content_area'):
             self.content_area.setSizes([int(self.height() * 0.7), int(self.height() * 0.3)])
+
+    def showEvent(self, event):
+        """Install the frosted sidebar backdrop the first time the window shows."""
+        super().showEvent(event)
+        if not self._glass_active and not getattr(self, '_glass_pending', False):
+            self._glass_pending = True
+            QTimer.singleShot(0, self._activate_glass)
+        if not getattr(self, '_sidebar_state_restored', False):
+            self._sidebar_state_restored = True
+            QTimer.singleShot(0, self._restore_sidebar_visible)
+
+    def _restore_sidebar_visible(self):
+        """Close the sidebar on start-up if it was closed last time."""
+        visible = str(QSettings("IsotopeTrack", "IsotopeTrack").value(
+            "ui/sidebar_visible", True)).lower() not in ("false", "0")
+        if not visible and self.sidebar_visible:
+            self.toggle_sidebar()
+
+    def _activate_glass(self):
+        """Apply the backdrop once Qt has finished creating and showing the window.
+
+        Qt rebuilds the native window style while showing it, so anything set
+        during ``showEvent`` is overwritten; running from the event loop avoids that.
+        """
+        self._glass_pending = False
+        if not self._glass_active and window_glass.apply(self, theme.is_dark):
+            self._glass_active = True
+            self._apply_titlebar_inset()
+            self.apply_theme()
+
+    def _move_toggle_to_titlebar(self, inset):
+        """Put the sidebar toggle in the title row, just right of the window buttons.
+
+        It stays there whether the sidebar is open or collapsed, and the now
+        empty sidebar header row is hidden.
+
+        Args:
+            inset (int): Height of the merged title-bar strip.
+        """
+        central = self.centralWidget()
+        if central is None or not hasattr(self, 'toggle_button'):
+            return
+        size = 28
+        self.toggle_button.setParent(central)
+        self.toggle_button.setFixedSize(size, size)
+        self.toggle_button.setIconSize(QSize(20, 20))
+        x, y = 78, max(0, (inset - size) // 2)
+        geo = window_glass.window_buttons_geometry(self)
+        if geo is not None:
+            right, center = geo
+            x = int(round(right + 12))
+            y = max(0, int(round(center - size / 2)))
+        self.toggle_button.move(x, y)
+        self.toggle_button.setToolTip("Show or hide the sidebar")
+        self.toggle_button.show()
+        self.toggle_button.raise_()
+        self._toggle_in_titlebar = True
+        if hasattr(self, '_sidebar_header'):
+            self._sidebar_header.hide()
+        self._update_toggle_icon()
+
+    def _apply_titlebar_inset(self):
+        """Keep the sidebar and content clear of the merged macOS title bar strip."""
+        inset = window_glass.titlebar_inset(self)
+        if not inset:
+            return
+        window_glass.ignore_safe_area_tree(self)
+        if hasattr(self, '_sidebar_layout'):
+            m = self._sidebar_layout.contentsMargins()
+            self._sidebar_layout.setContentsMargins(m.left(), 6 + inset, m.right(), m.bottom())
+        self._move_toggle_to_titlebar(inset)
+        if hasattr(self, '_content_layout'):
+            m = self._content_layout.contentsMargins()
+            self._content_layout.setContentsMargins(m.left(), 0, m.right(), m.bottom())
+            self._title_label = QLabel(self.windowTitle())
+            self._title_label.setObjectName("windowTitleLabel")
+            self._title_label.setFixedHeight(inset)
+            self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._content_layout.insertWidget(0, self._title_label)
+            self.windowTitleChanged.connect(self._title_label.setText)
 
     def changeEvent(self, event):
         """Attribute subsequent log records to whichever window is active."""
@@ -4466,7 +4548,7 @@ class MainWindow(QMainWindow):
 
                     isotope_key = self.find_closest_isotope(isotope)
                     if isotope_key is not None and isotope_key in self.data:
-                        self.results_table.setRowCount(0)
+                        self.results_table.clear_rows()
 
                         signal = self.data[isotope_key]
 
@@ -5099,101 +5181,36 @@ class MainWindow(QMainWindow):
 
     def update_results_table(self, detected_particles, signal, element, isotope):
         """Update single element results table with detection results."""
+        self._update_results_tabs()
         if not (hasattr(self, 'show_element_results_checkbox') and self.show_element_results_checkbox.isChecked()):
             return
-
-        header = self.results_table.horizontalHeader()
-        current_sort_column = header.sortIndicatorSection()
-        current_sort_order = header.sortIndicatorOrder()
-        was_sorting_enabled = self.results_table.isSortingEnabled()
-
-        self.results_table.setSortingEnabled(False)
-
-        selected_rows = set()
-        for item in self.results_table.selectedItems():
-            selected_rows.add(item.row())
-
-        self.results_table.setRowCount(0)
-        self.results_table.setColumnCount(6)
-
-        headers = [
-            'Element', 'Peak Start (s)', 'Peak End (s)', 'Total Counts',
-            'Peak Height (counts)', 'Height/Threshold'
-        ]
-        self.results_table.setHorizontalHeaderLabels(headers)
-        self.results_table.hideColumn(0)
 
         element_key = f"{element}-{isotope:.4f}"
         display_label = self.get_formatted_label(element_key)
 
+        rows = []
         for particle in detected_particles:
             if particle is None:
                 continue
-
-            row = self.results_table.rowCount()
-            self.results_table.insertRow(row)
-
             snr = particle.get('SNR', particle['max_height'] / particle.get('threshold', 1))
+            rows.append([
+                display_label,
+                float(self.time_array[particle['left_idx']]),
+                float(self.time_array[particle['right_idx']]),
+                float(particle['total_counts']),
+                float(particle['max_height']),
+                float(snr),
+            ])
 
-            items = [
-                QTableWidgetItem(display_label),
-                NumericTableWidgetItem(f"{self.time_array[particle['left_idx']]:.4f}"),
-                NumericTableWidgetItem(f"{self.time_array[particle['right_idx']]:.4f}"),
-                NumericTableWidgetItem(f"{particle['total_counts']:.0f}"),
-                NumericTableWidgetItem(f"{particle['max_height']:.0f}"),
-                NumericTableWidgetItem(f"{snr:.2f}")
-            ]
-
-            tiers = tier_colors(theme.palette)
-            text_qcolor = QColor(tiers['text'])
-
-            for col, item in enumerate(items):
-                if col > 0:
-                    if snr <= 1.1:
-                        item.setBackground(QBrush(QColor(tiers['critical'])))
-                    elif snr <= 1.2:
-                        item.setBackground(QBrush(QColor(tiers['high'])))
-                    elif snr <= 1.5:
-                        item.setBackground(QBrush(QColor(tiers['medium'])))
-                    else:
-                        item.setBackground(QBrush(QColor(tiers['low'])))
-                    item.setForeground(QBrush(text_qcolor))
-
-                self.results_table.setItem(row, col, item)
-
-        if was_sorting_enabled:
-            self.results_table.setSortingEnabled(True)
-
-            if (current_sort_column >= 0 and
-                    current_sort_column < self.results_table.columnCount()):
-                self.results_table.sortItems(current_sort_column, current_sort_order)
-
-        if selected_rows:
-            for row in selected_rows:
-                if row < self.results_table.rowCount():
-                    for col in range(self.results_table.columnCount()):
-                        item = self.results_table.item(row, col)
-                        if item:
-                            item.setSelected(True)
+        self.results_table.set_table(self._RESULTS_HEADERS, rows, self._RESULTS_FORMATS)
+        self.results_table.hideColumn(0)
+        self.results_table.resizeColumnsToContents()
 
     def update_multi_element_table(self):
         """Update multi-element particle results table."""
+        self._update_results_tabs()
         if not (hasattr(self, 'show_particle_results_checkbox') and self.show_particle_results_checkbox.isChecked()):
             return
-
-        header = self.multi_element_table.horizontalHeader()
-        current_sort_column = header.sortIndicatorSection()
-        current_sort_order = header.sortIndicatorOrder()
-        was_sorting_enabled = self.multi_element_table.isSortingEnabled()
-
-        self.multi_element_table.setSortingEnabled(False)
-
-        selected_rows = set()
-        for item in self.multi_element_table.selectedItems():
-            selected_rows.add(item.row())
-
-        self.multi_element_table.clear()
-        self.multi_element_table.setRowCount(len(self.multi_element_particles))
 
         included_elements = []
         for row in range(self.parameters_table.rowCount()):
@@ -5204,38 +5221,86 @@ class MainWindow(QMainWindow):
                     included_elements.append(element_item.text())
 
         headers = ['Particle #', 'Start Time (s)', 'End Time (s)'] + included_elements
-        self.multi_element_table.setColumnCount(len(headers))
-        self.multi_element_table.setHorizontalHeaderLabels(headers)
-
+        formats = ['d', '.6f', '.6f'] + ['.0f'] * len(included_elements)
+        rows = []
         for i, particle in enumerate(self.multi_element_particles):
-            self.multi_element_table.setItem(i, 0, NumericTableWidgetItem(str(i + 1)))
-            self.multi_element_table.setItem(i, 1, NumericTableWidgetItem(f"{particle['start_time']:.6f}"))
-            self.multi_element_table.setItem(i, 2, NumericTableWidgetItem(f"{particle['end_time']:.6f}"))
+            elements = particle['elements']
+            rows.append([i + 1, float(particle['start_time']), float(particle['end_time'])]
+                        + [float(elements.get(k, 0)) for k in included_elements])
 
-            for j, element_key in enumerate(included_elements, start=3):
-                counts = particle['elements'].get(element_key, 0)
-                self.multi_element_table.setItem(i, j, NumericTableWidgetItem(f"{counts:.0f}"))
-
+        self.multi_element_table.set_table(headers, rows, formats)
         self.multi_element_table.resizeColumnsToContents()
 
-        if was_sorting_enabled:
-            self.multi_element_table.setSortingEnabled(True)
+    def _redraw_plot_for_theme(self):
+        """Redraw the time plot so every line, marker and label uses the new theme.
 
-            if (current_sort_column >= 0 and
-                    current_sort_column < self.multi_element_table.columnCount()):
-                self.multi_element_table.sortItems(current_sort_column, current_sort_order)
+        Items drawn earlier keep the colours they were created with, so the
+        current view (an element, a selected peak, or a multi-element particle)
+        is drawn again with the same zoom.
+        """
+        try:
+            if getattr(self, '_current_plot_mode', 'time') != 'time':
+                return
+            if getattr(self, '_plot_shows_multi_particle', False):
+                if self.multi_element_table.selected_row() is not None:
+                    self.highlight_multi_element_particle()
+                return
+            view = None
+            try:
+                vr = self.plot_widget.viewRect()
+                view = ([vr.left(), vr.right()], [vr.top(), vr.bottom()])
+            except Exception:
+                view = None
+            if self._replot_current_element(preserve_view_range=view):
+                if (self.show_element_results_checkbox.isChecked()
+                        and self.results_table.selected_row() is not None):
+                    self.highlight_selected_particle()
+                    if view is not None:
+                        self.plot_widget.setXRange(view[0][0], view[0][1], padding=0)
+                        self.plot_widget.setYRange(view[1][1], view[1][0], padding=0)
+        except Exception:
+            _itk_log.exception("Could not redraw the plot after a theme change")
 
-        if selected_rows:
-            for row in selected_rows:
-                if row < self.multi_element_table.rowCount():
-                    for col in range(self.multi_element_table.columnCount()):
-                        item = self.multi_element_table.item(row, col)
-                        if item:
-                            item.setSelected(True)
+    def _replot_current_element(self, preserve_view_range=None):
+        """Redraw the selected element's signal, peaks and thresholds.
+
+        Used when the plot is still showing a multi-element particle, so
+        returning to single-element results puts the element view back, and
+        after a theme switch.
+
+        Args:
+            preserve_view_range: Optional ``([x0, x1], [top, bottom])`` zoom to keep.
+
+        Returns:
+            bool: True if the element was drawn.
+        """
+        self._plot_shows_multi_particle = False
+        element = getattr(self, 'current_element', None)
+        isotope = getattr(self, 'current_isotope', None)
+        if element is None or isotope is None or (element, isotope) not in self.detected_peaks:
+            return False
+        element_key = f"{element}-{isotope:.4f}"
+        isotope_key = self.find_closest_isotope(isotope)
+        if isotope_key is None or isotope_key not in self.data:
+            return False
+        try:
+            stored = self.element_thresholds[self.current_sample][element_key]
+            lambda_bkgd = stored.get('background', 0)
+            threshold = stored.get('threshold', 0)
+        except KeyError:
+            lambda_bkgd = 0
+            threshold = 0
+        self.plot_results(element_key, self.data[isotope_key],
+                          self.detected_peaks[(element, isotope)],
+                          lambda_bkgd, threshold,
+                          preserve_view_range=preserve_view_range)
+        return True
 
     def toggle_element_results(self, checked):
         """Show or hide single element results table."""
         self.element_results_container.setVisible(checked)
+        if checked and getattr(self, '_plot_shows_multi_particle', False):
+            self._replot_current_element()
 
         if checked:
             if (hasattr(self, 'current_element') and hasattr(self, 'current_isotope') and
@@ -5248,9 +5313,7 @@ class MainWindow(QMainWindow):
                     signal = self.data[isotope_key]
                     self.update_results_table(detected_particles, signal, self.current_element, self.current_isotope)
 
-            self.status_label.setText("Single element results table enabled")
-        else:
-            self.status_label.setText("Single element results table disabled (better performance)")
+        self._update_results_tabs()
 
     def toggle_particle_results(self, checked):
         """Show or hide multi-element particle results table."""
@@ -5260,29 +5323,52 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'multi_element_particles') and self.multi_element_particles:
                 self.update_multi_element_table()
 
-            self.status_label.setText("Multi-element particle results table enabled")
-        else:
-            self.status_label.setText("Multi-element particle results table disabled (better performance)")
+        self._update_results_tabs()
+
+    def _update_results_tabs(self):
+        """Refresh the result counts in the tab names and the element/sample caption."""
+        if not hasattr(self, 'show_element_results_checkbox'):
+            return
+        element = getattr(self, 'current_element', None)
+        isotope = getattr(self, 'current_isotope', None)
+        peaks = getattr(self, 'detected_peaks', {}) or {}
+        single = None
+        label = ""
+        if element is not None and isotope is not None:
+            found = peaks.get((element, isotope))
+            single = len(found) if found is not None else None
+            try:
+                label = self.get_formatted_label(f"{element}-{isotope:.4f}")
+            except Exception:
+                label = str(element)
+        multi = len(getattr(self, 'multi_element_particles', None) or [])
+        self.show_element_results_checkbox.setText(
+            "Single Element" if single is None else f"Single Element  ·  {single}")
+        self.show_particle_results_checkbox.setText(
+            f"Multi-Element Particles  ·  {multi}" if multi else "Multi-Element Particles")
+        sample = getattr(self, 'current_sample', None)
+        parts = [t for t in (label, f"sample {sample}" if sample else "") if t]
+        if hasattr(self, '_results_info_label'):
+            self._results_info_label.setText("  ·  ".join(parts))
 
     def restore_results_tables(self, sample_name):
         """Restore results tables for selected sample."""
         if hasattr(self, 'show_element_results_checkbox') and self.show_element_results_checkbox.isChecked():
             if sample_name in self.sample_results_data:
                 results_data = self.sample_results_data[sample_name]
-                self.results_table.setRowCount(len(results_data))
-                for row, row_data in enumerate(results_data):
-                    for col, value in enumerate(row_data):
-                        item = QTableWidgetItem(str(value))
-                        self.results_table.setItem(row, col, item)
+                self.results_table.set_table(self._RESULTS_HEADERS,
+                                             [list(r) for r in results_data],
+                                             self._RESULTS_FORMATS)
+                self.results_table.hideColumn(0)
             else:
-                self.results_table.setRowCount(0)
+                self.results_table.clear_rows()
 
         if hasattr(self, 'show_particle_results_checkbox') and self.show_particle_results_checkbox.isChecked():
             if sample_name in self.sample_particle_data:
                 self.multi_element_particles = self.sample_particle_data[sample_name]
                 self.update_multi_element_table()
             else:
-                self.multi_element_table.setRowCount(0)
+                self.multi_element_table.clear_rows()
 
     def update_element_summary(self, element, isotope, detected_particles):
         """Update summary statistics for selected element."""
@@ -5532,6 +5618,7 @@ class MainWindow(QMainWindow):
 
         Uses collinear point removal for fast rendering of large signals.
         """
+        self._plot_shows_multi_particle = False
         self.plot_widget.clear()
 
         display_label = self.get_formatted_label(mass)
@@ -6039,19 +6126,15 @@ class MainWindow(QMainWindow):
 
     def highlight_selected_particle(self):
         """Highlight selected particle from single element results table."""
-        selected_rows = self.results_table.selectedItems()
-        if not selected_rows:
+        row = self.results_table.selected_row()
+        if row is None:
             return
+        if getattr(self, '_plot_shows_multi_particle', False):
+            self._replot_current_element()
 
-        row = selected_rows[0].row()
-
-        element_item = self.results_table.item(row, 0)
-        start_item = self.results_table.item(row, 1)
-        end_item = self.results_table.item(row, 2)
-
-        display_label = element_item.text()
-        start_time = float(start_item.text())
-        end_time = float(end_item.text())
+        display_label = self.results_table.cell_text(row, 0)
+        start_time = float(self.results_table.cell_value(row, 1))
+        end_time = float(self.results_table.cell_value(row, 2))
 
         for item in self.plot_widget.items():
             if isinstance(item, pg.PlotDataItem) and item.name() in ['Highlighted Peak']:
@@ -6095,16 +6178,16 @@ class MainWindow(QMainWindow):
 
     def highlight_multi_element_particle(self):
         """Highlight and display selected multi-element particle."""
-        selected_rows = self.multi_element_table.selectedItems()
-        if not selected_rows:
+        row = self.multi_element_table.selected_row()
+        if row is None:
             return
 
         self.plot_widget.clear()
+        self._plot_shows_multi_particle = True
 
-        row = selected_rows[0].row()
-        start_time = float(self.multi_element_table.item(row, 1).text())
-        end_time = float(self.multi_element_table.item(row, 2).text())
-        particle_number = self.multi_element_table.item(row, 0).text()
+        start_time = float(self.multi_element_table.cell_value(row, 1))
+        end_time = float(self.multi_element_table.cell_value(row, 2))
+        particle_number = self.multi_element_table.cell_text(row, 0)
 
         particle_duration = end_time - start_time
         padding = max(0.3 * particle_duration, 0.05)
@@ -6121,19 +6204,17 @@ class MainWindow(QMainWindow):
         )
         self.plot_widget.addItem(region)
 
+        _edge = QColor(theme.palette.plot_fg)
+        _edge.setAlpha(150)
         start_line = pg.InfiniteLine(
             pos=start_time,
             angle=90,
-            pen=pg.mkPen(70, 70, 70, 150,
-                         width=1.5,
-                         style=Qt.PenStyle.DashLine)
+            pen=pg.mkPen(_edge, width=1.5, style=Qt.PenStyle.DashLine)
         )
         end_line = pg.InfiniteLine(
             pos=end_time,
             angle=90,
-            pen=pg.mkPen(70, 70, 70, 150,
-                         width=1.5,
-                         style=Qt.PenStyle.DashLine)
+            pen=pg.mkPen(_edge, width=1.5, style=Qt.PenStyle.DashLine)
         )
         self.plot_widget.addItem(start_line)
         self.plot_widget.addItem(end_line)
@@ -6154,17 +6235,17 @@ class MainWindow(QMainWindow):
         hover_tooltips = []
 
         for col in range(3, self.multi_element_table.columnCount()):
-            header_item = self.multi_element_table.horizontalHeaderItem(col)
-            if not header_item:
+            display_label = self.multi_element_table.header_text(col)
+            if not display_label:
                 continue
 
-            display_label = header_item.text()
-            cell_item = self.multi_element_table.item(row, col)
-
-            if not cell_item or not cell_item.text() or float(cell_item.text()) <= 0:
+            value = self.multi_element_table.cell_value(row, col)
+            try:
+                counts = float(value)
+            except (TypeError, ValueError):
                 continue
-
-            counts = float(cell_item.text())
+            if counts <= 0:
+                continue
 
             found = False
             for element, isotopes in self.selected_isotopes.items():
@@ -6314,16 +6395,17 @@ class MainWindow(QMainWindow):
                                                     if self.hover_label:
                                                         self.parent_widget.removeItem(self.hover_label)
 
+                                                    _tp = theme.palette
                                                     self.hover_label = pg.TextItem(
                                                         html=f"""
                                                         <div style='
-                                                            background: rgba(255, 255, 255, 240);
+                                                            background: {_tp.bg_secondary};
                                                             padding: 8px 12px;
                                                             border: 2px solid {primary_color};
                                                             border-radius: 6px;
                                                             font-family: "Segoe UI", Arial, sans-serif;
                                                             font-size: 10px;
-                                                            color: #333;
+                                                            color: {_tp.text_primary};
                                                             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
                                                         '>
                                                             {self.hover_texts[point_index].replace(chr(10), '<br>')}
@@ -6404,14 +6486,14 @@ class MainWindow(QMainWindow):
 
             info_text = "<br>".join(info_lines)
 
+            _tp = theme.palette
             info_label = pg.TextItem(
                 html=f"""
                 <div style='
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                        stop:0 rgba(255, 255, 255, 240), 
-                        stop:1 rgba(248, 248, 248, 240));
+                    background: {_tp.bg_secondary};
+                    color: {_tp.text_primary};
                     padding: 12px 15px;
-                    border: 1px solid rgba(200, 200, 200, 180);
+                    border: 1px solid {_tp.border};
                     border-radius: 8px;
                     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
                     font-family: "Segoe UI", Arial, sans-serif;
@@ -8198,8 +8280,8 @@ class MainWindow(QMainWindow):
     def clear_all_displays(self):
         """Clear all display elements when no samples available."""
         self.parameters_table.setRowCount(0)
-        self.results_table.setRowCount(0)
-        self.multi_element_table.setRowCount(0)
+        self.results_table.clear_rows()
+        self.multi_element_table.clear_rows()
 
         self.plot_widget.clear()
 

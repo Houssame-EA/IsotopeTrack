@@ -388,13 +388,13 @@ def create_scrollable_container(parent_layout=None, spacing=15):
 
 def export_table_to_csv(table, parent_widget, dialog_title="Export Detection Results"):
     """
-    Export the contents of a QTableWidget to a CSV file.
+    Export the contents of a QTableWidget or ResultsTableView to a CSV file.
 
     Opens a save-file dialog, writes column headers followed by every row,
     and reports success or failure via QMessageBox.
 
     Args:
-        table (QTableWidget): The table whose data should be exported.
+        table (QTableWidget | ResultsTableView): The table whose data should be exported.
         parent_widget (QWidget): Parent widget for the file dialog and messages.
         dialog_title (str): Title shown in the save-file dialog.
 
@@ -417,17 +417,24 @@ def export_table_to_csv(table, parent_widget, dialog_title="Export Detection Res
     try:
         with open(file_path, mode="w", newline="", encoding="utf-8") as fh:
             writer = csv.writer(fh)
-            headers = [
-                table.horizontalHeaderItem(c).text()
-                for c in range(table.columnCount())
-            ]
-            writer.writerow(headers)
-            for row in range(table.rowCount()):
-                row_data = []
-                for col in range(table.columnCount()):
-                    item = table.item(row, col)
-                    row_data.append(item.text() if item else "")
-                writer.writerow(row_data)
+            if hasattr(table, "cell_text"):
+                headers = [table.header_text(c) for c in range(table.columnCount())]
+                writer.writerow(headers)
+                for row in range(table.rowCount()):
+                    writer.writerow([table.cell_text(row, col)
+                                     for col in range(table.columnCount())])
+            else:
+                headers = [
+                    table.horizontalHeaderItem(c).text()
+                    for c in range(table.columnCount())
+                ]
+                writer.writerow(headers)
+                for row in range(table.rowCount()):
+                    row_data = []
+                    for col in range(table.columnCount()):
+                        item = table.item(row, col)
+                        row_data.append(item.text() if item else "")
+                    writer.writerow(row_data)
 
         QMessageBox.information(
             parent_widget, "Export Successful", f"Results exported to {file_path}"

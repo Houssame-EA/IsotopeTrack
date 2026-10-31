@@ -1169,8 +1169,8 @@ Terminal=false
         
         self.main_window.sample_table.setRowCount(0)
         self.main_window.parameters_table.setRowCount(0)
-        self.main_window.results_table.setRowCount(0)
-        self.main_window.multi_element_table.setRowCount(0)
+        self.main_window.results_table.clear_rows()
+        self.main_window.multi_element_table.clear_rows()
         
         self.main_window.plot_widget.clear()
         

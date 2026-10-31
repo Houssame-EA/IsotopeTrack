@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from widget.periodic_table_widget import PeriodicTableWidget
 import loading.vitesse_loading
-from widget.numeric_table import NumericTableWidgetItem
+from widget.results_table_view import ResultsTableView
 from widget.custom_plot_widget import EnhancedPlotWidget
 from processing.peak_detection import PeakDetection
 from pathlib import Path
@@ -23,7 +23,7 @@ from calibration_methods.te_common import (
     export_table_to_csv, populate_detection_row,
     read_detection_row, apply_global_method, plot_detection_results,
     plot_raw_signal,
-    highlight_particle, snr_to_color, number_method_transport_rate,
+    highlight_particle, number_method_transport_rate,
     base_stylesheet,
     show_data_source_dialog,
 )
@@ -391,7 +391,7 @@ class NumberMethodWidget(QMainWindow):
 
         controls_row = QHBoxLayout()
         self.sample_combo = NoWheelComboBox()
-        self.sample_combo.currentTextChanged.connect(self.update_sample_visualization)
+        self.sample_combo.currentTextChanged.connect(lambda _t: self.update_sample_visualization())
         self.visualization_status_label = QLabel(
             "Click on a sample row above to preview its signal"
         )
@@ -445,15 +445,12 @@ class NumberMethodWidget(QMainWindow):
         left_hint.setWordWrap(True)
         ll.addWidget(left_hint)
 
-        self.results_table = QTableWidget()
-        self.results_table.setColumnCount(4)
-        self.results_table.setHorizontalHeaderLabels([
-            'Sample Name', 'Peak Start (s)', 'Peak End (s)', 'Total Counts'
-        ])
+        self.results_table = ResultsTableView()
+        self.results_table.set_table(self._RESULT_HEADERS, [])
         self.results_table.horizontalHeader().setStretchLastSection(True)
         self.results_table.setAlternatingRowColors(True)
-        self.results_table.setSortingEnabled(True)
-        self.results_table.itemSelectionChanged.connect(self.highlight_selected_particle)
+        self.results_table.selectionModel().selectionChanged.connect(
+            lambda *_: self.highlight_selected_particle())
         self.results_table.setMinimumHeight(220)
         ll.addWidget(self.results_table)
 
@@ -1657,8 +1654,7 @@ class NumberMethodWidget(QMainWindow):
         
         self.detection_results.clear()
         
-        self.results_table.setRowCount(0)
-        self.results_table.clearContents()
+        self.results_table.clear_rows()
         
         progress = QProgressDialog("Detecting particles...", "Cancel", 0, len(valid_samples), self)
         progress.setWindowModality(Qt.WindowModal)
@@ -1726,9 +1722,27 @@ class NumberMethodWidget(QMainWindow):
                 continue
         
         progress.setValue(len(valid_samples))
-        
-        self.update_results_table()
+
+        self._show_detected_sample()
         self.auto_fill_calibration_data()
+
+    def _show_detected_sample(self):
+        """After detection, show a sample that has results in both the plot and the table.
+
+        Keeps the selected sample when it was detected; otherwise switches to the
+        first detected sample.
+        """
+        if self.detection_results and self.sample_combo.currentData() not in self.detection_results:
+            for i in range(self.sample_combo.count()):
+                if self.sample_combo.itemData(i) in self.detection_results:
+                    self.sample_combo.blockSignals(True)
+                    self.sample_combo.setCurrentIndex(i)
+                    self.sample_combo.blockSignals(False)
+                    break
+        if self.sample_combo.currentData() in self.detection_results:
+            self.update_sample_visualization()
+        else:
+            self.update_results_table()
         
     def get_sample_detection_parameters(self, row):
         """
@@ -1781,68 +1795,67 @@ class NumberMethodWidget(QMainWindow):
 
         return params
 
+    _RESULT_HEADERS = ['Sample Name', 'Peak Start (s)', 'Peak End (s)', 'Total Counts']
+    _RESULT_FORMATS = [None, '.4f', '.4f', '.0f']
+
     def update_results_table(self):
         """
-        Update results table with all detection results (simplified to 4 columns).
-        
-        Populates the results table with detected particles from all samples,
-        color-coded by signal-to-noise ratio for quality assessment.
+        Fill the Detection Results table with the particles of the selected sample.
+
+        The section header shows that sample's count and the total over all samples.
         """
-        self.results_table.setSortingEnabled(False)
-        
-        self.results_table.setRowCount(0)
-        self.results_table.clearContents()
-        
+        current = self.sample_combo.currentData()
+        rows = self._result_rows(current)
+        self.results_table.set_table(self._RESULT_HEADERS, rows, self._RESULT_FORMATS)
+        if self.results_table.horizontalHeader().sortIndicatorSection() < 0:
+            self.results_table.sortByColumn(0, Qt.AscendingOrder)
+
+        if hasattr(self, 'results_section'):
+            n = self.results_table.rowCount()
+            total = sum(r.get('particle_count', 0) for r in self.detection_results.values())
+            self.results_section.expand()
+            if current is not None and len(self.detection_results) > 1:
+                self.results_section.set_status(
+                    f"{n} particle{'s' if n != 1 else ''} in this sample · {total} in all samples")
+            else:
+                self.results_section.set_status(f"{n} particle{'s' if n != 1 else ''} detected")
+
+    def _result_rows(self, folder=None):
+        """Build Detection Results rows for one sample, or for all samples.
+
+        Args:
+            folder (str | None): Sample folder to keep; None keeps every sample.
+
+        Returns:
+            list[list]: Rows of visible values followed by the SNR ratio and the
+            particle payload used when a row is clicked.
+        """
+        rows = []
         for folder_path, results in self.detection_results.items():
+            if folder is not None and folder_path != folder:
+                continue
             sample_name = results['sample_name']
             particles = results['particles']
             time_array = results['time_array']
             threshold = results['threshold']
-            
+
             if not particles:
                 continue
-                
+
             for particle in particles:
                 if particle is None:
                     continue
-                    
-                row_position = self.results_table.rowCount()
-                self.results_table.insertRow(row_position)
-                
-                start_time = time_array[particle['left_idx']]
-                end_time = time_array[particle['right_idx']]
-                
-                height_threshold_ratio = particle['max_height'] / threshold if threshold > 0 else 0
-                
-                sample_item = NumericTableWidgetItem(str(sample_name))
-                sample_item.setData(Qt.UserRole, {'folder_path': folder_path, 'particle': particle})
-                
-                start_item = NumericTableWidgetItem(f"{start_time:.4f}")
-                start_item.setData(Qt.UserRole, {'folder_path': folder_path, 'particle': particle})
-                
-                end_item = NumericTableWidgetItem(f"{end_time:.4f}")
-                end_item.setData(Qt.UserRole, {'folder_path': folder_path, 'particle': particle})
-                
-                counts_item = NumericTableWidgetItem(f"{particle['total_counts']:.0f}")
-                counts_item.setData(Qt.UserRole, {'folder_path': folder_path, 'particle': particle})
-                
-                color = snr_to_color(height_threshold_ratio)
-                
-                for item in [sample_item, start_item, end_item, counts_item]:
-                    item.setBackground(color)
-                
-                self.results_table.setItem(row_position, 0, sample_item)
-                self.results_table.setItem(row_position, 1, start_item)
-                self.results_table.setItem(row_position, 2, end_item)
-                self.results_table.setItem(row_position, 3, counts_item)
-        
-        self.results_table.setSortingEnabled(True)
-        self.results_table.sortItems(0, Qt.AscendingOrder)
+                ratio = particle['max_height'] / threshold if threshold > 0 else 0
+                rows.append([
+                    str(sample_name),
+                    float(time_array[particle['left_idx']]),
+                    float(time_array[particle['right_idx']]),
+                    float(particle['total_counts']),
+                    ratio,
+                    {'folder_path': folder_path, 'particle': particle},
+                ])
 
-        if hasattr(self, 'results_section'):
-            n = self.results_table.rowCount()
-            self.results_section.expand()
-            self.results_section.set_status(f"{n} particle{'s' if n != 1 else ''} detected")
+        return rows
 
     def highlight_selected_particle(self):
         """
@@ -1851,23 +1864,24 @@ class NumberMethodWidget(QMainWindow):
         Retrieves particle data from selected table row, switches to the appropriate
         sample, and zooms the plot to highlight the selected particle.
         """
-        selected_items = self.results_table.selectedItems()
-        if not selected_items:
+        row = self.results_table.selected_row()
+        if row is None:
             return
-            
-        item_data = selected_items[0].data(Qt.UserRole)
+
+        item_data = self.results_table.cell_value(row, 5)
         if not item_data:
             return
             
         folder_path = item_data['folder_path']
         particle = item_data['particle']
         
-        for i in range(self.sample_combo.count()):
-            if self.sample_combo.itemData(i) == folder_path:
-                self.sample_combo.setCurrentIndex(i)
-                break
-        
-        self.update_sample_visualization()
+        if self.sample_combo.currentData() != folder_path:
+            for i in range(self.sample_combo.count()):
+                if self.sample_combo.itemData(i) == folder_path:
+                    self.sample_combo.setCurrentIndex(i)
+                    break
+
+        self.update_sample_visualization(refresh_table=False)
         
         if folder_path in self.detection_results:
             results = self.detection_results[folder_path]
@@ -1898,12 +1912,16 @@ class NumberMethodWidget(QMainWindow):
             self.current_highlighted_particle
         )
 
-    def update_sample_visualization(self):
+    def update_sample_visualization(self, refresh_table=True):
         """
         Update visualization for selected sample.
         
         Displays detection results for the currently selected sample in the
-        sample combo box.
+        sample combo box, and limits the Detection Results table to that sample.
+
+        Args:
+            refresh_table (bool): Refill the table; False when called from a
+                table click, so the selection is not reset.
         """
         if not self.detection_results:
             return
@@ -1911,7 +1929,9 @@ class NumberMethodWidget(QMainWindow):
         current_data = self.sample_combo.currentData()
         if not current_data or current_data not in self.detection_results:
             return
-            
+
+        if refresh_table:
+            self.update_results_table()
         results = self.detection_results[current_data]
         
         self.plot_sample_results(
@@ -2116,7 +2136,11 @@ class NumberMethodWidget(QMainWindow):
 
     def export_results_to_csv(self):
         """Export detection results to CSV file."""
-        export_table_to_csv(self.results_table, self)
+        table = ResultsTableView()
+        table.set_table(self._RESULT_HEADERS, self._result_rows(), self._RESULT_FORMATS)
+        table.sortByColumn(0, Qt.AscendingOrder)
+        export_table_to_csv(table, self)
+        table.deleteLater()
 
 
 if __name__ == '__main__':

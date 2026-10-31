@@ -8,12 +8,11 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, Q
                                QCheckBox, QDoubleSpinBox, QGroupBox, QDialog,
                                QMenu, QListView, QAbstractItemView, QTreeView, QSpinBox,
                                QApplication, QScrollArea, QListWidget, QMainWindow, QFrame, QProgressBar, QSplitter, QStackedWidget, QProgressDialog)
-from PySide6.QtGui import QFont
 from PySide6.QtCore import Qt, Signal
 import loading.vitesse_loading
 from widget.periodic_table_widget import PeriodicTableWidget
-from widget.numeric_table import NumericTableWidgetItem
-from widget.custom_plot_widget import EnhancedPlotWidget, CalibrationPlotWidget
+from widget.results_table_view import ResultsTableView
+from widget.custom_plot_widget import EnhancedPlotWidget, CalibrationPlotWidget, StyledPlotWidget
 from processing.peak_detection import PeakDetection
 
 
@@ -25,7 +24,7 @@ from calibration_methods.te_common import (
     export_table_to_csv, populate_detection_row,
     read_detection_row, apply_global_method, plot_detection_results,
     plot_raw_signal,
-    highlight_particle, snr_to_color, particle_mass_from_diameter,
+    highlight_particle, particle_mass_from_diameter,
     base_stylesheet,
     show_data_source_dialog,
     run_all_fits_on_subset, compute_outlier_indices,
@@ -176,6 +175,10 @@ class MassMethodWidget(QMainWindow):
                     w.setBackground(p.plot_bg)
                 except Exception:
                     _itk_log.exception("Handled exception in apply_theme")
+        if getattr(self, '_last_regression', None):
+            self._draw_regression()
+        if getattr(self, '_last_diameters', None):
+            self.plot_multiple_diameter_distributions(self._last_diameters)
         for attr in ("folder_status_label", "element_selection_label"):
             lbl = getattr(self, attr, None)
             if lbl is None:
@@ -388,7 +391,7 @@ class MassMethodWidget(QMainWindow):
 
         controls_row = QHBoxLayout()
         self.sample_combo = NoWheelComboBox()
-        self.sample_combo.currentTextChanged.connect(self.update_sample_visualization)
+        self.sample_combo.currentTextChanged.connect(lambda _t: self.update_sample_visualization())
         self.visualization_status_label = QLabel("Click a sample row above to preview its signal")
         self.visualization_status_label.setObjectName("hintLabel")
         controls_row.addWidget(QLabel("Sample:"))
@@ -428,15 +431,12 @@ class MassMethodWidget(QMainWindow):
         left_hdr.setObjectName("panelHeader")
         ll.addWidget(left_hdr)
         ll.addWidget(self._hint("Click a particle row to zoom in on it in the plot above."))
-        self.results_table = QTableWidget()
-        self.results_table.setColumnCount(5)
-        self.results_table.setHorizontalHeaderLabels([
-            'Sample Name', 'Peak Start (s)', 'Peak End (s)', 'Total Counts', 'Peak Height (counts)'
-        ])
+        self.results_table = ResultsTableView()
+        self.results_table.set_table(self._RESULT_HEADERS, [])
         self.results_table.horizontalHeader().setStretchLastSection(True)
         self.results_table.setAlternatingRowColors(True)
-        self.results_table.setSortingEnabled(True)
-        self.results_table.itemSelectionChanged.connect(self.highlight_selected_particle)
+        self.results_table.selectionModel().selectionChanged.connect(
+            lambda *_: self.highlight_selected_particle())
         self.results_table.setMinimumHeight(200)
         ll.addWidget(self.results_table)
         export_btn = QPushButton("Export Data to CSV")
@@ -458,6 +458,10 @@ class MassMethodWidget(QMainWindow):
         self.file_info_table.horizontalHeader().setStretchLastSection(True)
         self.file_info_table.setAlternatingRowColors(True)
         self.file_info_table.setMinimumHeight(200)
+        self.file_info_table.itemChanged.connect(self._on_file_info_edited)
+        rl.addWidget(self._hint(
+            "Files with the same diameter are averaged into one point (mean ± SD). "
+            "Type -1 as the diameter to leave a file out of the calibration."))
         rl.addWidget(self.file_info_table)
 
         splitter.addWidget(left)
@@ -488,12 +492,11 @@ class MassMethodWidget(QMainWindow):
         reg_hdr.setObjectName("panelHeader")
         layout.addWidget(reg_hdr)
 
-        self.regression_plot = pg.PlotWidget()
-        self.regression_plot.setBackground(theme.palette.plot_bg)
+        self.regression_plot = StyledPlotWidget()
         self.regression_plot.setLabel('left', 'Average Counts')
-        self.regression_plot.setLabel('bottom', 'Particle Mass (fg)')
-        self.regression_plot.showGrid(x=True, y=True, alpha=0.3)
-        self.regression_plot.setMinimumHeight(280)
+        self.regression_plot.setLabel('bottom', 'Particle Mass', units='fg')
+        self.regression_plot.setMinimumHeight(320)
+        self.regression_plot.legend.anchor((1, 1), (1, 1), offset=(-20, -60))
         layout.addWidget(self.regression_plot)
 
         self.calculate_button = QPushButton("Calculate Mass and Regression")
@@ -528,12 +531,10 @@ class MassMethodWidget(QMainWindow):
         diam_hdr.setObjectName("panelHeader")
         layout.addWidget(diam_hdr)
 
-        self.diameter_distribution_plot = pg.PlotWidget()
-        self.diameter_distribution_plot.setBackground(theme.palette.plot_bg)
-        self.diameter_distribution_plot.setLabel('left', 'Frequency')
-        self.diameter_distribution_plot.setLabel('bottom', 'Diameter (nm)')
-        self.diameter_distribution_plot.showGrid(x=True, y=True, alpha=0.3)
-        self.diameter_distribution_plot.setMinimumHeight(280)
+        self.diameter_distribution_plot = StyledPlotWidget()
+        self.diameter_distribution_plot.setLabel('left', 'Particles')
+        self.diameter_distribution_plot.setLabel('bottom', 'Diameter', units='nm')
+        self.diameter_distribution_plot.setMinimumHeight(320)
         layout.addWidget(self.diameter_distribution_plot)
     
     def _build_ionic_calibration_content(self):
@@ -1146,8 +1147,7 @@ class MassMethodWidget(QMainWindow):
         self.detected_particles.clear()
         self.folder_avg_counts.clear()
         
-        self.results_table.setRowCount(0)
-        self.results_table.clearContents()
+        self.results_table.clear_rows()
         
         progress = QProgressDialog("Detecting particles...", "Cancel", 0, len(valid_samples), self)
         progress.setWindowModality(Qt.WindowModal)
@@ -1225,9 +1225,27 @@ class MassMethodWidget(QMainWindow):
                 continue
         
         progress.setValue(len(valid_samples))
-        
-        self.update_results_table()
+
+        self._show_detected_sample()
         self.update_file_info_table()
+
+    def _show_detected_sample(self):
+        """After detection, show a sample that has results in both the plot and the table.
+
+        Keeps the selected sample when it was detected; otherwise switches to the
+        first detected sample.
+        """
+        if self.detection_results and self.sample_combo.currentData() not in self.detection_results:
+            for i in range(self.sample_combo.count()):
+                if self.sample_combo.itemData(i) in self.detection_results:
+                    self.sample_combo.blockSignals(True)
+                    self.sample_combo.setCurrentIndex(i)
+                    self.sample_combo.blockSignals(False)
+                    break
+        if self.sample_combo.currentData() in self.detection_results:
+            self.update_sample_visualization()
+        else:
+            self.update_results_table()
 
     def toggle_calibration_view(self):
         """
@@ -1408,74 +1426,63 @@ class MassMethodWidget(QMainWindow):
 
         return params
 
+    _RESULT_HEADERS = ['Sample Name', 'Peak Start (s)', 'Peak End (s)',
+                       'Total Counts', 'Peak Height (counts)']
+    _RESULT_FORMATS = [None, '.4f', '.4f', '.0f', '.0f']
+
     def update_results_table(self):
         """
-        Update results table with all detection results.
-        
-        Populates table with detected particles from all samples, includes color coding
-        based on signal-to-noise ratio for quality assessment.
+        Fill the Detection Results table with the particles of the selected sample.
+
+        The section header shows that sample's count and the total over all samples.
         """
-        self.results_table.setSortingEnabled(False)
-        
-        self.results_table.setRowCount(0)
-        self.results_table.clearContents()
-        
-        for folder_path, results in self.detection_results.items():
-            sample_name = results['sample_name']
-            particles = results['particles']
-            time_array = results['time_array']
-            threshold = results['threshold']
-            
-            if not particles:
-                continue
-                
-            for particle in particles:
-                if particle is None:
-                    continue
-                    
-                row_position = self.results_table.rowCount()
-                self.results_table.insertRow(row_position)
-                
-                start_time = time_array[particle['left_idx']]
-                end_time = time_array[particle['right_idx']]
-                
-                height_threshold_ratio = particle['max_height'] / threshold if threshold > 0 else 0
-                
-                sample_item = NumericTableWidgetItem(str(sample_name))
-                sample_item.setData(Qt.UserRole, {'folder_path': folder_path, 'particle': particle})
-                
-                start_item = NumericTableWidgetItem(f"{start_time:.4f}")
-                start_item.setData(Qt.UserRole, {'folder_path': folder_path, 'particle': particle})
-                
-                end_item = NumericTableWidgetItem(f"{end_time:.4f}")
-                end_item.setData(Qt.UserRole, {'folder_path': folder_path, 'particle': particle})
-                
-                counts_item = NumericTableWidgetItem(f"{particle['total_counts']:.0f}")
-                counts_item.setData(Qt.UserRole, {'folder_path': folder_path, 'particle': particle})
-                
-                height_item = NumericTableWidgetItem(f"{particle['max_height']:.0f}")
-                height_item.setData(Qt.UserRole, {'folder_path': folder_path, 'particle': particle})
-                
-                color = snr_to_color(height_threshold_ratio)
-                
-                for item in [sample_item, start_item, end_item, counts_item, height_item]:
-                    item.setBackground(color)
-                
-                self.results_table.setItem(row_position, 0, sample_item)
-                self.results_table.setItem(row_position, 1, start_item)
-                self.results_table.setItem(row_position, 2, end_item)
-                self.results_table.setItem(row_position, 3, counts_item)
-                self.results_table.setItem(row_position, 4, height_item)
-        
-        self.results_table.setSortingEnabled(True)
-        self.results_table.sortItems(0, Qt.AscendingOrder)
+        current = self.sample_combo.currentData()
+        rows = self._result_rows(current)
+        self.results_table.set_table(self._RESULT_HEADERS, rows, self._RESULT_FORMATS)
+        if self.results_table.horizontalHeader().sortIndicatorSection() < 0:
+            self.results_table.sortByColumn(0, Qt.AscendingOrder)
 
         if hasattr(self, 'results_section'):
             n = self.results_table.rowCount()
+            total = sum(len([p for p in r['particles'] if p is not None])
+                        for r in self.detection_results.values() if r.get('particles'))
             self.results_section.expand()
-            self.results_section.set_status(
-                f"{n} particle{'s' if n != 1 else ''} detected"
-            )
+            if current is not None and len(self.detection_results) > 1:
+                self.results_section.set_status(
+                    f"{n} particle{'s' if n != 1 else ''} in this sample · {total} in all samples")
+            else:
+                self.results_section.set_status(f"{n} particle{'s' if n != 1 else ''} detected")
+
+    def _result_rows(self, folder=None):
+        """Build Detection Results rows for one sample, or for all samples.
+
+        Args:
+            folder (str | None): Sample folder to keep; None keeps every sample.
+
+        Returns:
+            list[list]: Rows of visible values followed by the particle payload
+            used when a row is clicked.
+        """
+        rows = []
+        for folder_path, results in self.detection_results.items():
+            if folder is not None and folder_path != folder:
+                continue
+            particles = results['particles']
+            if not particles:
+                continue
+            time_array = results['time_array']
+            for particle in particles:
+                if particle is None:
+                    continue
+                rows.append([
+                    str(results['sample_name']),
+                    float(time_array[particle['left_idx']]),
+                    float(time_array[particle['right_idx']]),
+                    float(particle['total_counts']),
+                    float(particle['max_height']),
+                    {'folder_path': folder_path, 'particle': particle},
+                ])
+        return rows
 
     def highlight_selected_particle(self):
         """
@@ -1484,23 +1491,24 @@ class MassMethodWidget(QMainWindow):
         Retrieves particle data from selected table row, switches to appropriate sample,
         zooms plot to particle location, and highlights the particle.
         """
-        selected_items = self.results_table.selectedItems()
-        if not selected_items:
+        row = self.results_table.selected_row()
+        if row is None:
             return
-            
-        item_data = selected_items[0].data(Qt.UserRole)
+
+        item_data = self.results_table.cell_value(row, 5)
         if not item_data:
             return
-            
+
         folder_path = item_data['folder_path']
         particle = item_data['particle']
-        
-        for i in range(self.sample_combo.count()):
-            if self.sample_combo.itemData(i) == folder_path:
-                self.sample_combo.setCurrentIndex(i)
-                break
-        
-        self.update_sample_visualization()
+
+        if self.sample_combo.currentData() != folder_path:
+            for i in range(self.sample_combo.count()):
+                if self.sample_combo.itemData(i) == folder_path:
+                    self.sample_combo.setCurrentIndex(i)
+                    break
+
+        self.update_sample_visualization(refresh_table=False)
         
         if folder_path in self.detection_results:
             results = self.detection_results[folder_path]
@@ -1531,11 +1539,16 @@ class MassMethodWidget(QMainWindow):
             self.current_highlighted_particle
         )
 
-    def update_sample_visualization(self):
+    def update_sample_visualization(self, refresh_table=True):
         """
         Update visualization for selected sample.
-        
-        Displays detection results for the currently selected sample in the combo box.
+
+        Displays detection results for the currently selected sample in the combo
+        box, and limits the Detection Results table to that sample.
+
+        Args:
+            refresh_table (bool): Refill the table; False when called from a
+                table click, so the selection is not reset.
         """
         if not self.detection_results:
             return
@@ -1543,9 +1556,11 @@ class MassMethodWidget(QMainWindow):
         current_data = self.sample_combo.currentData()
         if not current_data or current_data not in self.detection_results:
             return
-            
+
+        if refresh_table:
+            self.update_results_table()
         results = self.detection_results[current_data]
-        
+
         self.plot_sample_results(
             results['sample_name'],
             results['signal'],
@@ -1580,6 +1595,7 @@ class MassMethodWidget(QMainWindow):
         Populates table with sample names, particle diameters, densities, and average counts
         for all processed samples.
         """
+        self.file_info_table.blockSignals(True)
         try:
             self.file_info_table.setRowCount(len(self.particle_folder_paths))
             self.file_info_table.setColumnCount(4)
@@ -1609,6 +1625,23 @@ class MassMethodWidget(QMainWindow):
         except Exception as e:
             _itk_log.exception("Handled exception in update_file_info_table")
             _itk_log.error(f"Error updating file info table: {str(e)}")
+        finally:
+            self.file_info_table.blockSignals(False)
+
+    def _on_file_info_edited(self, item):
+        """Keep edited diameters and densities, so -1 (excluded) survives a re-detection."""
+        row, col = item.row(), item.column()
+        if col not in (1, 2) or row >= len(self.particle_folder_paths):
+            return
+        try:
+            value = float(item.text())
+        except ValueError:
+            return
+        folder_path = self.particle_folder_paths[row]
+        if col == 1:
+            self.folder_diameters[folder_path] = value
+        else:
+            self.folder_densities[folder_path] = value
 
     def on_folder_selected(self, item):
         """
@@ -1665,125 +1698,125 @@ class MassMethodWidget(QMainWindow):
             QMessageBox.warning(self, "No Data", "Please detect particles first.")
             return
 
-        masses = []
-        counts = []
-        folders = []
-
         progress_dialog = QDialog(self)
         progress_dialog.setWindowTitle("Calculating Regression")
         progress_layout = QVBoxLayout(progress_dialog)
-        
         progress_label = QLabel("Processing folder data...")
         progress_layout.addWidget(progress_label)
-        
         progress_bar = QProgressBar()
         progress_bar.setRange(0, self.file_info_table.rowCount())
         progress_layout.addWidget(progress_bar)
-        
         progress_dialog.setModal(True)
         progress_dialog.show()
         QApplication.processEvents()
 
         try:
+            groups = {}
             for row in range(self.file_info_table.rowCount()):
                 progress_bar.setValue(row + 1)
                 QApplication.processEvents()
-                
-                diameter = float(self.file_info_table.item(row, 1).text())
-                density = float(self.file_info_table.item(row, 2).text())
-                avg_total_count_item = self.file_info_table.item(row, 3)
-                
-                if avg_total_count_item and avg_total_count_item.text() and avg_total_count_item.text() != "N/A":
-                    avg_total_count = float(avg_total_count_item.text())
-                    folder_name = self.file_info_table.item(row, 0).text()
+                try:
+                    diameter = float(self.file_info_table.item(row, 1).text())
+                    density = float(self.file_info_table.item(row, 2).text())
+                except (AttributeError, ValueError):
+                    continue
+                if diameter <= 0 or density <= 0:
+                    continue
+                count_item = self.file_info_table.item(row, 3)
+                if not count_item or count_item.text() in ("", "N/A"):
+                    continue
+                avg_total_count = float(count_item.text())
+                if avg_total_count <= 0:
+                    continue
+                key = (diameter, density)
+                groups.setdefault(key, []).append(avg_total_count)
 
-                    if avg_total_count > 0:
-                        mass = self.calculate_particle_mass(diameter, density)
-                        masses.append(mass)
-                        counts.append(avg_total_count)
-                        folders.append(folder_name)
-
-            if len(masses) == 0:
-                progress_dialog.close()
+            progress_dialog.close()
+            if not groups:
                 QMessageBox.warning(self, "Insufficient Data", "No valid data points for regression.")
                 return
 
-            is_single_folder = len(set(folders)) == 1
+            points = []
+            for (diameter, density), values in sorted(groups.items()):
+                arr = np.asarray(values, dtype=float)
+                points.append({
+                    'diameter': diameter,
+                    'mass': self.calculate_particle_mass(diameter, density),
+                    'mean': float(arr.mean()),
+                    'sd': float(arr.std(ddof=1)) if arr.size > 1 else 0.0,
+                    'n': int(arr.size),
+                })
 
+            masses = np.array([0.0] + [pt['mass'] for pt in points])
+            means = np.array([0.0] + [pt['mean'] for pt in points])
+            if len(points) == 1:
+                slope = points[0]['mean'] / points[0]['mass']
+                intercept = 0.0
+                r2 = None
+            else:
+                slope, intercept, r_value, _, _ = stats.linregress(masses, means)
+                r2 = r_value ** 2
+
+            self.particle_calibration_slope = slope
+            self._last_regression = {'points': points, 'slope': slope,
+                                     'intercept': intercept, 'r2': r2}
             if hasattr(self, 'analysis_section'):
                 self.analysis_section.expand()
-
-            self.regression_plot.clear()
-
-            if is_single_folder:
-                progress_label.setText("Calculating single-folder regression...")
-                QApplication.processEvents()
-                
-                mass = masses[0]
-                count = counts[0]
-                slope = count / mass
-                
-                plot_masses = np.array([0, mass])
-                plot_counts = np.array([0, count])
-                
-                scatter = pg.ScatterPlotItem(plot_masses, plot_counts, size=10, brush=pg.mkBrush(30, 30, 255, 200))
-                self.regression_plot.addItem(scatter)
-                
-                line = self.regression_plot.plot(plot_masses, slope * plot_masses, pen=pg.mkPen('r', width=2))
-                
-                text = pg.TextItem(f"Slope: {slope:.2e}", anchor=(0, 1), color='k')
-                text.setFont(QFont("Arial", 12))
-                self.regression_plot.addItem(text)
-                text.setPos(mass * 0.6, count * 0.9)
-                
-                self.regression_plot.setXRange(-mass * 0.05, mass * 1.05)
-                self.regression_plot.setYRange(-count * 0.05, count * 1.05)
-                
-                progress_dialog.close()
-                
+            self._draw_regression()
+            if r2 is None:
                 QMessageBox.information(self, "Regression Results", f"Slope: {slope:.2e}")
-                self.particle_calibration_slope = slope
 
-            else:
-                progress_label.setText("Calculating multi-folder regression...")
-                QApplication.processEvents()
-                
-                masses = np.array(masses)
-                counts = np.array(counts)
-
-                sort_indices = np.argsort(masses)
-                masses = masses[sort_indices]
-                counts = counts[sort_indices]
-
-                masses = np.insert(masses, 0, 0)
-                counts = np.insert(counts, 0, 0)
-
-                slope, intercept, r_value, _, _ = stats.linregress(masses, counts)
-
-                scatter = pg.ScatterPlotItem(masses, counts, size=10, brush=pg.mkBrush(30, 30, 255, 200))
-                self.regression_plot.addItem(scatter)
-
-                line = self.regression_plot.plot(masses, slope * masses + intercept, pen=pg.mkPen('r', width=2))
-                text = pg.TextItem(f"Slope: {slope:.2e}\nR²: {r_value**2:.4f}", anchor=(0, 1), color='k')
-                text.setFont(QFont("Arial", 12))
-                self.regression_plot.addItem(text)
-                text.setPos(masses[-1] * 0.6, counts[-1] * 0.9)
-
-                self.regression_plot.setXRange(-masses[-1] * 0.05, masses[-1] * 1.05)
-                self.regression_plot.setYRange(-counts[-1] * 0.05, counts[-1] * 1.05)
-
-                progress_dialog.close()
-                
-                self.particle_calibration_slope = slope
-
-            self.regression_plot.setLabel('left', 'Average Counts')
-            self.regression_plot.setLabel('bottom', 'Particle Mass (fg)')
-            self.regression_plot.showGrid(x=True, y=True, alpha=0.3)
-            
         except Exception as e:
             progress_dialog.close()
             QMessageBox.critical(self, "Regression Error", f"Error during regression calculation: {str(e)}")
-    
+
+    def _draw_regression(self):
+        """Draw the mass calibration: one mean ± SD point per diameter and the fit line."""
+        data = getattr(self, '_last_regression', None)
+        if not data:
+            return
+        p = theme.palette
+        plot = self.regression_plot
+        plot.clear()
+        points = data['points']
+        slope, intercept, r2 = data['slope'], data['intercept'], data['r2']
+
+        x = np.array([pt['mass'] for pt in points])
+        y = np.array([pt['mean'] for pt in points])
+        sd = np.array([pt['sd'] for pt in points])
+        x_max = float(x.max()) if x.size else 1.0
+        y_max = float((y + sd).max()) if y.size else 1.0
+
+        fit_x = np.array([0.0, x_max * 1.05])
+        plot.plot(fit_x, slope * fit_x + intercept,
+                  pen=pg.mkPen(p.danger, width=2), name="Linear fit")
+        if np.any(sd > 0):
+            beam = x_max * 0.015
+            plot.addItem(pg.ErrorBarItem(x=x, y=y, top=sd, bottom=sd, beam=beam,
+                                         pen=pg.mkPen(p.plot_fg, width=1.5)))
+        plot.addItem(pg.ScatterPlotItem(x=x, y=y, size=11, brush=pg.mkBrush(p.accent),
+                                        pen=pg.mkPen(p.plot_fg, width=1), name="Mean ± SD"))
+
+        lines = [f"Slope: {slope:.3e} counts/fg"]
+        if r2 is not None:
+            lines.append(f"R²: {r2:.4f}")
+        for pt in points:
+            sd_txt = f" ± {pt['sd']:.1f}" if pt['n'] > 1 else ""
+            lines.append(f"{pt['diameter']:g} nm (n={pt['n']}): {pt['mean']:.1f}{sd_txt}")
+        box = pg.TextItem(
+            html=(f"<div style='background:{p.bg_secondary}; color:{p.text_primary};"
+                  f" border:1px solid {p.border}; padding:6px 9px; font-size:11pt;'>"
+                  + "<br>".join(lines) + "</div>"),
+            anchor=(0, 0))
+        box.setPos(x_max * 0.02, y_max * 1.08)
+        plot.addItem(box)
+
+        plot.setXRange(-x_max * 0.05, x_max * 1.08, padding=0)
+        plot.setYRange(-y_max * 0.05, y_max * 1.12, padding=0)
+        plot.setLabel('left', 'Average Counts')
+        plot.setLabel('bottom', 'Particle Mass', units='fg')
+        plot.apply_theme()
+
     def select_calibration_folders(self):
         """
         Enhanced calibration folder selection dialog matching particle folder approach.
@@ -3273,102 +3306,87 @@ class MassMethodWidget(QMainWindow):
 
     def plot_multiple_diameter_distributions(self, all_diameters):
         """
-        Plot histogram of particle diameters for multiple files with statistics.
-        
+        Plot one histogram of particle diameters per file, in the IsotopeTrack plot style.
+
+        The statistics box lists each file, then, for diameters measured in several
+        files, the mean ± SD of the file means.
+
         Args:
-            all_diameters: Dictionary mapping folder names to lists of particle diameters
-            
-        Creates overlaid histogram plot with color coding, legend, and statistics panel.
+            all_diameters (dict): Folder name -> list of particle diameters (nm).
         """
-        self.diameter_distribution_plot.clear()
-        
+        self._last_diameters = all_diameters
+        plot = self.diameter_distribution_plot
+        plot.clear()
+        p = theme.palette
+
         if not all_diameters:
-            self.diameter_distribution_plot.setTitle("No particle data available")
+            plot.setTitle("No particle data available")
             return
-        
-        colors = HISTOGRAM_COLORS    
-        
-        legend_items = []
-        
-        all_stats = {}
-        combined_diameters = []
-        
+        plot.setTitle(None)
+
+        nominal = {}
+        for folder_path in self.particle_folder_paths:
+            nominal[Path(folder_path).name] = self.folder_diameters.get(folder_path, self.default_diameter)
+
+        colors = HISTOGRAM_COLORS
         global_min = float('inf')
         global_max = float('-inf')
-        
+        y_top = 0
+        file_lines = []
+        by_size = {}
+
         for folder_idx, (folder_name, diameters) in enumerate(all_diameters.items()):
             if not diameters:
                 continue
-                
-            color_idx = folder_idx % len(colors)
-            color = colors[color_idx]
-            
+            color = colors[folder_idx % len(colors)]
             global_min = min(global_min, min(diameters))
             global_max = max(global_max, max(diameters))
-            
-            combined_diameters.extend(diameters)
-            
-            y, x = np.histogram(diameters, bins=30)
-            x = (x[:-1] + x[1:]) / 2
-            
-            bargraph = pg.BarGraphItem(x=x, height=y, width=(x[1]-x[0])*0.8, brush=pg.mkBrush(*color), name=folder_name)
-            self.diameter_distribution_plot.addItem(bargraph)
-            
-            legend_items.append((bargraph, folder_name))
-            
-            stats = {
-                'mean': np.mean(diameters),
-                'median': np.median(diameters),
-                'std': np.std(diameters),
-                'min': np.min(diameters),
-                'max': np.max(diameters),
-                'count': len(diameters),
-                'p10': np.percentile(diameters, 10),
-                'p90': np.percentile(diameters, 90)
-            }
-            all_stats[folder_name] = stats
-        
-        legend = self.diameter_distribution_plot.addLegend()
-        for item, name in legend_items:
-            legend.addItem(item, name)
-        
-        stats_text = "Size Distribution Statistics:\n\n"
-        for folder_name, stats in all_stats.items():
-            stats_text += f"{folder_name}:\n"
-            stats_text += f"  Mean: {stats['mean']:.2f} nm\n"
-            stats_text += f"  Median: {stats['median']:.2f} nm\n"
-            stats_text += f"  Range: {stats['min']:.1f} - {stats['max']:.1f} nm\n"
-            stats_text += f"  Count: {stats['count']}\n"
-        
-        text_item = pg.TextItem(
-            text=stats_text,
-            color='k',
-            anchor=(1, 0),
-            border=pg.mkPen('k'),
-            fill=pg.mkBrush(255, 255, 255, 220)
-        )
-        self.diameter_distribution_plot.addItem(text_item)
-        
-        view_box = self.diameter_distribution_plot.getViewBox()
-        view_range = view_box.viewRange()
-        if view_range and len(view_range) >= 2:
-            x_max = view_range[0][1]
-            y_max = view_range[1][1]
-            text_item.setPos(x_max - 20, y_max - 20)
-        else:
-            text_item.setPos(global_max, 0)
-        
-        self.diameter_distribution_plot.setLabel('left', 'Particles')
-        self.diameter_distribution_plot.setLabel('bottom', 'Diameter (nm)')
-        self.diameter_distribution_plot.setTitle("Particle Size Distribution (Multiple Files)")
-        self.diameter_distribution_plot.showGrid(x=True, y=True, alpha=0.3)
-        
-        x_padding = (global_max - global_min) * 0.1
-        self.diameter_distribution_plot.setXRange(global_min - x_padding, global_max + x_padding)
+
+            y, edges = np.histogram(diameters, bins=30)
+            x = (edges[:-1] + edges[1:]) / 2
+            y_top = max(y_top, int(y.max()))
+            plot.addItem(pg.BarGraphItem(x=x, height=y, width=(x[1] - x[0]) * 0.8,
+                                         brush=pg.mkBrush(*color), pen=pg.mkPen(None),
+                                         name=folder_name))
+
+            mean = float(np.mean(diameters))
+            file_lines.append(
+                f"<b>{folder_name}</b>: {mean:.1f} nm (median {np.median(diameters):.1f}, "
+                f"n={len(diameters)})")
+            size = nominal.get(folder_name)
+            if size is not None and size > 0:
+                by_size.setdefault(size, []).append(mean)
+
+        size_lines = []
+        for size, means in sorted(by_size.items()):
+            if len(means) > 1:
+                arr = np.asarray(means)
+                size_lines.append(f"<b>{size:g} nm</b> ({len(means)} files): "
+                                  f"{arr.mean():.1f} ± {arr.std(ddof=1):.1f} nm")
+
+        lines = file_lines + ([""] + size_lines if size_lines else [])
+        box = pg.TextItem(
+            html=(f"<div style='background:{p.bg_secondary}; color:{p.text_primary};"
+                  f" border:1px solid {p.border}; padding:6px 9px; font-size:10pt;'>"
+                  + "<br>".join(lines) + "</div>"),
+            anchor=(0, 0))
+        x_padding = (global_max - global_min) * 0.1 or 1.0
+        box.setPos(global_min - x_padding * 0.9, y_top * 1.25)
+        plot.addItem(box)
+
+        plot.setXRange(global_min - x_padding, global_max + x_padding, padding=0)
+        plot.setYRange(0, y_top * 1.3 if y_top else 1, padding=0)
+        plot.setLabel('left', 'Particles')
+        plot.setLabel('bottom', 'Diameter', units='nm')
+        plot.apply_theme()
 
     def export_to_csv(self):
         """Export detection results to CSV file."""
-        export_table_to_csv(self.results_table, self)
+        table = ResultsTableView()
+        table.set_table(self._RESULT_HEADERS, self._result_rows(), self._RESULT_FORMATS)
+        table.sortByColumn(0, Qt.AscendingOrder)
+        export_table_to_csv(table, self)
+        table.deleteLater()
     
 
 if __name__ == '__main__':
