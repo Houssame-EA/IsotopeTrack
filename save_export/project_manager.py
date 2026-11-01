@@ -18,6 +18,7 @@ from save_export.fast_project_io import (
     save_project_v2, load_project_auto
 )
 from calibration_methods import calibration_registry
+from save_export.calibration_store import refresh_calibration_snapshot
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.save_export.project_manager")
 
@@ -57,16 +58,18 @@ class SaveProjectThread(QThread):
     succeeded = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, filepath, main_window):
+    def __init__(self, filepath, main_window, include_reserve=True):
         """Store the destination path and the window whose state is saved.
 
         Args:
             filepath (str): Destination .itproj path.
             main_window: The MainWindow whose project state is written.
+            include_reserve (bool): Also write the reserve of unselected isotopes.
         """
         super().__init__()
         self._filepath = filepath
         self._main_window = main_window
+        self._include_reserve = include_reserve
 
     def run(self) -> None:
         """Write the project, emitting progress and a final success/failure signal."""
@@ -75,6 +78,7 @@ class SaveProjectThread(QThread):
                 self._filepath,
                 self._main_window,
                 lambda pct, msg="": self.progress.emit(int(pct), msg),
+                include_reserve=self._include_reserve,
             )
             self.succeeded.emit(self._filepath)
         except Exception as exc:
@@ -304,6 +308,7 @@ Terminal=false
             filepath = current
 
         self.main_window.save_current_parameters()
+        refresh_calibration_snapshot(self.main_window)
         self._ui_progress(pct=0, visible=True)
 
         if blocking:
@@ -367,6 +372,11 @@ Terminal=false
             return
         self.main_window.unsaved_changes = False
         self.main_window.update_window_title(filepath)
+        try:
+            from save_export.te_store import apply_te_store_after_save
+            apply_te_store_after_save(self.main_window, filepath)
+        except Exception:
+            _itk_log.exception("Could not point the TE window at the saved project")
         # The project is now safely on disk; drop the autosave recovery snapshot.
         autosave = getattr(self.main_window, '_autosave', None)
         if autosave is not None:
@@ -510,9 +520,11 @@ Terminal=false
                 mw.detected_peaks = mw.sample_detected_peaks[mw.current_sample].copy()
 
         if mw.selected_isotopes:
-            all_masses = set()
+            all_masses = {float(m) for m in (mw.all_masses or [])}
             for isotopes in mw.selected_isotopes.values():
-                all_masses.update(isotopes)
+                all_masses.update(float(m) for m in isotopes)
+            for masses in (getattr(mw, 'sample_reserve_masses', None) or {}).values():
+                all_masses.update(float(m) for m in masses)
             mw.all_masses = sorted(all_masses)
 
             if not mw.periodic_table_widget:
@@ -1146,6 +1158,7 @@ Terminal=false
         self.main_window.time_array = None
         self.main_window.detected_peaks = {}
         self.main_window.all_masses = None
+        self.main_window.sample_reserve_masses = {}
         
         self.main_window.overlap_threshold_percentage = 50.0
         self.main_window._global_sigma = 0.55

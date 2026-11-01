@@ -557,6 +557,172 @@ def read_detection_row(table, row):
         return dict(DEFAULT_DETECTION_PARAMS)
 
 
+REMOVE_SAMPLES_TEXT = " Remove Selected Samples"
+
+
+def style_remove_button(button, p=None):
+    """Give a Remove button the theme's danger colours and a trash icon.
+
+    Args:
+        button (QPushButton): Button to style.
+        p: Theme palette; the current one when None.
+    """
+    import qtawesome as qta
+
+    p = p or theme.palette
+    button.setStyleSheet(
+        f"QPushButton {{ color: {p.danger}; background: {p.danger_bg}; "
+        f"border: 1px solid {p.danger_border}; border-radius: 6px; "
+        f"padding: 4px 10px; font-weight: 600; }}"
+    )
+    button.setIcon(qta.icon('fa6s.trash-can', color=p.danger))
+
+
+def make_remove_button(slot, tooltip):
+    """Create a themed "Remove Selected Samples" button.
+
+    Args:
+        slot (callable): Called when the button is clicked.
+        tooltip (str): Tooltip text.
+
+    Returns:
+        QPushButton: The button.
+    """
+    from PySide6.QtWidgets import QPushButton
+
+    button = QPushButton(REMOVE_SAMPLES_TEXT)
+    button.setToolTip(tooltip)
+    button.clicked.connect(slot)
+    style_remove_button(button)
+    return button
+
+
+def remove_menu_label(count):
+    """Return the context-menu label for removing selected samples.
+
+    Args:
+        count (int): Number of selected samples.
+
+    Returns:
+        str: Menu label.
+    """
+    return "Remove Selected Sample…" if count == 1 else f"Remove {count} Selected Samples…"
+
+
+def remove_menu_icon():
+    """Return the danger-coloured trash icon used in context menus."""
+    import qtawesome as qta
+
+    return qta.icon('fa6s.trash-can', color=theme.palette.danger)
+
+
+def confirm_remove_samples(parent, names, consequence):
+    """Ask before removing samples; Cancel is the default.
+
+    Args:
+        parent (QWidget): Dialog parent.
+        names (list[str]): Names of the samples to remove.
+        consequence (str): Sentence explaining what has to be redone.
+
+    Returns:
+        bool: True when the user confirmed.
+    """
+    if len(names) == 1:
+        title = "Remove 1 sample?"
+        listed = f"“{names[0]}”"
+    else:
+        title = f"Remove {len(names)} samples?"
+        listed = "\n".join(f"• {n}" for n in names)
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle("Remove Samples")
+    box.setText(title)
+    box.setInformativeText(f"{listed}\n\nwill be removed. {consequence}")
+    remove_btn = box.addButton("Remove", QMessageBox.ButtonRole.DestructiveRole)
+    box.addButton(QMessageBox.StandardButton.Cancel)
+    box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+    box.exec()
+    return box.clickedButton() is remove_btn
+
+
+def quiet_progress(widget, progress):
+    """Keep a progress dialog hidden while the widget is restored from a project.
+
+    Restoring runs several loading and detection steps in a row; without this
+    each one flashes its own progress window. Outside a restore nothing changes.
+
+    Args:
+        widget (QWidget): The TE method widget.
+        progress (QProgressDialog): Dialog just created.
+    """
+    if getattr(widget, '_restoring', False):
+        progress.setMinimumDuration(2 ** 31 - 1)
+
+
+def mark_project_unsaved(widget):
+    """Flag the main window's project as having unsaved changes.
+
+    Args:
+        widget (QWidget): Any widget inside the TE window.
+    """
+    main = widget.window().parent() if widget.window() is not None else None
+    if main is not None and hasattr(main, 'unsaved_changes'):
+        main.unsaved_changes = True
+
+
+def remove_rows_by_name(table, names, column=0):
+    """Remove the rows of a table whose text in one column is in ``names``.
+
+    Args:
+        table (QTableWidget): Table to edit.
+        names (set[str]): Names to remove.
+        column (int): Column holding the name.
+    """
+    for row in reversed(range(table.rowCount())):
+        item = table.item(row, column)
+        if item is not None and item.text() in names:
+            table.removeRow(row)
+
+
+def set_detection_row_params(table, row, params):
+    """Write saved detection parameters into one row of a TE detection table.
+
+    Covers the shared columns (method, threshold, minimum points, alpha) and
+    the extra columns used by the Number and Mass methods (sigma, iterative,
+    window size, integration, split method, valley ratio).
+
+    Args:
+        table (QTableWidget): The detection parameters table.
+        row (int): Row index.
+        params (dict): Parameters as read back from the same table.
+    """
+    from PySide6.QtWidgets import QCheckBox, QSpinBox
+
+    method_w = table.cellWidget(row, 2)
+    if method_w is not None and params.get('method'):
+        method_w.setCurrentText(params['method'])
+    for col, key in ((3, 'manual_threshold'), (4, 'min_continuous'),
+                     (5, 'alpha'), (6, 'sigma'), (11, 'valley_ratio')):
+        widget = table.cellWidget(row, col)
+        if widget is not None and params.get(key) is not None:
+            widget.setValue(params[key])
+    iter_w = table.cellWidget(row, 7)
+    if iter_w is not None and params.get('iterative') is not None:
+        iter_w.setChecked(bool(params['iterative']))
+    ws_container = table.cellWidget(row, 8)
+    if ws_container is not None:
+        ws_cb = ws_container.findChild(QCheckBox)
+        ws_sb = ws_container.findChild(QSpinBox)
+        if ws_cb is not None:
+            ws_cb.setChecked(bool(params.get('use_window_size', False)))
+        if ws_sb is not None and params.get('window_size') is not None:
+            ws_sb.setValue(int(params['window_size']))
+    for col, key in ((9, 'integration_method'), (10, 'split_method')):
+        widget = table.cellWidget(row, col)
+        if widget is not None and params.get(key):
+            widget.setCurrentText(params[key])
+
+
 def apply_global_method(table, method_name):
     """Set the detection method combo box on every row to *method_name*.
 

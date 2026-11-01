@@ -487,6 +487,21 @@ class MainWindow(QMainWindow):
         """Reset all data structures before loading a saved project."""
         self.selected_isotopes = {}
         self.data_by_sample = {}
+        self.sample_reserve_masses = {}
+        self._ionic_saved_state = None
+        self._ionic_saved_entries = {}
+        self._ionic_saved_fingerprint = None
+        self._calibration_snapshot = None
+        self._te_saved_state = None
+        self._te_saved_index = {}
+        if getattr(self, 'transport_rate_window', None) is not None:
+            self.transport_rate_window.hide()
+            self.transport_rate_window.deleteLater()
+            self.transport_rate_window = None
+        if getattr(self, 'ionic_calibration_window', None) is not None:
+            self.ionic_calibration_window.hide()
+            self.ionic_calibration_window.deleteLater()
+            self.ionic_calibration_window = None
         self._exclusion_regions_by_sample = {}
         self.time_array_by_sample = {}
         self.sample_parameters = {}
@@ -2566,15 +2581,21 @@ class MainWindow(QMainWindow):
             self.logger.error(f"Error checking accessibility of {path}: {str(e)}")
             return False
 
-    def verify_all_data_sources(self):
-        """Verify that all loaded data sources are still accessible.
+    def verify_all_data_sources(self, samples=None):
+        """Verify that loaded data sources are still accessible.
+
+        Args:
+            samples (iterable | None): Only check these samples; all when None.
 
         Returns:
             tuple: (all_accessible: bool, inaccessible_samples: list)
         """
         inaccessible_samples = []
+        wanted = None if samples is None else set(samples)
 
         for sample_name, source_path in self.sample_to_folder_map.items():
+            if wanted is not None and sample_name not in wanted:
+                continue
             if not self.check_data_source_accessible(source_path):
                 inaccessible_samples.append((sample_name, str(source_path)))
 
@@ -3638,6 +3659,67 @@ class MainWindow(QMainWindow):
         self.periodic_table_widget.raise_()
         self.update_sample_table()
 
+    def _add_isotopes_from_reserve(self, newly_added):
+        """Add newly selected isotopes without going back to the raw data when possible.
+
+        For every sample, each new isotope is taken from a channel already in
+        memory when one lies within 0.5 Da (isobars such as 58Fe/58Ni), otherwise
+        from the reserve stored in the open project file.
+
+        Args:
+            newly_added (set): (element, isotope) pairs that were just selected.
+
+        Returns:
+            dict: Sample name -> list of (element, isotope) pairs that still have
+            to be read from the raw data. Samples with no data loaded yet (a
+            fresh session) always get every pair.
+        """
+        from save_export.isotope_reserve import match_reserve_masses, read_reserve_channels
+
+        pairs = sorted(newly_added, key=lambda pair: pair[1])
+        targets = [isotope for _element, isotope in pairs]
+        project_path = getattr(self, '_project_filepath', None)
+        reserve = getattr(self, 'sample_reserve_masses', None) or {}
+        raw_needed = {}
+
+        sample_names = list(self.data_by_sample.keys())
+        sample_names += [name for name in self.sample_to_folder_map if name not in self.data_by_sample]
+
+        for sample_name in sample_names:
+            if sample_name not in self.data_by_sample:
+                raw_needed[sample_name] = list(pairs)
+                continue
+            sample_data = self.data_by_sample[sample_name]
+            new_data = {}
+
+            in_memory = match_reserve_masses(list(sample_data.keys()), targets)
+            for target, mass in in_memory.items():
+                new_data[target] = sample_data[mass]
+
+            still = [t for t in targets if t not in new_data]
+            stored = reserve.get(sample_name, [])
+            if still and project_path and stored:
+                mapping = match_reserve_masses(stored, still)
+                if mapping:
+                    try:
+                        channels = read_reserve_channels(project_path, sample_name, set(mapping.values()))
+                        for target, mass in mapping.items():
+                            new_data[target] = channels[mass]
+                    except Exception:
+                        self.logger.exception(f"Could not read reserve isotopes for {sample_name}")
+
+            if new_data:
+                for element, isotope in pairs:
+                    if isotope in new_data:
+                        self.mark_element_changed(sample_name, f"{element}-{isotope:.4f}")
+                self.handle_new_elements_finished(new_data, None, None, sample_name)
+
+            missing = [(element, isotope) for element, isotope in pairs if isotope not in new_data]
+            if missing:
+                raw_needed[sample_name] = missing
+
+        return raw_needed
+
     def handle_isotopes_selected(self, selected_isotopes):
         """Handle confirmed isotope selections from periodic table."""
         try:
@@ -3705,8 +3787,12 @@ class MainWindow(QMainWindow):
 
                 self._on_isotopes_removed(removed_isotopes)
 
-            if newly_added and self.folder_paths and not self.pending_csv_processing:
-                all_accessible, inaccessible_samples = self.verify_all_data_sources()
+            raw_needed = {}
+            if newly_added and not self.pending_csv_processing:
+                raw_needed = self._add_isotopes_from_reserve(newly_added)
+
+            if raw_needed and self.folder_paths and not self.pending_csv_processing:
+                all_accessible, inaccessible_samples = self.verify_all_data_sources(raw_needed.keys())
 
                 if not all_accessible:
                     self.status_label.setText("Data sources not accessible. Please reconnect external drives.")
@@ -3734,7 +3820,7 @@ class MainWindow(QMainWindow):
                             self.status_label.setText("Element addition cancelled - data sources not accessible")
                             return
 
-                        all_accessible, inaccessible_samples = self.verify_all_data_sources()
+                        all_accessible, inaccessible_samples = self.verify_all_data_sources(raw_needed.keys())
 
                         if all_accessible:
                             self.status_label.setText("All data sources are now accessible. Proceeding...")
@@ -3742,8 +3828,8 @@ class MainWindow(QMainWindow):
                             QApplication.processEvents()
                             break
 
-                for sample_name in self.data_by_sample.keys():
-                    for element, isotope in newly_added:
+                for sample_name, pairs in raw_needed.items():
+                    for element, isotope in pairs:
                         element_key = f"{element}-{isotope:.4f}"
                         self.mark_element_changed(sample_name, element_key)
 
@@ -3751,11 +3837,15 @@ class MainWindow(QMainWindow):
                 self.status_label.setText(f"Processing {len(newly_added)} new elements...")
                 QApplication.processEvents()
 
-                new_masses_to_process = [isotope for element, isotope in newly_added]
+                raw_items = [
+                    (sample_name, self.sample_to_folder_map[sample_name])
+                    for sample_name in raw_needed
+                    if sample_name in self.sample_to_folder_map
+                ]
 
-                if new_masses_to_process:
-                    total_samples = len(self.sample_to_folder_map)
-                    for i, (sample_name, folder_path) in enumerate(self.sample_to_folder_map.items()):
+                if raw_items:
+                    total_samples = len(raw_items)
+                    for i, (sample_name, folder_path) in enumerate(raw_items):
                         if str(folder_path).endswith('.csv'):
                             continue
 
@@ -3784,6 +3874,7 @@ class MainWindow(QMainWindow):
                                 f"Adding new elements to sample {i + 1}/{total_samples}: {sample_name}")
                             QApplication.processEvents()
 
+                            new_masses_to_process = [isotope for _element, isotope in raw_needed[sample_name]]
                             thread = DataProcessThread(folder_path, new_masses_to_process, sample_name)
                             thread.finished.connect(self.handle_new_elements_finished)
                             thread.error.connect(self.handle_error)
@@ -3923,8 +4014,12 @@ class MainWindow(QMainWindow):
 
                 self._on_isotopes_removed(removed_isotopes)
 
-            if newly_added and self.folder_paths and not self.pending_csv_processing:
-                all_accessible, inaccessible_samples = self.verify_all_data_sources()
+            raw_needed = {}
+            if newly_added and not self.pending_csv_processing:
+                raw_needed = self._add_isotopes_from_reserve(newly_added)
+
+            if raw_needed and self.folder_paths and not self.pending_csv_processing:
+                all_accessible, inaccessible_samples = self.verify_all_data_sources(raw_needed.keys())
 
                 if not all_accessible:
                     self.status_label.setText("Data sources not accessible. Please reconnect external drives.")
@@ -3953,7 +4048,7 @@ class MainWindow(QMainWindow):
                             self.status_label.setText("Element addition cancelled - data sources not accessible")
                             return
 
-                        all_accessible, inaccessible_samples = self.verify_all_data_sources()
+                        all_accessible, inaccessible_samples = self.verify_all_data_sources(raw_needed.keys())
 
                         if all_accessible:
                             self.status_label.setText("All data sources are now accessible. Proceeding...")
@@ -3961,8 +4056,8 @@ class MainWindow(QMainWindow):
                             QApplication.processEvents()
                             break
 
-                for sample_name in self.data_by_sample.keys():
-                    for element, isotope in newly_added:
+                for sample_name, pairs in raw_needed.items():
+                    for element, isotope in pairs:
                         element_key = f"{element}-{isotope:.4f}"
                         self.mark_element_changed(sample_name, element_key)
 
@@ -3970,11 +4065,15 @@ class MainWindow(QMainWindow):
                 self.status_label.setText(f"Processing {len(newly_added)} new elements...")
                 QApplication.processEvents()
 
-                new_masses_to_process = [isotope for element, isotope in newly_added]
+                raw_items = [
+                    (sample_name, self.sample_to_folder_map[sample_name])
+                    for sample_name in raw_needed
+                    if sample_name in self.sample_to_folder_map
+                ]
 
-                if new_masses_to_process:
-                    total_samples = len(self.sample_to_folder_map)
-                    for i, (sample_name, folder_path) in enumerate(self.sample_to_folder_map.items()):
+                if raw_items:
+                    total_samples = len(raw_items)
+                    for i, (sample_name, folder_path) in enumerate(raw_items):
                         if str(folder_path).endswith('.csv'):
                             continue
 
@@ -4004,6 +4103,7 @@ class MainWindow(QMainWindow):
                                 f"Adding new elements to sample {i + 1}/{total_samples}: {sample_name}")
                             QApplication.processEvents()
 
+                            new_masses_to_process = [isotope for _element, isotope in raw_needed[sample_name]]
                             thread = DataProcessThread(folder_path, new_masses_to_process, sample_name)
                             thread.finished.connect(self.handle_new_elements_finished)
                             thread.error.connect(self.handle_error)
@@ -4365,42 +4465,62 @@ class MainWindow(QMainWindow):
             else:
                 self.parameters_table.set_row_colors(row, bg=QBrush(), fg=QBrush())
 
+    @staticmethod
+    def _default_detection_parameters(sigma):
+        """Return the default detection parameters for one element.
+
+        Args:
+            sigma (float): Sigma value to use.
+
+        Returns:
+            dict: Detection parameters.
+        """
+        return {
+            'include': True,
+            'method': "CPLN table",
+            'manual_threshold': 10.0,
+            'min_continuous': 1,
+            'alpha': 0.000001,
+            'integration_method': "Background",
+            'iterative': True,
+            'max_iterations': 4,
+            'sigma': sigma,
+            'use_window_size': False,
+            'window_size': 5000,
+            'split_method': "1D Watershed",
+            'valley_ratio': 0.50,
+        }
+
     def load_or_initialize_parameters(self, sample_name):
-        """Load or initialize detection parameters for sample."""
-        if sample_name not in self.sample_parameters:
+        """Load or initialize detection parameters for sample.
+
+        Every selected element that has no parameters yet for this sample gets
+        the defaults, including elements added after the sample's parameters
+        were first created (for example after a project was opened). Existing
+        parameters are never changed.
+        """
+        is_new = sample_name not in self.sample_parameters
+        if is_new:
             self.sample_parameters[sample_name] = {}
 
-            if hasattr(self, 'sigma_spinbox'):
-                current_sigma = self.sigma_spinbox.value()
-            elif hasattr(self, '_global_sigma'):
-                current_sigma = self._global_sigma
-            else:
-                current_sigma = 0.55
-
-            for element, isotopes in self.selected_isotopes.items():
-                for isotope in isotopes:
-                    element_key = f"{element}-{isotope:.4f}"
-
-                    self.sample_parameters[sample_name][element_key] = {
-                        'include': True,
-                        'method': "CPLN table",
-                        'manual_threshold': 10.0,
-                        'min_continuous': 1,
-                        'alpha': 0.000001,
-                        'integration_method': "Background",
-                        'iterative': True,
-                        'max_iterations': 4,
-                        'sigma': current_sigma,
-                        'use_window_size': False,
-                        'window_size': 5000,
-                        'split_method': "1D Watershed",
-                        'valley_ratio': 0.50,
-                    }
+        if hasattr(self, 'sigma_spinbox'):
+            current_sigma = self.sigma_spinbox.value()
+        elif hasattr(self, '_global_sigma'):
+            current_sigma = self._global_sigma
         else:
-            if hasattr(self, 'sigma_spinbox'):
-                self.sigma_spinbox.blockSignals(True)
-                self.sigma_spinbox.setValue(getattr(self, '_global_sigma', 0.55))
-                self.sigma_spinbox.blockSignals(False)
+            current_sigma = 0.55
+
+        params = self.sample_parameters[sample_name]
+        for element, isotopes in self.selected_isotopes.items():
+            for isotope in isotopes:
+                element_key = f"{element}-{isotope:.4f}"
+                if element_key not in params:
+                    params[element_key] = self._default_detection_parameters(current_sigma)
+
+        if not is_new and hasattr(self, 'sigma_spinbox'):
+            self.sigma_spinbox.blockSignals(True)
+            self.sigma_spinbox.setValue(getattr(self, '_global_sigma', 0.55))
+            self.sigma_spinbox.blockSignals(False)
 
     def save_current_parameters(self):
         """Save current table parameters back to sample_parameters dict."""
@@ -6565,6 +6685,67 @@ class MainWindow(QMainWindow):
     # ------------------------------------calibration--------------------------------------------
     # ----------------------------------------------------------------------------------------------------------
 
+    def _restore_te_session_into_window(self):
+        """Fill a newly created TE window from the open project, if it holds a session."""
+        state = getattr(self, '_te_saved_state', None)
+        if not state:
+            return
+        window = self.transport_rate_window
+        widgets = getattr(window, '_method_widgets', {})
+        project_path = getattr(self, '_project_filepath', None)
+        index = getattr(self, '_te_saved_index', None) or {}
+        window.hide()
+        self.status_label.setText("Opening transport efficiency calibration from the project…")
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(True)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+
+        number = widgets.get("Number based")
+        mass = widgets.get("Mass based")
+        parts = [name for name, present in (
+            ('number', number is not None and bool(state.get('number'))),
+            ('mass', mass is not None and bool(state.get('mass')))) if present]
+
+        def stage(name):
+            """Return a progress callback mapping one method's 0–1 onto its share of the bar."""
+            share = 95.0 / max(len(parts), 1)
+            start = 5.0 + share * parts.index(name)
+
+            def report(fraction, message):
+                self.progress_bar.setValue(int(start + share * max(0.0, min(1.0, fraction))))
+                self.status_label.setText(message)
+                QApplication.processEvents()
+            return report
+
+        try:
+            liquid = widgets.get("Liquid weight")
+            if liquid is not None and state.get('liquid'):
+                liquid.restore_project_state(state['liquid'])
+            self.progress_bar.setValue(5)
+            if 'number' in parts:
+                number.restore_project_state(
+                    state['number'], project_path, index.get('number') or {},
+                    progress=stage('number'))
+            if 'mass' in parts:
+                mass.restore_project_state(
+                    state['mass'], project_path,
+                    index.get('mass') or {}, index.get('mass_ionic') or {},
+                    progress=stage('mass'))
+            method = state.get('method')
+            if method:
+                idx = window.method_combo.findText(method)
+                if idx >= 0:
+                    window.method_combo.setCurrentIndex(idx)
+            self._te_saved_state = None
+        except Exception:
+            self.logger.exception("Could not restore the transport efficiency calibration from the project")
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.progress_bar.setValue(100)
+            self.progress_bar.setVisible(False)
+            self.status_label.setText("Transport efficiency calibration restored from the project")
+
     def open_transport_rate_calibration(self):
         """Open transport rate calibration window."""
         self.user_action_logger.log_dialog_open('Transport Rate Calibration', 'Calibration Window')
@@ -6577,6 +6758,7 @@ class MainWindow(QMainWindow):
                 parent=self
             )
             self.transport_rate_window.calibration_completed.connect(self.handle_calibration_result)
+            self._restore_te_session_into_window()
         else:
             self.transport_rate_window.selected_methods = all_methods
             self.transport_rate_window.method_combo.clear()
@@ -6677,6 +6859,26 @@ class MainWindow(QMainWindow):
         self.update_calibration_display()
         self._mark_results_changed()
 
+    def _restore_ionic_session_into_window(self):
+        """Fill a newly created sensitivity window from the open project, if it holds a session."""
+        state = getattr(self, '_ionic_saved_state', None)
+        if not state:
+            return
+        try:
+            from save_export.calibration_store import read_ionic_data
+            data = read_ionic_data(
+                getattr(self, '_project_filepath', None),
+                getattr(self, '_ionic_saved_entries', None) or {},
+                state,
+            )
+            self.ionic_calibration_window.restore_project_state(state, data)
+            from save_export.calibration_store import ionic_fingerprint
+            window = self.ionic_calibration_window
+            self._ionic_saved_fingerprint = ionic_fingerprint(window.data, window.folder_paths)
+            self._ionic_saved_state = None
+        except Exception:
+            self.logger.exception("Could not restore the sensitivity calibration from the project")
+
     def open_ionic_calibration(self):
         """Open ionic calibration window for sensitivity calibration."""
         self.user_action_logger.log_dialog_open('Ionic Calibration', 'Calibration Window')
@@ -6687,6 +6889,7 @@ class MainWindow(QMainWindow):
             self.ionic_calibration_window.method_preference_changed.connect(self.update_method_preferences)
             self.ionic_calibration_window.isotopes_selection_changed.connect(
                 self.handle_isotopes_selection_from_calibration)
+            self._restore_ionic_session_into_window()
 
         self.ionic_calibration_window.selected_isotopes = self.selected_isotopes.copy()
 

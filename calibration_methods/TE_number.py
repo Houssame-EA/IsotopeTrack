@@ -17,12 +17,16 @@ import json
 from loading.data_thread import DataProcessThread
 
 
+from save_export.te_store import read_te_channel
 from calibration_methods.te_common import (
     section_stylesheet,
     DETECTION_METHODS, DEFAULT_DETECTION_PARAMS,
     export_table_to_csv, populate_detection_row,
     read_detection_row, apply_global_method, plot_detection_results,
-    plot_raw_signal,
+    plot_raw_signal, set_detection_row_params,
+    make_remove_button, style_remove_button, remove_menu_label, remove_menu_icon,
+    confirm_remove_samples, mark_project_unsaved, remove_rows_by_name,
+    quiet_progress,
     highlight_particle, number_method_transport_rate,
     base_stylesheet,
     show_data_source_dialog,
@@ -173,6 +177,8 @@ class NumberMethodWidget(QMainWindow):
         p = theme.palette
 
         self.setStyleSheet(base_stylesheet(p) + section_stylesheet(p))
+        if getattr(self, "remove_samples_btn", None) is not None:
+            style_remove_button(self.remove_samples_btn, p)
         for attr in ("plot_widget",):
             w = getattr(self, attr, None)
             if w is not None:
@@ -274,9 +280,14 @@ class NumberMethodWidget(QMainWindow):
         self.folder_status_label.setObjectName("statusMuted")
         self.folder_status_label.setProperty("statusOk", False)
 
+        self.remove_samples_btn = make_remove_button(
+            self.remove_selected_samples,
+            "Remove the selected samples: their data, detection results and calibration rows")
+
         btn_row.addWidget(folder_button)
         btn_row.addWidget(self.folder_status_label)
         btn_row.addStretch()
+        btn_row.addWidget(self.remove_samples_btn)
         layout.addLayout(btn_row)
 
         self.sample_table = QTableWidget()
@@ -286,6 +297,9 @@ class NumberMethodWidget(QMainWindow):
         self.sample_table.horizontalHeader().setStretchLastSection(True)
         self.sample_table.setAlternatingRowColors(True)
         self.sample_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.sample_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.sample_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.sample_table.customContextMenuRequested.connect(self._show_sample_table_menu)
         self.sample_table.setMinimumHeight(130)
         self.sample_table.setMaximumHeight(200)
         layout.addWidget(self.sample_table)
@@ -1223,6 +1237,7 @@ class NumberMethodWidget(QMainWindow):
                         self.load_element_data_for_all_samples()
                         self.update_detection_parameters_table()
                         self.update_calibration_data_table()
+                        self._show_raw_signal_for_new_element()
 
                         if hasattr(self, 'element_section'):
                             self.element_section.collapse(
@@ -1271,6 +1286,7 @@ class NumberMethodWidget(QMainWindow):
                                 0, len(self.folder_paths), self)
         progress.setWindowModality(Qt.WindowModal)
         progress.setMinimumDuration(500)
+        quiet_progress(self, progress)
         
         for i, folder_path in enumerate(self.folder_paths):
             progress.setValue(i)
@@ -1285,7 +1301,30 @@ class NumberMethodWidget(QMainWindow):
                 continue
                 
             try:
-                if 'csv_data' in self.folder_data[folder_path]:
+                stored = self._project_info_for(folder_path)
+                from_project = None
+                if stored is not None:
+                    try:
+                        from_project = read_te_channel(self._project_store[0], stored, selected_mass)
+                    except (ValueError, KeyError, OSError):
+                        from_project = None
+                if from_project is not None:
+                    isotope_signal, closest_mass, mass_index = from_project
+                    dwell_time = float(stored.get('dwell') or 0.0)
+                    time_array = np.arange(len(isotope_signal)) * dwell_time
+                    self.folder_data[folder_path].update({
+                        'isotope_signal': isotope_signal,
+                        'time_array': time_array,
+                        'dwell_time': dwell_time,
+                        'mass_index': mass_index,
+                        'selected_mass': closest_mass,
+                        'total_acquisition_time': time_array[-1] + dwell_time if len(time_array) > 0 else 0,
+                        'data_loaded': True
+                    })
+                    if not self.all_masses:
+                        self.all_masses = sorted(float(m) for m in stored.get('masses') or [])
+
+                elif 'csv_data' in self.folder_data[folder_path]:
                     csv_data = self.folder_data[folder_path]['csv_data']
                     time_array = self.folder_data[folder_path]['time_array']
                     
@@ -1501,6 +1540,43 @@ class NumberMethodWidget(QMainWindow):
             self.visualization_status_label.setText(f"No signal data available for: {sample_name}")
             _itk_log.error(f"Debug: Could not find data for sample '{sample_name}'. Available samples: {list(self.sample_name_to_folder.keys())}")
 
+    def _show_raw_signal_for_new_element(self):
+        """Show the raw signal of the newly selected element right away.
+
+        Detection results of the previous element no longer apply, so they are
+        cleared; the plot shows the raw signal of the sample selected in the
+        sample list (or the first loaded sample) until Detect is clicked.
+        """
+        self.detection_results.clear()
+        self.results_table.clear_rows()
+        if hasattr(self, 'results_section'):
+            self.results_section.set_status("")
+
+        folder_path = self.sample_combo.currentData()
+        if folder_path not in self.folder_data or 'isotope_signal' not in self.folder_data[folder_path]:
+            folder_path = next(
+                (f for f in self.folder_paths
+                 if 'isotope_signal' in self.folder_data.get(f, {})),
+                None,
+            )
+            if folder_path is not None:
+                for i in range(self.sample_combo.count()):
+                    if self.sample_combo.itemData(i) == folder_path:
+                        self.sample_combo.blockSignals(True)
+                        self.sample_combo.setCurrentIndex(i)
+                        self.sample_combo.blockSignals(False)
+                        break
+        if folder_path is None:
+            return
+
+        sample_name = self.folder_data[folder_path].get('sample_name', Path(folder_path).name)
+        self.plot_raw_signal_preview(folder_path, sample_name)
+        self.visualization_status_label.setText(f"Showing raw signal preview for: {sample_name}")
+        try:
+            self._rebuild_plot_exclusion_regions()
+        except Exception:
+            _itk_log.exception("Handled exception in _show_raw_signal_for_new_element")
+
     def plot_raw_signal_preview(self, folder_path, sample_name):
         """
         Plot raw signal preview for a sample.
@@ -1659,6 +1735,7 @@ class NumberMethodWidget(QMainWindow):
         progress = QProgressDialog("Detecting particles...", "Cancel", 0, len(valid_samples), self)
         progress.setWindowModality(Qt.WindowModal)
         progress.setMinimumDuration(500)
+        quiet_progress(self, progress)
         
         for i, folder_path in enumerate(valid_samples):
             progress.setValue(i)
@@ -2133,6 +2210,297 @@ class NumberMethodWidget(QMainWindow):
             
         else:
             self.summary_label.setText("<div style='text-align: center; color: red;'><h3>No successful calculations</h3></div>")
+
+    def _show_sample_table_menu(self, position):
+        """Offer to remove the selected samples from the sample table's context menu.
+
+        Args:
+            position (QPoint): Click position in the table viewport.
+        """
+        rows = sorted({index.row() for index in self.sample_table.selectedIndexes()})
+        if not rows:
+            return
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        action = menu.addAction(remove_menu_icon(), remove_menu_label(len(rows)))
+        if menu.exec(self.sample_table.viewport().mapToGlobal(position)) == action:
+            self.remove_selected_samples()
+
+    def remove_selected_samples(self):
+        """Remove the samples selected in the sample table, after confirmation.
+
+        Their data, detection results, exclusions and rows in the detection and
+        calibration tables are dropped. Transport rate results are cleared so
+        the user calculates again with the remaining samples.
+        """
+        rows = sorted({index.row() for index in self.sample_table.selectedIndexes()})
+        folders = [self.folder_paths[r] for r in rows if r < len(self.folder_paths)]
+        if not folders:
+            QMessageBox.information(self, "Remove Samples",
+                                    "Select the samples you want to remove in the sample table.")
+            return
+        names = [self.folder_data.get(f, {}).get('sample_name', Path(f).name) for f in folders]
+        if not confirm_remove_samples(
+                self, names, "Transport rate results are cleared — calculate again."):
+            return
+
+        for folder_path, name in zip(folders, names):
+            self.folder_paths.remove(folder_path)
+            self.folder_data.pop(folder_path, None)
+            self.sample_name_to_folder.pop(name, None)
+            self.detection_results.pop(folder_path, None)
+            self._exclusion_regions_by_sample.pop(name, None)
+        removed = set(names)
+        remove_rows_by_name(self.detection_params_table, removed)
+        remove_rows_by_name(self.calibration_data_table, removed)
+        self.calibration_results_table.setRowCount(0)
+        self.summary_label.setText("")
+
+        self.update_sample_table()
+        self.enable_ui_elements()
+        if self.detection_results:
+            self._show_detected_sample()
+        else:
+            self.results_table.clear_rows()
+            self.plot_widget.clear()
+        mark_project_unsaved(self)
+
+    def _project_info_for(self, folder_path):
+        """Return where a sample is stored in the project file, or None.
+
+        Args:
+            folder_path (str): Sample source.
+
+        Returns:
+            dict | None: Entry of the TE index for this sample.
+        """
+        store = getattr(self, '_project_store', None)
+        if not store or not store[0]:
+            return None
+        return store[1].get(folder_path)
+
+    def attach_project_store(self, project_path, index):
+        """Read the samples stored in a project file from now on.
+
+        Args:
+            project_path (str): Project file path.
+            index (dict): Sample source -> stored entry, for this method.
+        """
+        self._project_store = (project_path, dict(index or {}))
+
+    def export_memory_arrays(self):
+        """Return the selected isotope signal of every loaded sample.
+
+        Only the element used for the calibration is kept in the project.
+
+        Returns:
+            dict: Source -> {'channels': {mass: array}, 'time_array': array}.
+        """
+        arrays = {}
+        for folder_path in self.folder_paths:
+            data = self.folder_data.get(folder_path, {})
+            signal = data.get('isotope_signal')
+            time_array = data.get('time_array')
+            if signal is None or time_array is None:
+                continue
+            mass = data.get('selected_mass')
+            if mass is None and self.selected_element:
+                mass = self.selected_element.get('selected_isotope')
+            if mass is None:
+                continue
+            arrays[folder_path] = {
+                'channels': {float(mass): signal},
+                'time_array': time_array,
+            }
+        return arrays
+
+    def export_project_state(self):
+        """Return the window state stored inside a project file.
+
+        Detected particles are not stored: they are detected again on restore
+        from the same signals and parameters. Must be called on the GUI thread.
+
+        Returns:
+            dict: Session state.
+        """
+        from save_export.te_store import picklable_dict
+
+        folder_meta = {}
+        for folder_path in self.folder_paths:
+            data = self.folder_data.get(folder_path, {})
+            masses = data.get('masses')
+            folder_meta[folder_path] = {
+                'sample_name': data.get('sample_name', Path(folder_path).name),
+                'status': data.get('status', 'Unknown'),
+                'is_tofwerk': bool(data.get('is_tofwerk')),
+                'masses': [] if masses is None else [float(m) for m in np.asarray(masses).ravel()],
+            }
+
+        detection_params = []
+        for row in range(self.detection_params_table.rowCount()):
+            item = self.detection_params_table.item(row, 0)
+            detection_params.append({
+                'sample_name': item.text() if item else '',
+                'params': self.get_sample_detection_parameters(row),
+            })
+
+        calibration_rows = []
+        for row in range(self.calibration_data_table.rowCount()):
+            cells = []
+            for col in range(6):
+                item = self.calibration_data_table.item(row, col)
+                cells.append(item.text() if item else '')
+            use = self.calibration_data_table.cellWidget(row, 6)
+            calibration_rows.append({'cells': cells, 'use': bool(use.isChecked()) if use else True})
+
+        result_rows = []
+        for row in range(self.calibration_results_table.rowCount()):
+            values = []
+            for col in range(self.calibration_results_table.columnCount()):
+                item = self.calibration_results_table.item(row, col)
+                values.append(item.text() if item else '')
+            result_rows.append(values)
+
+        return {
+            'folder_paths': list(self.folder_paths),
+            'folder_meta': folder_meta,
+            'sample_name_to_folder': dict(self.sample_name_to_folder),
+            'all_masses': [float(m) for m in (self.all_masses or [])],
+            'selected_isotopes': {k: list(v) for k, v in (self.selected_isotopes or {}).items()},
+            'selected_element': picklable_dict(self.selected_element),
+            'detection_params': detection_params,
+            'detected': bool(self.detection_results),
+            'calibration_rows': calibration_rows,
+            'result_rows': result_rows,
+            'summary_html': self.summary_label.text(),
+            'exclusions': dict(self._exclusion_regions_by_sample),
+        }
+
+    def _show_selected_element(self, element):
+        """Show the selected element in its label and section header.
+
+        Args:
+            element (dict): Selected element data with 'symbol' and 'selected_isotope'.
+        """
+        symbol = element.get('symbol', '')
+        mass = element.get('selected_isotope')
+        isotope_data = next((iso for iso in element.get('isotopes', [])
+                             if isinstance(iso, dict) and iso.get('mass') == mass), None)
+        abundance = isotope_data.get('abundance', 0) if isotope_data else 0
+        self.element_selection_label.setText(
+            f"Selected Element: {symbol} - {int(round(mass))}{symbol} ({abundance:.1f}%)")
+        self.element_selection_label.setObjectName("statusOk")
+        self.element_selection_label.setProperty("statusOk", True)
+        self.element_selection_label.style().unpolish(self.element_selection_label)
+        self.element_selection_label.style().polish(self.element_selection_label)
+        if hasattr(self, 'element_section'):
+            self.element_section.collapse(
+                f"{symbol}  —  {int(round(mass))}{symbol}  ({abundance:.1f}%)")
+
+    def _set_sample_detection_parameters(self, row, params):
+        """Write saved detection parameters into one row of the parameters table.
+
+        Args:
+            row (int): Row index.
+            params (dict): Parameters as returned by ``get_sample_detection_parameters``.
+        """
+        set_detection_row_params(self.detection_params_table, row, params)
+
+    def restore_project_state(self, state, project_path, index, progress=None):
+        """Restore the window from a session stored in a project file.
+
+        Samples are read from the project; detection runs again with the saved
+        parameters, then the calibration table values and results are put back.
+
+        Args:
+            state (dict): State from ``export_project_state``.
+            project_path (str | None): Project file holding the samples.
+            index (dict): Sample source -> stored entry, for this method.
+            progress (callable | None): Called with (fraction 0–1, message)
+                as the restore advances.
+        """
+        self._restoring = True
+        self._restore_progress = progress
+        try:
+            self._restore_project_state(state, project_path, index)
+        finally:
+            self._restoring = False
+            self._restore_progress = None
+
+    def _report_restore(self, fraction, message):
+        """Report restore progress to the caller, when it asked for it.
+
+        Args:
+            fraction (float): Progress of this widget's restore, 0–1.
+            message (str): Step description.
+        """
+        callback = getattr(self, '_restore_progress', None)
+        if callback is not None:
+            callback(fraction, message)
+
+    def _restore_project_state(self, state, project_path, index):
+        """Do the work of ``restore_project_state`` with progress windows hidden.
+
+        Args:
+            state (dict): State from ``export_project_state``.
+            project_path (str | None): Project file holding the samples.
+            index (dict): Sample source -> stored entry, for this method.
+        """
+        self._report_restore(0.05, "Number method: restoring samples")
+        self.attach_project_store(project_path, index)
+        self.folder_paths = list(state.get('folder_paths') or [])
+        self.folder_data = {}
+        for folder_path in self.folder_paths:
+            meta = dict((state.get('folder_meta') or {}).get(folder_path) or {})
+            meta['data_loaded'] = False
+            self.folder_data[folder_path] = meta
+        self.sample_name_to_folder = dict(state.get('sample_name_to_folder') or {})
+        self.all_masses = list(state.get('all_masses') or []) or None
+        self.selected_isotopes = {k: list(v) for k, v in (state.get('selected_isotopes') or {}).items()}
+        self._exclusion_regions_by_sample = dict(state.get('exclusions') or {})
+
+        self.update_sample_table()
+        self.enable_ui_elements()
+
+        element = state.get('selected_element')
+        if not element or element.get('selected_isotope') is None:
+            return
+        self.selected_element = dict(element)
+        self._show_selected_element(self.selected_element)
+        self._report_restore(0.2, "Number method: loading signals")
+        self.load_element_data_for_all_samples()
+        self.update_detection_parameters_table()
+        for row, saved in enumerate(state.get('detection_params') or []):
+            if row < self.detection_params_table.rowCount():
+                self._set_sample_detection_parameters(row, saved.get('params') or {})
+        self.update_calibration_data_table()
+        self._show_raw_signal_for_new_element()
+
+        if state.get('detected'):
+            self._report_restore(0.5, "Number method: detecting particles")
+            self.detect_particles_all_samples()
+
+        self._report_restore(0.9, "Number method: restoring results")
+        rows = state.get('calibration_rows') or []
+        for row, saved in enumerate(rows):
+            if row >= self.calibration_data_table.rowCount():
+                break
+            cells = saved.get('cells') or []
+            for col in (2, 3, 5):
+                if col < len(cells) and cells[col] != '':
+                    self.calibration_data_table.setItem(row, col, QTableWidgetItem(cells[col]))
+            use = self.calibration_data_table.cellWidget(row, 6)
+            if use is not None:
+                use.setChecked(bool(saved.get('use', True)))
+
+        result_rows = state.get('result_rows') or []
+        self.calibration_results_table.setRowCount(len(result_rows))
+        for row, values in enumerate(result_rows):
+            for col, value in enumerate(values):
+                self.calibration_results_table.setItem(row, col, QTableWidgetItem(value))
+        if state.get('summary_html'):
+            self.summary_label.setText(state['summary_html'])
+        self._report_restore(1.0, "Number method restored")
 
     def export_results_to_csv(self):
         """Export detection results to CSV file."""

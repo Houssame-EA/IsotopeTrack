@@ -214,6 +214,7 @@ class IonicCalibrationWindow(QMainWindow):
         self._refresh_plot_label_colors()
         self._refresh_results_table_colors()
         self._refresh_return_button()
+        self._refresh_remove_button()
 
     def _refresh_tool_icons(self):
         """Recolour the toolbar icons for the current theme."""
@@ -234,6 +235,21 @@ class IonicCalibrationWindow(QMainWindow):
         p = theme.palette
         btn.setStyleSheet(return_button_style(p))
         btn.setIcon(qta.icon('fa6s.house', color=return_button_icon_color(p)))
+
+    def _refresh_remove_button(self):
+        """Apply the theme's danger colours to the Remove Selected Samples button."""
+        btn = getattr(self, "remove_samples_btn", None)
+        if btn is None:
+            return
+        p = theme.palette
+        btn.setStyleSheet(
+            f"QPushButton {{ color: {p.danger}; background: {p.danger_bg}; "
+            f"border: 1px solid {p.danger_border}; border-radius: 6px; "
+            f"padding: 4px 10px; font-weight: 600; }}"
+            f"QPushButton:disabled {{ color: {p.text_secondary}; "
+            f"background: transparent; border-color: {p.text_secondary}; }}"
+        )
+        btn.setIcon(qta.icon('fa6s.trash-can', color=p.danger))
 
     def _refresh_plot_label_colors(self):
         """Swap the pyqtgraph axis label color to the current theme's
@@ -433,10 +449,18 @@ class IonicCalibrationWindow(QMainWindow):
         auto_fill_btn.clicked.connect(self.auto_fill_concentrations)
         auto_fill_btn.setToolTip("Attempt to auto-detect concentrations from sample names")
         
+        self.remove_samples_btn = QPushButton(" Remove Selected Samples")
+        self.remove_samples_btn.clicked.connect(self.remove_selected_samples)
+        self.remove_samples_btn.setToolTip(
+            "Remove every sample that has a selected cell: its data, its "
+            "concentrations and its points in the fits")
+
         table_buttons_layout.addWidget(fill_minus_one_btn)
         table_buttons_layout.addWidget(auto_fill_btn)
         table_buttons_layout.addStretch()
+        table_buttons_layout.addWidget(self.remove_samples_btn)
         data_table_layout.addLayout(table_buttons_layout)
+        self._refresh_remove_button()
         
         splitter.addWidget(data_table_group)
         
@@ -2107,6 +2131,87 @@ class IonicCalibrationWindow(QMainWindow):
         if self.plot_isotope_combo.count() > 0:
             self.update_time_plot()
 
+    def export_project_state(self):
+        """Return the window state stored inside a project file.
+
+        Signal arrays are not included; the project saver writes them from
+        ``self.data``. Must be called on the GUI thread.
+
+        Returns:
+            dict: Session state.
+        """
+        table = self.get_table_data()
+        table['header_internal_data'] = {
+            str(k): v for k, v in table.get('header_internal_data', {}).items()
+        }
+        return {
+            'folder_paths': list(self.folder_paths),
+            'selected_isotopes': {k: list(v) for k, v in self.selected_isotopes.items()},
+            'concentration_unit': self.unit_combo.currentText(),
+            'calibration_results': self.calibration_results,
+            'sensitivity_overrides': self.sensitivity_overrides,
+            'isotope_method_preferences': self.isotope_method_preferences,
+            'drift_correction': self.drift_action.isChecked(),
+            'table_data': table,
+            'excluded_points': {k: list(v) for k, v in self.excluded_points.items()},
+            'time_exclusions_element': dict(self._time_exclusions_element),
+            'time_exclusions_sample': dict(self._time_exclusions_sample),
+            'run_info': {folder: rec.get('run_info') for folder, rec in self.data.items()},
+        }
+
+    def restore_project_state(self, state, data):
+        """Restore the window from a session stored in a project file.
+
+        Args:
+            state (dict): State from ``export_project_state``.
+            data (dict): Folder -> {'masses', 'signals', 'run_info'} read from the project.
+        """
+        self.folder_paths = list(state.get('folder_paths') or [])
+        self.data = data
+        masses = set()
+        for record in data.values():
+            masses.update(float(m) for m in np.asarray(record['masses']))
+        self.all_masses = sorted(masses) if masses else None
+
+        if state.get('selected_isotopes'):
+            self.selected_isotopes = {k: list(v) for k, v in state['selected_isotopes'].items()}
+        unit = state.get('concentration_unit')
+        if unit:
+            self.unit_combo.setCurrentText(unit)
+        self.calibration_results = state.get('calibration_results') or {}
+        self.sensitivity_overrides = state.get('sensitivity_overrides') or {}
+        self.isotope_method_preferences = state.get('isotope_method_preferences') or {}
+        self.drift_action.blockSignals(True)
+        self.drift_action.setChecked(bool(state.get('drift_correction', False)))
+        self.drift_action.blockSignals(False)
+        self.excluded_points = {k: set(v) for k, v in (state.get('excluded_points') or {}).items()}
+        self._time_exclusions_element = dict(state.get('time_exclusions_element') or {})
+        self._time_exclusions_sample = dict(state.get('time_exclusions_sample') or {})
+
+        self.ignore_item_changed = True
+        try:
+            self.set_table_data(state.get('table_data'))
+        finally:
+            self.ignore_item_changed = False
+
+        self.update_element_isotope_combo()
+        for key, override in list(self.sensitivity_overrides.items()):
+            record = self._manual_record(key, float(override.get('slope', 0.0)))
+            self.sensitivity_overrides[key] = record.copy()
+            if key in self.calibration_results:
+                self.calibration_results[key]['manual'] = record
+        self.update_sensitivity_table()
+        self.update_plot_isotope_combo()
+        self.update_sample_combo()
+        if self.all_masses:
+            self.update_periodic_table()
+        if self.calibration_results:
+            self.update_results_table()
+            if self.element_isotope_combo.count() > 0:
+                self.display_selected_calibration(self.element_isotope_combo.currentText())
+        self.data_modified = False
+        self.save_action.setEnabled(False)
+
     def save_session(self):
         """
         Save session using the CSV handler.
@@ -2304,6 +2409,10 @@ class IonicCalibrationWindow(QMainWindow):
         self.sample_combo.clear()
         
         for folder in self.folder_paths:
+            stored_info = (self.data.get(folder) or {}).get('run_info') or {}
+            if stored_info.get('SampleName'):
+                self.sample_combo.addItem(stored_info['SampleName'], folder)
+                continue
             try:
                 run_info_path = Path(folder) / "run.info"
                 if os.path.exists(run_info_path):
@@ -2365,8 +2474,19 @@ class IonicCalibrationWindow(QMainWindow):
         for conc in common_concentrations:
             action = concentrations_menu.addAction(f"{conc} {self.unit_combo.currentText()}")
             conc_actions[action] = conc
-        
+
+        remove_action = None
+        rows = self._selected_sample_rows()
+        if rows:
+            menu.addSeparator()
+            label = "Remove Selected Sample…" if len(rows) == 1 else f"Remove {len(rows)} Selected Samples…"
+            remove_action = menu.addAction(qta.icon('fa6s.trash-can', color=theme.palette.danger), label)
+
         action = menu.exec(self.table.viewport().mapToGlobal(position))
+
+        if remove_action is not None and action == remove_action:
+            self.remove_selected_samples()
+            return
         
         if action == copy_action:
             self.copy_cells()
@@ -2378,6 +2498,98 @@ class IonicCalibrationWindow(QMainWindow):
             self.set_selected_cells_to_value(0)
         elif action in conc_actions:
             self.set_selected_cells_to_value(conc_actions[action])
+
+    def _selected_sample_rows(self):
+        """Return the table rows that have at least one selected cell.
+
+        Returns:
+            list[int]: Sorted row indices.
+        """
+        return sorted({index.row() for index in self.table.selectedIndexes()})
+
+    def remove_selected_samples(self):
+        """Remove every sample that has a selected cell, after confirmation.
+
+        The sample's signals, its row of concentrations, its excluded points and
+        its time exclusions are dropped. Existing fits are cleared so the user
+        recalculates with the remaining samples.
+        """
+        rows = self._selected_sample_rows()
+        if not rows:
+            QMessageBox.information(
+                self, "Remove Samples",
+                "Select at least one cell in the rows of the samples you want to remove.")
+            return
+
+        names = []
+        for row in rows:
+            item = self.table.item(row, 0)
+            names.append(item.text() if item else f"Row {row + 1}")
+        if len(names) == 1:
+            title = "Remove 1 sample?"
+            listed = f"“{names[0]}”"
+        else:
+            title = f"Remove {len(names)} samples?"
+            listed = "\n".join(f"• {n}" for n in names)
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Remove Samples")
+        box.setText(title)
+        box.setInformativeText(
+            f"{listed}\n\nwill be removed from the calibration. "
+            "Fits are cleared — click Calculate again.")
+        remove_btn = box.addButton("Remove", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        if box.clickedButton() is not remove_btn:
+            return
+
+        removed_folders = []
+        self.ignore_item_changed = True
+        try:
+            for row in reversed(rows):
+                if row < len(self.folder_paths):
+                    folder = self.folder_paths.pop(row)
+                    removed_folders.append(folder)
+                    self.data.pop(folder, None)
+                    self._time_exclusions_sample.pop(folder, None)
+                self.table.removeRow(row)
+        finally:
+            self.ignore_item_changed = False
+
+        for excluded in self.excluded_points.values():
+            for folder in removed_folders:
+                excluded.discard(folder)
+
+        masses = set()
+        for record in self.data.values():
+            masses.update(float(m) for m in np.asarray(record['masses']))
+        self.all_masses = sorted(masses) if masses else None
+
+        self.calibration_results = {}
+        self.table.clearSelection()
+        self.update_sample_combo()
+        self.update_element_isotope_combo()
+        self.update_sensitivity_table()
+        self.update_results_table()
+        if self.plot_isotope_combo.count() > 0 and self.folder_paths:
+            self.update_time_plot()
+        else:
+            self.count_vs_time_widget.clear()
+
+        self.data_modified = True
+        self.save_action.setEnabled(True)
+        if self.parent_window is not None:
+            self.parent_window.unsaved_changes = True
+
+        ual = _ual()
+        if ual:
+            ual.log_action('DATA_REMOVE', 'Removed calibration samples',
+                           {'samples': names})
+        self.statusBar.showMessage(
+            f"Removed {len(names)} sample(s). Click Calculate to refit.", 5000)
 
     def set_selected_cells_to_value(self, value):
         """
@@ -4273,9 +4485,13 @@ class IonicCalibrationWindow(QMainWindow):
         """
         if self.data_modified:
             reply = QMessageBox.question(
-                self, 
-                'Save Changes?',
-                "You have unsaved changes. Would you like to save them?",
+                self,
+                'Ionic Calibration',
+                "The Ionic Calibration window has changes that are not saved "
+                "in a calibration session file (.csv).\n\n"
+                "Your project is not affected: when you save the project, this "
+                "calibration is saved inside it.\n\n"
+                "Do you also want to save a separate calibration session file?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel
             )
             if reply == QMessageBox.StandardButton.Yes:
