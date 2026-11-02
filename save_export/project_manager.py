@@ -1128,7 +1128,7 @@ Terminal=false
             'sample_parameters', 'sample_detected_peaks', 'sample_dwell_times',
             'sample_results_data', 'isotope_method_preferences', 'sample_particle_data',
             'sample_analysis_dates', 'sample_to_folder_map', 'element_thresholds',
-            'element_limits', 'sample_run_info', 'sample_method_info',
+            'element_limits', 'sample_run_info', 'sample_method_info', 'sample_tuning_info',
             'sample_dilutions'
         ]
         

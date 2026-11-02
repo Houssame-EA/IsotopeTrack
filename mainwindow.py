@@ -27,6 +27,7 @@ from tools.periodic_table_utils.periodic_table_info import PeriodicTableInfo
 from widget.periodic_table_widget import PeriodicTableWidget
 from widget.custom_plot_widget import EnhancedPlotWidget, MzBarPlotWidget, make_trace_pen
 from calibration_methods.TE import TransportRateCalibrationWindow
+from loading.nu_tuning import read_nu_tuning
 from calibration_methods import calibration_registry
 from widget.numeric_table import NumericTableWidgetItem
 from widget.results_table_view import ResultsTableView
@@ -278,6 +279,7 @@ class MainWindow(QMainWindow):
         self._results_attention = False
         self.peak_detector = PeakDetection()
         self.sample_method_info = {}
+        self.sample_tuning_info = {}
         self.sample_to_folder_map = {}
         self.transport_rate_methods = calibration_registry.default_transport_labels()
 
@@ -517,6 +519,7 @@ class MainWindow(QMainWindow):
         self.sample_dilutions = {}
         self.sample_run_info = {}
         self.sample_method_info = {}
+        self.sample_tuning_info = {}
 
         self.mass_fraction_service.reset()
 
@@ -3096,6 +3099,9 @@ class MainWindow(QMainWindow):
                     except Exception as e:
                         _itk_log.exception("Handled exception in handle_thread_finished")
                         _itk_log.error(f"Could not load method info for {sample_name}: {str(e)}")
+                    tuning = read_nu_tuning(folder_path)
+                    if tuning:
+                        self.sample_tuning_info[sample_name] = tuning
 
             if analysis_datetime:
                 try:
@@ -3424,7 +3430,8 @@ class MainWindow(QMainWindow):
                 self.sample_method_info.get(sample_name),
                 self.time_array_by_sample.get(sample_name),
                 self.all_masses,
-                self
+                self,
+                self._tuning_for(sample_name),
             ))
 
             menu.addSeparator()
@@ -3463,6 +3470,25 @@ class MainWindow(QMainWindow):
             """)
 
             menu.exec(self.sample_table.viewport().mapToGlobal(position))
+
+    def _tuning_for(self, sample_name):
+        """Return the instrument tuning of a sample, reading it from its folder if needed.
+
+        Projects saved before tuning was stored get it from the sample folder
+        when that folder is still reachable.
+
+        Args:
+            sample_name (str): Sample name.
+
+        Returns:
+            dict | None: Tuning registers, or None when not available.
+        """
+        tuning = self.sample_tuning_info.get(sample_name)
+        if tuning is None:
+            tuning = read_nu_tuning(self.sample_to_folder_map.get(sample_name))
+            if tuning:
+                self.sample_tuning_info[sample_name] = tuning
+        return tuning
 
     def remove_sample(self, sample_name):
         """Remove sample and all associated data."""
@@ -3504,6 +3530,7 @@ class MainWindow(QMainWindow):
                 ('element_thresholds', self.element_thresholds),
                 ('sample_run_info', self.sample_run_info),
                 ('sample_method_info', self.sample_method_info),
+                ('sample_tuning_info', self.sample_tuning_info),
                 ('saturation_filtered_peaks', self.saturation_filtered_peaks),
                 ('saturation_filtered_multi', self.saturation_filtered_multi),
                 ('saturation_windows', self.saturation_windows),

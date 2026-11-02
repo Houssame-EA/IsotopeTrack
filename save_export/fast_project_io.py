@@ -248,6 +248,7 @@ def build_metadata(mw: MainWindow):
         '_exclusion_regions_by_sample': getattr(mw, '_exclusion_regions_by_sample', {}),
         'sample_run_info': getattr(mw, 'sample_run_info', {}),
         'sample_method_info': getattr(mw, 'sample_method_info', {}),
+        'sample_tuning_info': getattr(mw, 'sample_tuning_info', {}),
 
         'element_mass_fractions': mw.mass_fraction_service.element_mass_fractions,
         'element_densities': mw.mass_fraction_service.element_densities,
@@ -600,7 +601,7 @@ def _restore_metadata(mw: MainWindow, metadata):
         'selected_transport_rate_methods', 'current_sample',
         'overlap_threshold_percentage', '_global_sigma', '_sigma_mode',
         '_exclusion_regions_by_sample',
-        'sample_run_info', 'sample_method_info',
+        'sample_run_info', 'sample_method_info', 'sample_tuning_info',
         'sample_dilutions',
         'sample_status', 'detection_states',
         'transport_rate_methods',
