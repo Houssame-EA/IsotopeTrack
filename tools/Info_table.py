@@ -249,20 +249,25 @@ class InfoTooltip(QWidget):
         super().hide()
 
     def eventFilter(self, obj, event):
-        """Hide on any mouse click that lands outside the tooltip."""
+        """Hide on any mouse click that lands outside the tooltip.
+
+        Events are never consumed. The base ``eventFilter`` is not called
+        because this filter is installed on the whole application, and Qt
+        sometimes passes objects (such as layout items) that PySide cannot
+        hand back to it.
+        """
         if event.type() == QEvent.MouseButtonPress:
             click_pos = QCursor.pos()
             if self.geometry().contains(click_pos):
-                return super().eventFilter(obj, event)
+                return False
             if self._trigger_widget is not None:
                 from PySide6.QtCore import QRect, QPoint
                 btn_global_tl = self._trigger_widget.mapToGlobal(QPoint(0, 0))
                 btn_screen_rect = QRect(btn_global_tl, self._trigger_widget.size())
                 if btn_screen_rect.contains(click_pos):
-                    return super().eventFilter(obj, event)
+                    return False
             self.hide()
-            return False
-        return super().eventFilter(obj, event)
+        return False
 
     def setup_ui(self):
         """Setup the user interface."""

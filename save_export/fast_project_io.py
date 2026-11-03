@@ -405,6 +405,18 @@ def save_project_v2(filepath, mw: MainWindow, progress_callback=None, include_re
                     safe_name = sample_name.replace('/', '_').replace('\\', '_')
                     zf.writestr(f'particles/{safe_name}.pkl', buf.getvalue())
 
+            raw_spectra = {}
+            for sample_name in sample_names:
+                entry = (getattr(mw, 'sample_raw_spectrum', None) or {}).get(sample_name)
+                if not entry or entry.get('spectrum') is None:
+                    continue
+                buf = io.BytesIO()
+                np.save(buf, np.asarray(entry['spectrum'], dtype=np.float32), allow_pickle=False)
+                safe_name = sample_name.replace('/', '_').replace('\\', '_')
+                zf.writestr(f'spectra/{safe_name}.npy', buf.getvalue(),
+                            compress_type=zipfile.ZIP_DEFLATED, compresslevel=6)
+                raw_spectra[sample_name] = int(entry.get('n_snapshots') or 0)
+
             reserve_index = {}
             reserve_sources = {}
             reserve_report = {}
@@ -453,6 +465,7 @@ def save_project_v2(filepath, mw: MainWindow, progress_callback=None, include_re
                 'reserve_sources': reserve_sources,
                 'ionic_entries': ionic_entries,
                 'te_entries': te_entries,
+                'raw_spectra': raw_spectra,
             }
             zf.writestr('manifest.json', json.dumps(manifest, indent=2))
 
@@ -578,6 +591,20 @@ def load_project_v2(filepath, mw: MainWindow, progress_callback=None):
                 mw.sample_particle_data[sample_name] = _columnar_to_particles(col_data)
             else:
                 mw.sample_particle_data[sample_name] = []
+
+        mw.sample_raw_spectrum = {}
+        mw._raw_spectrum_missing = set()
+        names = set(zf.namelist())
+        for sample_name, n_snapshots in (manifest.get('raw_spectra') or {}).items():
+            safe_name = sample_name.replace('/', '_').replace('\\', '_')
+            entry_name = f'spectra/{safe_name}.npy'
+            if entry_name not in names:
+                continue
+            try:
+                spectrum = np.load(io.BytesIO(zf.read(entry_name)), allow_pickle=False)
+                mw.sample_raw_spectrum[sample_name] = {'spectrum': spectrum, 'n_snapshots': int(n_snapshots)}
+            except (ValueError, OSError):
+                logger.exception(f"Could not read the resolved spectrum of {sample_name}")
 
     elapsed = time.time() - t0
     _progress(100, f"Loaded in {elapsed:.1f}s")

@@ -17,7 +17,7 @@ from PySide6.QtGui import QGuiApplication
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtGui import QColor, QBrush, QAction, QActionGroup, QKeySequence
-from PySide6.QtWidgets import QWidget, QFrame
+from PySide6.QtWidgets import QWidget, QFrame, QStackedWidget
 import tools.dilution_utils
 import utils.dilution
 import utils.signal_stats
@@ -25,9 +25,13 @@ import json
 from calibration_methods.ionic_CAL import IonicCalibrationWindow
 from tools.periodic_table_utils.periodic_table_info import PeriodicTableInfo
 from widget.periodic_table_widget import PeriodicTableWidget
-from widget.custom_plot_widget import EnhancedPlotWidget, MzBarPlotWidget, make_trace_pen
+from widget.custom_plot_widget import (EnhancedPlotWidget, MzBarPlotWidget, SpectrumPlotWidget,
+                                       make_trace_pen)
 from calibration_methods.TE import TransportRateCalibrationWindow
 from loading.nu_tuning import read_nu_tuning
+from loading.nu_raw_spectrum import (
+    read_nu_raw_spectrum, spectrum_masses, integration_window, peak_check,
+)
 from calibration_methods import calibration_registry
 from widget.numeric_table import NumericTableWidgetItem
 from widget.results_table_view import ResultsTableView
@@ -160,6 +164,34 @@ class NoWheelComboBox(QComboBox):
     # ----------------------------------------------------------------------------------------------------
 
 
+_SUPERSCRIPT_DIGITS = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
+
+
+def superscript_mass(label):
+    """Write the leading mass number of an isotope label as superscript, e.g. 115In → ¹¹⁵In.
+
+    Args:
+        label (str): Isotope label.
+
+    Returns:
+        str: The label with its leading digits in superscript.
+    """
+    digits = len(label) - len(label.lstrip("0123456789"))
+    return label[:digits].translate(_SUPERSCRIPT_DIGITS) + label[digits:]
+
+
+class PlotStack(QStackedWidget):
+    """Stack of the Time, Count and Spectrum plots with a fixed preferred size.
+
+    A plot's own preferred size follows its current size, so inside the
+    scrolling page the frame grew a little every time the view was switched.
+    """
+
+    def sizeHint(self):
+        """Return a constant preferred size so switching views never resizes the frame."""
+        return QSize(640, 500)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         """Initialize the MainWindow for IsotopeTrack application."""
@@ -280,6 +312,9 @@ class MainWindow(QMainWindow):
         self.peak_detector = PeakDetection()
         self.sample_method_info = {}
         self.sample_tuning_info = {}
+        self.sample_raw_spectrum = {}
+        self._raw_spectrum_missing = set()
+        self._view_fitted_samples = set()
         self.sample_to_folder_map = {}
         self.transport_rate_methods = calibration_registry.default_transport_labels()
 
@@ -520,6 +555,9 @@ class MainWindow(QMainWindow):
         self.sample_run_info = {}
         self.sample_method_info = {}
         self.sample_tuning_info = {}
+        self.sample_raw_spectrum = {}
+        self._raw_spectrum_missing = set()
+        self._view_fitted_samples = set()
 
         self.mass_fraction_service.reset()
 
@@ -1326,6 +1364,7 @@ class MainWindow(QMainWindow):
                 self._mz_pg_widget.setBackground(p.plot_bg)
                 if getattr(self, '_current_plot_mode', 'time') == 'mz':
                     self._update_mz_plot()
+            self._refresh_spectrum_view()
 
         if hasattr(self, 'progress_bar'):
             self.progress_bar.setStyleSheet(progress_bar_qss(p))
@@ -1444,8 +1483,13 @@ class MainWindow(QMainWindow):
         view_switch_layout.setContentsMargins(2, 2, 2, 2)
         view_switch_layout.setSpacing(2)
         self._view_btn_time = QPushButton("Time")
-        self._view_btn_mz = QPushButton("m/z")
-        for btn in (self._view_btn_time, self._view_btn_mz):
+        self._view_btn_mz = QPushButton("Count")
+        self._view_btn_mz.setToolTip("Mean counts of each selected isotope")
+        self._view_btn_spectrum = QPushButton("Spectrum")
+        self._view_btn_spectrum.setToolTip(
+            "Resolved mass spectrum from the instrument's raw snapshots, "
+            "with the integration window of the selected isotope")
+        for btn in (self._view_btn_time, self._view_btn_mz, self._view_btn_spectrum):
             btn.setCheckable(True)
             btn.setFixedHeight(24)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1453,6 +1497,7 @@ class MainWindow(QMainWindow):
         self._view_btn_time.setChecked(True)
         self._view_btn_time.clicked.connect(lambda: self.switch_plot_view('time'))
         self._view_btn_mz.clicked.connect(lambda: self.switch_plot_view('mz'))
+        self._view_btn_spectrum.clicked.connect(lambda: self.switch_plot_view('spectrum'))
         header.addWidget(self._view_switch, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.info_button = QPushButton()
@@ -1480,8 +1525,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(4)
 
-        from PySide6.QtWidgets import QStackedWidget
-        self._plot_stack = QStackedWidget()
+        self._plot_stack = PlotStack()
 
         self.plot_widget = EnhancedPlotWidget(self)
         self.plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding,
@@ -1499,6 +1543,12 @@ class MainWindow(QMainWindow):
                                          QSizePolicy.Policy.Expanding)
         self._mz_pg_widget.setMinimumHeight(400)
         self._plot_stack.addWidget(self._mz_pg_widget)
+
+        self._spec_plot = SpectrumPlotWidget(self)
+        self._spec_plot.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                      QSizePolicy.Policy.Expanding)
+        self._spec_plot.setMinimumHeight(400)
+        self._plot_stack.addWidget(self._spec_plot)
 
         layout.addWidget(self._plot_stack)
         wrapper_layout.addWidget(group_box)
@@ -3392,6 +3442,8 @@ class MainWindow(QMainWindow):
                     periodic_table_info=self.periodic_table_info
                 )
 
+        self._refresh_spectrum_view()
+
     def update_sample_table(self):
         """Update sample table with all loaded samples."""
         self.sample_table.setRowCount(0)
@@ -3531,6 +3583,7 @@ class MainWindow(QMainWindow):
                 ('sample_run_info', self.sample_run_info),
                 ('sample_method_info', self.sample_method_info),
                 ('sample_tuning_info', self.sample_tuning_info),
+                ('sample_raw_spectrum', self.sample_raw_spectrum),
                 ('saturation_filtered_peaks', self.saturation_filtered_peaks),
                 ('saturation_filtered_multi', self.saturation_filtered_multi),
                 ('saturation_windows', self.saturation_windows),
@@ -3552,6 +3605,7 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'detection_states'):
                 self.detection_states.pop(sample_name, None)
                 removed_count += 1
+            self._view_fitted_samples.discard(sample_name)
             if hasattr(self, 'sample_status'):
                 self.sample_status.pop(sample_name, None)
                 removed_count += 1
@@ -4681,6 +4735,9 @@ class MainWindow(QMainWindow):
                 except Exception:
                     _itk_log.exception("Handled exception in parameters_table_clicked")
 
+            if self.current_sample not in self._view_fitted_samples:
+                current_x_range = current_y_range = None
+
             element_item = self.parameters_table.item(row, 0)
             if element_item:
                 display_label = element_item.text()
@@ -4692,9 +4749,12 @@ class MainWindow(QMainWindow):
 
                     if hasattr(self, 'element_picker'):
                         self.element_picker.set_current_key(element_key, emit=False)
+                    self._refresh_spectrum_view()
 
                     isotope_key = self.find_closest_isotope(isotope)
                     if isotope_key is not None and isotope_key in self.data:
+                        if self.current_sample:
+                            self._view_fitted_samples.add(self.current_sample)
                         self.results_table.clear_rows()
 
                         signal = self.data[isotope_key]
@@ -4735,7 +4795,7 @@ class MainWindow(QMainWindow):
                                 self.time_array,
                                 signal,
                                 pen='b',
-                                name=f'Raw Signal {display_label}',
+                                name=f'Raw Signal {superscript_mass(display_label)}',
                                 antialias=False
                             )
 
@@ -4745,9 +4805,9 @@ class MainWindow(QMainWindow):
                                     self.plot_widget.setYRange(current_y_range[1], current_y_range[0], padding=0)
                                 except Exception:
                                     _itk_log.exception("Handled exception in parameters_table_clicked")
-                                    self.plot_widget.enableAutoRange()
+                                    self._fit_plot_view()
                             else:
-                                self.plot_widget.enableAutoRange()
+                                self._fit_plot_view()
 
                             try:
                                 self._rebuild_plot_exclusion_regions()
@@ -5791,7 +5851,7 @@ class MainWindow(QMainWindow):
             threshold_line = np.full_like(time_array, threshold)
 
         plot_data = [
-            (time_array, signal, STYLES['raw_signal'], f'Mass {display_label}'),
+            (time_array, signal, STYLES['raw_signal'], f'Mass {superscript_mass(display_label)}'),
             (time_array, background_line, STYLES['background'], 'Background Level'),
             (time_array, threshold_line, STYLES['threshold'], 'Detection Threshold'),
         ]
@@ -5975,9 +6035,9 @@ class MainWindow(QMainWindow):
                 self.plot_widget.setYRange(y_range[1], y_range[0], padding=0)
             except Exception as e:
                 self.logger.debug(f"Error restoring view range: {e}")
-                self.plot_widget.enableAutoRange()
+                self._fit_plot_view()
         else:
-            self.plot_widget.enableAutoRange()
+            self._fit_plot_view()
 
         try:
             self._rebuild_plot_exclusion_regions()
@@ -5989,6 +6049,115 @@ class MainWindow(QMainWindow):
                 self._update_mz_plot()
             except Exception as e:
                 self.logger.debug(f"Could not refresh m/z view: {e}")
+
+    def _raw_spectrum_for(self, sample_name):
+        """Return the resolved spectrum of a sample, reading its .raw files once.
+
+        Args:
+            sample_name (str): Sample name.
+
+        Returns:
+            dict | None: ``{'spectrum', 'n_snapshots'}``, or None when the
+            sample has no usable raw snapshots.
+        """
+        entry = self.sample_raw_spectrum.get(sample_name)
+        if entry is None and sample_name not in self._raw_spectrum_missing:
+            folder = self.sample_to_folder_map.get(sample_name)
+            entry = read_nu_raw_spectrum(folder)
+            if entry:
+                self.sample_raw_spectrum[sample_name] = entry
+            elif folder and Path(str(folder)).exists():
+                self._raw_spectrum_missing.add(sample_name)
+        return entry
+
+    def _fit_plot_view(self):
+        """Fit the time plot to its data now, not at the next repaint.
+
+        A plot redrawn straight after reads the fitted view instead of the
+        empty default range.
+        """
+        self.plot_widget.enableAutoRange()
+        self.plot_widget.getPlotItem().getViewBox().autoRange()
+
+    def _refresh_spectrum_view(self):
+        """Redraw the Spectrum view when it is shown, after the sample or element changed."""
+        if getattr(self, '_current_plot_mode', 'time') == 'spectrum':
+            try:
+                self._update_spectrum_plot()
+            except Exception as e:
+                self.logger.debug(f"Could not refresh spectrum view: {e}")
+
+    def _update_spectrum_plot(self):
+        """Show the resolved spectrum of the current sample, zoomed onto the selected isotope.
+
+        The isotope is the element selected in the main window, so choosing an
+        element or a sample changes the Spectrum view too. The peak check is
+        shown in a box inside the plot.
+        """
+        plot = self._spec_plot
+        sample = self.current_sample
+        entry = self._raw_spectrum_for(sample) if sample else None
+        run_info = self.sample_run_info.get(sample) if sample else None
+        if not entry or 'MassCalCoefficients' not in (run_info or {}):
+            plot.show_message(
+                "No resolved spectrum for this sample.\n\nIt needs the .raw snapshot files "
+                "written by Nu instruments.\nTOFWERK and CSV data do not have them.")
+            return
+
+        spectrum = np.asarray(entry['spectrum'], dtype=np.float64)
+        masses = spectrum_masses(run_info, len(spectrum))
+        single_ion_area = run_info.get('AverageSingleIonArea')
+        if single_ion_area and single_ion_area > 0:
+            plot.set_units('ions / bin')
+            intensity = spectrum / float(single_ion_area)
+        else:
+            plot.set_units('a.u.')
+            intensity = spectrum
+        plot.set_spectrum(sample, masses, intensity)
+
+        isotopes = [(el, iso) for el, isos in (self.selected_isotopes or {}).items() for iso in isos]
+        target = getattr(self, 'current_isotope', None)
+        if target is None or all(abs(iso - target) > 0.5 for _el, iso in isotopes):
+            target = isotopes[0][1] if isotopes else None
+        snapshots = ("Snapshots", f"{entry.get('n_snapshots', 0)} (≈1 per s)", False)
+        if target is None:
+            plot.set_isotope(None, [], [])
+            return
+        label = next((self.get_formatted_label(f"{el}-{iso:.4f}")
+                      for el, iso in isotopes if abs(iso - target) < 1e-6), None)
+
+        window = integration_window(run_info, target)
+        regions = []
+        if window:
+            regions = [(*window['window'], 'window'),
+                       (*window['baseline1'], 'baseline'),
+                       (*window['baseline2'], 'baseline')]
+        check = peak_check(masses, spectrum, target, window['window'] if window else None,
+                           single_ion_area=single_ion_area)
+
+        rows = [("Isotope", superscript_mass(label) if label else f"m/z {target:.3f}", False)]
+        if check is None:
+            rows.append(("Peak centre", "no peak in the snapshots", True))
+        else:
+            rows.append(("Peak centre", f"{check['centre']:.3f}", False))
+            if check['reliable']:
+                rows.append(("Peak width", f"{check['width'] * 1000:.0f} mDa", False))
+                rows.append(("Resolution", f"{check['resolution']:,.0f}", False))
+            else:
+                rows.append(("Peak width", "too few ions", False))
+                rows.append(("Resolution", "too few ions", False))
+        if window:
+            rows.append(("Integration window",
+                         f"{window['window'][0]:.2f} – {window['window'][1]:.2f}", False))
+        if check is not None:
+            if check['inside'] is True:
+                rows.append(("Peak in window", "yes", False))
+            elif check['inside'] is False:
+                rows.append(("Peak in window", "NO — check the window", True))
+            if check['ions'] is not None:
+                rows.append(("Ions in peak", f"{check['ions']:,.0f}", False))
+        rows.append(snapshots)
+        plot.set_isotope(target, regions, rows)
 
     def show_mass_spectrum_popup(self):
         """Open a floating window showing the mean signal intensity for every
@@ -6133,11 +6302,11 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def switch_plot_view(self, mode: str):
-        """Switch the main plot area between the time-domain trace ('time')
-        and the inline isotope bar chart ('mz').
+        """Switch the main plot area between the time-domain trace ('time'),
+        the isotope count bars ('mz') and the resolved spectrum ('spectrum').
 
         Args:
-            mode (str): 'time' or 'mz'
+            mode (str): 'time', 'mz' or 'spectrum'
         """
         self.user_action_logger.log_action(
             'CLICK', f'Switched plot view to {mode!r}',
@@ -6145,10 +6314,14 @@ class MainWindow(QMainWindow):
         self._current_plot_mode = mode
         self._view_btn_time.setChecked(mode == 'time')
         self._view_btn_mz.setChecked(mode == 'mz')
+        self._view_btn_spectrum.setChecked(mode == 'spectrum')
 
         if mode == 'mz':
             self._plot_stack.setCurrentIndex(1)
             self._update_mz_plot()
+        elif mode == 'spectrum':
+            self._plot_stack.setCurrentIndex(2)
+            self._update_spectrum_plot()
         else:
             self._plot_stack.setCurrentIndex(0)
 
@@ -6254,7 +6427,7 @@ class MainWindow(QMainWindow):
         tick_font.setBold(True)
 
         ax_bottom = pw.getAxis('bottom')
-        ax_bottom.setTicks([list(zip(x, labels))])
+        ax_bottom.setTicks([list(zip(x, [superscript_mass(lab) for lab in labels]))])
         ax_bottom.setStyle(tickFont=tick_font, tickTextOffset=8, tickLength=8)
         ax_bottom.setTextPen(p.plot_fg)
         ax_bottom.setPen(p.plot_fg)
@@ -6446,7 +6619,7 @@ class MainWindow(QMainWindow):
                                 time_section,
                                 view_section,
                                 pen=pg.mkPen(primary_color, width=1),
-                                name=f"{display_label} ({counts:.0f} counts)",
+                                name=f"{superscript_mass(display_label)} ({counts:.0f} counts)",
                                 antialias=False
                             )
 
@@ -6492,7 +6665,7 @@ class MainWindow(QMainWindow):
 
                                         snr = particle.get('SNR', peak_y / particle.get('threshold', 1))
                                         hover_info = (
-                                            f"Element: {display_label}\n"
+                                            f"Element: {superscript_mass(display_label)}\n"
                                             f"Peak Height: {peak_y:.0f} counts\n"
                                             f"SNR: {snr:.2f}\n"
                                             f"Background: {background_val:.1f} counts\n"
@@ -6628,7 +6801,7 @@ class MainWindow(QMainWindow):
             for label, data in sorted_elements:
                 info_lines.append(
                     f"<span style='color: {data['color']}; font-weight: bold;'>●</span> "
-                    f"<b>{label}:</b> {data['counts']:.0f} counts"
+                    f"<b>{superscript_mass(label)}:</b> {data['counts']:.0f} counts"
                 )
 
             info_text = "<br>".join(info_lines)
