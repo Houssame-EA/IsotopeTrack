@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QHeaderView, QTabWidget, QApplication, QListWidget,
 )
 from PySide6.QtCore import Qt, Signal, QObject, QRectF
-from PySide6.QtGui import QColor, QCursor, QLinearGradient, QBrush
+from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QLinearGradient, QBrush
 import pyqtgraph as pg
 import numpy as np
 import math
@@ -117,28 +117,75 @@ def make_jet_colormap():
 
 
 class InsetColorBarItem(pg.GraphicsWidget):
-    """Draws an inset legend-style colorbar inside the plot."""
-    def __init__(self, label_text, parent=None):
+    """Draws an inset legend-style colorbar inside the plot.
+
+    The box is as wide as its title, so a long title such as
+    ``log10 27Al (Element Moles (fmol))`` is never cut, and the values at
+    both ends of the colour scale are written under the bar.
+    """
+
+    TITLE_SIZE = 12
+    VALUE_SIZE = 9
+    PAD = 10
+    BAR_HEIGHT = 14
+    MIN_WIDTH = 180
+
+    def __init__(self, label_text, parent=None, vmin=None, vmax=None, log=True):
         super().__init__(parent)
         self.label_text = label_text
-        self.setMinimumSize(180, 50)
+        self.vmin, self.vmax, self.log = vmin, vmax, log
+        title = QFont()
+        title.setPointSize(self.TITLE_SIZE)
+        title.setBold(True)
+        self._title_font = title
+        value = QFont()
+        value.setPointSize(self.VALUE_SIZE)
+        self._value_font = value
+        text_w = QFontMetrics(title).horizontalAdvance(label_text)
+        self._w = max(self.MIN_WIDTH, text_w + 2 * self.PAD)
+        self._title_h = QFontMetrics(title).height() + 4
+        self._value_h = QFontMetrics(value).height() + 2 if self._has_values() else 0
+        self._h = self._title_h + self.BAR_HEIGHT + self._value_h + 6
+        self.setMinimumSize(self._w, self._h)
+        self.setMaximumSize(self._w, self._h)
         self.setZValue(100)
-        
+
+    def _has_values(self):
+        return (self.vmin is not None and self.vmax is not None
+                and np.isfinite(self.vmin) and np.isfinite(self.vmax))
+
+    def _value_text(self, v):
+        shown = 10 ** v if self.log else v
+        return f"{shown:.3g}"
+
+    def boxWidth(self):
+        """Width of the colour bar box, in pixels."""
+        return self._w
+
+    def boundingRect(self):
+        return QRectF(0, 0, self._w, self._h)
+
     def paint(self, p, opt, widget):
         p.setPen(pg.mkPen('k'))
-        font = p.font()
-        font.setPointSize(12)
-        font.setBold(True)
-        p.setFont(font)
-        p.drawText(QRectF(0, 0, 180, 25), Qt.AlignCenter, self.label_text)
-        
-        grad = QLinearGradient(10, 25, 170, 25)
+        p.setFont(self._title_font)
+        p.drawText(QRectF(0, 0, self._w, self._title_h), Qt.AlignCenter, self.label_text)
+
+        left, right = self.PAD, self._w - self.PAD
+        top = self._title_h
+        grad = QLinearGradient(left, top, right, top)
         for pos, color in zip(JET_POSITIONS, JET_COLORS):
             grad.setColorAt(pos, QColor(*color))
-            
         p.setBrush(QBrush(grad))
         p.setPen(pg.mkPen('k', width=1))
-        p.drawRect(10, 28, 160, 14)
+        p.drawRect(QRectF(left, top, right - left, self.BAR_HEIGHT))
+
+        if self._has_values():
+            p.setFont(self._value_font)
+            y = top + self.BAR_HEIGHT + 2
+            p.drawText(QRectF(left, y, (right - left) / 2, self._value_h),
+                       Qt.AlignLeft | Qt.AlignTop, self._value_text(self.vmin))
+            p.drawText(QRectF(left + (right - left) / 2, y, (right - left) / 2, self._value_h),
+                       Qt.AlignRight | Qt.AlignTop, self._value_text(self.vmax))
 
 
 def get_overall_mean_signal(parent_window, formatted_label: str) -> float | None:
@@ -2470,9 +2517,11 @@ class IsotopicRatioDisplayDialog(QDialog):
         The isotope ratio is always computed from counts (see
         :func:`with_counts`); X stays in the chosen quantity. The result also
         carries, as ``band``, each plotted particle's denominator counts and
-        mass-bias factor for the counting-statistics band.
+        mass-bias factor for the counting-statistics band, and its row in
+        *element_data* as ``rows``.
         """
         eff_cfg = get_sample_correction_config(cfg, sample_name)
+        element_data = element_data.reset_index(drop=True)
 
         e1 = cfg.get('element1', '')
         e2 = cfg.get('element2', '')
@@ -2547,6 +2596,7 @@ class IsotopicRatioDisplayDialog(QDialog):
             x = pd.to_numeric(df[e2], errors='coerce').astype(float).values
 
         den_counts = counts_of(df, e2).values
+        rows = df.index.to_numpy()
         with np.errstate(divide='ignore', invalid='ignore'):
             factors = np.where(measured > 0, ratios / measured, 1.0)
 
@@ -2570,6 +2620,7 @@ class IsotopicRatioDisplayDialog(QDialog):
         corrected_linear = corrected_linear[finite_mask]
         den_counts = den_counts[finite_mask]
         factors = factors[finite_mask]
+        rows = rows[finite_mask]
         if color_values is not None:
             color_values = color_values[finite_mask]
         if len(ratios) == 0:
@@ -2580,6 +2631,7 @@ class IsotopicRatioDisplayDialog(QDialog):
             x, ratios = x[mask], ratios[mask]
             corrected_linear = corrected_linear[mask]
             den_counts, factors = den_counts[mask], factors[mask]
+            rows = rows[mask]
             if color_values is not None:
                 color_values = color_values[mask]
             if len(x) == 0:
@@ -2594,6 +2646,7 @@ class IsotopicRatioDisplayDialog(QDialog):
             x, ratios = x[mask], ratios[mask]
             x_linear = x_linear[mask]
             den_counts, factors = den_counts[mask], factors[mask]
+            rows = rows[mask]
             if color_values is not None:
                 color_values = color_values[mask]
             corrected_linear = corrected_linear[mask]
@@ -2603,13 +2656,15 @@ class IsotopicRatioDisplayDialog(QDialog):
 
         result = PreparedSample((x, ratios, len(element_data), color_values, corrected_linear,
                                  mean_raw))
-        result.band = {'x': x_linear, 'counts': den_counts, 'factor': factors}
+        result.band = {'x': x_linear, 'counts': den_counts, 'factor': factors, 'rows': rows}
         return result
 
     def _build_csv_data(self) -> pd.DataFrame | None:
-        """Build a DataFrame of per-particle isotopic ratio data for CSV export."""
-        
-        
+        """Build a DataFrame of per-particle isotopic ratio data for CSV export.
+
+        One row per plotted particle: its corrected ratio, its X value and
+        every isotope of that same particle in the chosen quantity.
+        """
         plot_data = self.node.extract_plot_data()
         if not plot_data:
             return None
@@ -2618,57 +2673,44 @@ class IsotopicRatioDisplayDialog(QDialog):
         e1 = cfg.get('element1', '')
         e2 = cfg.get('element2', '')
         x_elem = cfg.get('x_axis_element', e2)
-        dk = DATA_KEY_MAPPING.get(cfg.get('data_type_display', 'Counts'), 'elements')
         dt = cfg.get('data_type_display', 'Counts')
 
-        rows = []
-
         if self._is_multi():
-            for sn, sd in plot_data.items():
-                if not sd or 'element_data' not in sd:
-                    continue
-                result = self._prepare_sample(sd['element_data'], cfg, sample_name=sn)
-                if result is None:
-                    continue
-                x, ratios, n_total, color_values, corrected_linear, mean_raw = result
-                
-                edf = sd['element_data']
-                meta_cols = [c for c in edf.columns if c.startswith('_')]
-                numeric_cols = [c for c in edf.columns if not c.startswith('_')]
-                
-                for i in range(len(corrected_linear)):
-                    row = {
-                        'Sample': get_display_name(sn, cfg),
-                        f'{e1}/{e2} (corrected)': corrected_linear[i],
-                        f'{x_elem} ({dt})': x[i] if not cfg.get('log_x') else 10**x[i],
-                    }
-                    if i < len(edf):
-                        for col in numeric_cols:
-                            row[f'{col} ({dt})'] = edf.iloc[i][col]
-                    rows.append(row)
+            samples = [(sn, sd['element_data'], sn) for sn, sd in plot_data.items()
+                       if sd and 'element_data' in sd]
         else:
             edf = plot_data.get('element_data')
             if edf is None:
                 return None
-            sample_key = "(Current Sample)" if cfg.get('per_sample_correction') else None
-            result = self._prepare_sample(edf, cfg, sample_name=sample_key)
-            if result is None:
-                return None
-            x, ratios, n_total, color_values, corrected_linear, mean_raw = result
-            
-            numeric_cols = [c for c in edf.columns if not c.startswith('_')]
-            
-            for i in range(len(corrected_linear)):
-                row = {
-                    f'{e1}/{e2} (corrected)': corrected_linear[i],
-                    f'{x_elem} ({dt})': x[i] if not cfg.get('log_x') else 10**x[i],
-                }
-                if i < len(edf):
-                    for col in numeric_cols:
-                        row[f'{col} ({dt})'] = edf.iloc[i][col]
-                rows.append(row)
+            key = "(Current Sample)" if cfg.get('per_sample_correction') else None
+            samples = [(None, edf, key)]
 
-        return pd.DataFrame(rows) if rows else None
+        frames = []
+        for name, edf, key in samples:
+            result = self._prepare_sample(edf, cfg, sample_name=key)
+            if result is None:
+                continue
+            corrected_linear = result[4]
+            band = getattr(result, 'band', {}) or {}
+            rows = band.get('rows')
+            x_linear = band.get('x')
+            if rows is None or x_linear is None:
+                continue
+            frame = pd.DataFrame(index=range(len(corrected_linear)))
+            if name is not None:
+                frame['Sample'] = get_display_name(name, cfg)
+            frame[f'{e1}/{e2} (corrected)'] = corrected_linear
+            frame[f'{x_elem} ({dt})'] = x_linear
+            table = edf.reset_index(drop=True)
+            numeric_cols = [c for c in table.columns if not str(c).startswith('_')]
+            values = table.iloc[rows][numeric_cols].reset_index(drop=True)
+            values.columns = [f'{c} ({dt})' for c in numeric_cols]
+            shared = [c for c in values.columns if c in frame.columns]
+            for col in shared:
+                frame[col] = values[col].to_numpy()
+            frames.append(pd.concat([frame, values.drop(columns=shared)], axis=1))
+
+        return pd.concat(frames, ignore_index=True) if frames else None
 
     def _correct_per_replicate(self, df, ratios, eff_cfg, e1, e2, sources):
         """Apply per-replicate exponential correction.
@@ -2890,12 +2932,12 @@ class IsotopicRatioDisplayDialog(QDialog):
         
         label_text = f"log10 {color_elem} ({dt})"
         
-        cbar = InsetColorBarItem(label_text)
+        cbar = InsetColorBarItem(label_text, vmin=vmin, vmax=vmax, log=True)
         cbar.setParentItem(pi.vb)
-        
+
         def update_pos():
             rect = pi.vb.boundingRect()
-            cbar.setPos(rect.width() - 190, 15)
+            cbar.setPos(max(0.0, rect.width() - cbar.boxWidth() - 10), 15)
             
         pi.vb.sigResized.connect(update_pos)
         update_pos()
