@@ -224,6 +224,29 @@ EXPLANATIONS: dict[str, Explanation] = {
             "composition if available."
         ),
     ),
+    "ratio_split": Explanation(
+        found=(
+            "For every pair of frequent elements, the ratio of their counts in particles also "
+            "carrying a third element was compared with the ratio in particles without it "
+            "(Mann–Whitney), and every test was corrected for false discovery. A split is "
+            "reported when the two medians are at least 1.5× apart and the gap is wider than "
+            "the spread inside each population; only the strongest third element is kept for "
+            "each pair."
+        ),
+        meaning=(
+            "Two ratios in one sample, sorted by a third element, point to two phases sharing "
+            "the two elements, such as talc and an Al-bearing clay that both carry Si and Mg. "
+            "A single mean over all particles then describes neither. In the plot, each "
+            "population has its own counting-statistics envelope; particles outside both are "
+            "worth a look."
+        ),
+        check=(
+            "The ratio is in counts, so compare it with a formula only after calibrating both "
+            "elements to moles. If the particles carrying the third element are much smaller, "
+            "it may go undetected in small particles of the same phase. Confirm the split in "
+            "each replicate before reading it as two phases."
+        ),
+    ),
     "correlation": Explanation(
         found=(
             "Rank correlation (Spearman) between two different elements in particles carrying "

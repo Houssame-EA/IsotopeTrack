@@ -14,6 +14,19 @@ from results.figure_builder.core.expressions import ExpressionError, evaluate, p
 from results.figure_builder.core.spec import PALETTE
 
 
+MISSING_COLOR = '#bdbdbd'
+"""Grey for particles the colour expression has no value for, such as an element not detected."""
+
+
+def _missing_label(panel, g, n: int, n_groups: int) -> str:
+    """Legend entry for a group's particles without a colour value."""
+    name = (panel.get('missing_label') or '').strip() or 'no value'
+    if n_groups > 1:
+        return f'{g.label} (n={n})' if not (panel.get('missing_label') or '').strip() \
+            else f'{g.label}, {name} (n={n})'
+    return f'{name.capitalize() if name.islower() else name} (n={n})'
+
+
 def draw_scatter(fig, ax, panel, table, report, style):
     """Scatter of X against Y with rules, colour/size scales, overlays and a right axis."""
     if not panel.get('x') or not panel.get('y'):
@@ -52,12 +65,24 @@ def draw_scatter(fig, ax, panel, table, report, style):
             norm = Normalize(vmin=float(ok.min()), vmax=float(ok.max()))
     for g in groups:
         m = g.mask & nz & finite_mask(x, y, log_flags=(log_x, log_y))
+        whole = m.copy()
+        keep_missing = cvals is not None and bool(panel.get('show_missing'))
         if cvals is not None:
+            missing = m & ~np.isfinite(cvals)
+            if keep_missing and missing.any():
+                ms = sizes[missing] if sizes is not None else size
+                ax.scatter(x[missing], y[missing], color=panel.get('missing_color') or MISSING_COLOR,
+                           s=ms, alpha=alpha, marker=marker, rasterized=True, zorder=1.5,
+                           label=_missing_label(panel, g, int(missing.sum()), len(groups)), **edge)
+                total += int(missing.sum())
             m &= np.isfinite(cvals)
         if not m.any():
+            if keep_missing and whole.any():
+                drawn.append((g, x[whole], y[whole]))
             continue
         total += int(m.sum())
-        drawn.append((g, x[m], y[m]))
+        band = whole if keep_missing else m
+        drawn.append((g, x[band], y[band]))
         hover = handles(report, panel).setdefault('points', [])
         hover.append({'x': x[m], 'y': y[m], 'index': np.flatnonzero(m), 'group': g.label,
                       'color': g.color})

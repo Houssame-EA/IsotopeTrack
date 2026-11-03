@@ -272,6 +272,9 @@ FIELDS = [
     ('Style', 'Around the groups', 'marg_top_label', 'Top edge title', 'text', {'scatter'}, 'automatic'),
     ('Style', 'Around the groups', 'marg_right_label', 'Right edge title', 'text', {'scatter'}, 'automatic'),
     ('Style', 'Colour scale', 'color_by', 'Colour by value', 'expr', {'scatter', 'ternary'}, 'optional, e.g. total'),
+    ('Style', 'Colour scale', 'show_missing', 'Show particles without a value', 'check', {'scatter'}, None),
+    ('Style', 'Colour scale', 'missing_color', 'Their colour', 'color', {'scatter'}, None),
+    ('Style', 'Colour scale', 'missing_label', 'Their legend name', 'text', {'scatter'}, 'e.g. no 27Al'),
     ('Style', 'Colour scale', 'colormap', 'Colour map', 'combo',
      {'scatter', 'density', 'heatmap', 'cooccurrence', 'hexbin', 'ternary'},
      {k: k for k in S.COLORMAPS}),
@@ -812,7 +815,7 @@ class PanelEditor(QWidget):
         self.panel[key] = value
         if key in ('kind', 'group_by', 'test', 'pie_mode', 'rules', 'y', 'heat_rows', 'heat_sort',
                    'heat_search', 'show_fit', 'fit_lines', 'trend',
-                   'share_mode', 'facet', 'bin_mode', 'donut', 'color_by', 'agg', 'stat_band',
+                   'share_mode', 'facet', 'bin_mode', 'donut', 'color_by', 'show_missing', 'agg', 'stat_band',
                    'natural_line', 'dl_value', 'marginals'):
             if key == 'kind' and value == 'code' and not (self.panel.get('code') or '').strip():
                 self.panel['code'] = E.CODE_EXAMPLE
@@ -914,6 +917,11 @@ class PanelEditor(QWidget):
             return kind == 'heatmap' and p.get('heat_rows') != 'particles'
         if key in ('c_min', 'c_max') and kind in ('scatter', 'ternary'):
             return bool((p.get('color_by') or '').strip())
+        if key == 'show_missing':
+            return kind == 'scatter' and bool((p.get('color_by') or '').strip())
+        if key in ('missing_color', 'missing_label'):
+            return (kind == 'scatter' and bool((p.get('color_by') or '').strip())
+                    and bool(p.get('show_missing')))
         if key == 'agg' and kind == 'line':
             return bool((p.get('y') or '').strip())
         if key.startswith('cbar_') and key != 'cbar_label' and kind == 'scatter':

@@ -39,6 +39,7 @@ from scipy import stats as _stats
 from PySide6.QtCore import QThread, Signal
 
 from results.insights import discovery as _disc
+from results.insights import robustness as _robustness
 from results.insights.replicates import (
     ReplicateGroup, describe_grouping, resolve_groups, user_group_map,
 )
@@ -62,6 +63,7 @@ _CAT_META: dict[str, dict] = {
     "interference": {"icon": "⚡", "label": "Interference"},
     "stoichiometry": {"icon": "⚖", "label": "Stoichiometry"},
     "cooccurrence": {"icon": "⊕", "label": "Co-occurrence"},
+    "ratio_split":  {"icon": "⇅", "label": "Ratio split"},
     "rare":         {"icon": "✧", "label": "Rare find"},
     "quality":      {"icon": "⚠", "label": "Data quality"},
     "time":         {"icon": "⏱", "label": "Time"},
@@ -234,7 +236,10 @@ class Suggestion:
             shown in the card's details section.
         facts: Numbers behind the finding in machine-readable form, for the
             explained figure, such as ``{"ratio_cut": ("208Pb", 45.0)}``
-            for the signal cut an isotope ratio was measured above.
+            for the signal cut an isotope ratio was measured above.        evidence: How well the finding holds up, measured after the detector
+            ran (see :mod:`results.insights.robustness`): its effect, evidence,
+            per-replicate checks and chance coincidence. ``None`` for kinds of
+            finding that are not measured.
     """
 
     title: str
@@ -249,6 +254,7 @@ class Suggestion:
     explain_key: str = ""
     details: list = field(default_factory=list)
     facts: dict = field(default_factory=dict)
+    evidence: object = None
 
     @property
     def confidence_label(self) -> str:
@@ -2310,6 +2316,7 @@ _REGISTRY = (
     ("time", _disc.analyse_time, "across", {"figure_builder"}),
     ("stoichiometry", _disc.analyse_stoichiometry, "within",
      {"molar_ratio_plot", "correlation_plot"}),
+    ("ratio_split", _disc.analyse_ratio_split, "within", {"figure_builder"}),
     ("cooccurrence", _disc.analyse_cooccurrence, "within", {"heatmap_plot"}),
     ("rare", _disc.analyse_rare, "within", {"heatmap_plot"}),
     ("quality", _disc.analyse_detection_limit, "within", {"histogram_plot"}),
@@ -2481,11 +2488,15 @@ def _run_detector(ctx: AnalysisContext, analyser: InsightCategory, progress=None
         progress: Optional callable receiving status strings.
         should_stop: Optional callable returning ``True`` to abandon the run.
 
+    Every finding is then checked against each replicate and for chance
+    coincidence (:func:`results.insights.robustness.attach`), which can lower
+    its ranking score.
+
     Returns:
         The detector's suggestions, each carrying its samples.
     """
     if analyser.kind != "within":
-        return _about_focus(ctx, list(analyser.run(ctx, progress)))
+        return _robustness.attach(ctx, _about_focus(ctx, list(analyser.run(ctx, progress))))
     units = _within_units(ctx)
     items = []
     for sub, group in units:
@@ -2494,8 +2505,9 @@ def _run_detector(ctx: AnalysisContext, analyser: InsightCategory, progress=None
         for s in analyser.run(sub, progress):
             items.append((s, group))
     if all(group is None for _s, group in items):
-        return _about_focus(ctx, [s for s, _g in items])
-    return _about_focus(ctx, _disc.merge_group_findings(items, ctx.sample_names, len(units)))
+        return _robustness.attach(ctx, _about_focus(ctx, [s for s, _g in items]))
+    merged = _disc.merge_group_findings(items, ctx.sample_names, len(units))
+    return _robustness.attach(ctx, _about_focus(ctx, merged))
 
 
 def focused(ctx: AnalysisContext, symbol: str) -> AnalysisContext:

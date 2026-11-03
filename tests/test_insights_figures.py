@@ -104,6 +104,7 @@ ELEMENTS = {
     "isotope_track": ("206Pb", "207Pb", "56Fe"), "isotope_groups": ("206Pb", "207Pb"),
     "comparison": ("56Fe",), "replicate_flag": ("56Fe", "48Ti"), "replicate_agree": ("56Fe",),
     "signature": ("140Ce",), "stoichiometry": ("56Fe", "48Ti"),
+    "ratio_split": ("56Fe", "48Ti", "140Ce"),
     "correlation": ("56Fe", "140Ce"), "cooccurrence_with": ("156Gd", "140Ce"),
     "cooccurrence_avoid": ("56Fe", "140Ce"), "rare": ("156Gd", "140Ce"), "quality": ("56Fe",),
     "distribution_two": ("56Fe",), "distribution_spread": ("56Fe",), "size": (),
