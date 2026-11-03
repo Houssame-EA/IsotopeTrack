@@ -12,6 +12,7 @@ import math
 from scipy.stats import gaussian_kde
 
 from results.shared_plot_utils import (
+    equalize_panels,
     DEFAULT_SAMPLE_COLORS, make_qfont,
     apply_font_to_pyqtgraph, set_axis_labels, FontSettingsGroup, get_display_name,
     download_pyqtgraph_figure, copy_figure_to_clipboard, format_element_label, LABEL_MODES,
@@ -1384,8 +1385,10 @@ class MolarRatioDisplayDialog(QDialog):
                 cfg['display_mode'] = mode
                 if mode == 'Individual Subplots':
                     self._draw_subplots(plot_data, cfg)
+                    equalize_panels(self.plot_widget, fit_y=cfg.get('auto_y', True))
                 elif mode == 'Side by Side Subplots':
                     self._draw_side_by_side(plot_data, cfg)
+                    equalize_panels(self.plot_widget, fit_y=cfg.get('auto_y', True))
                 else:
                     cuts = _get_broken_cuts(cfg)
 

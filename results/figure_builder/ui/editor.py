@@ -71,6 +71,7 @@ from results.figure_builder.charts.matrices import (
 from results.figure_builder.charts.more import LOLLI_STATS, SHARE_MODES, TIME_MODES
 from results.figure_builder.charts.network import NODE_SIZES, PCA_TRANSFORMS
 from results.figure_builder.charts.special import TERNARY_FILTERS
+from results.figure_builder.core import massbias as MB
 from results.figure_builder.charts.xy import FIT_LINES
 from results.figure_builder.charts.overlays import (
     ELLIPSES, INSET_LOCS, MARGINAL_UNITS, MARGINALS, TRENDS)
@@ -156,6 +157,10 @@ ANNOTATION_COLUMNS = [
     ('italic', 'Italic', 'check', None, 40),
     ('box', 'Box', 'check', None, 40),
 ]
+
+MASS_BIAS = {'scatter', 'histogram', 'box', 'violin', 'strip', 'bar', 'line', 'ecdf', 'ridgeline',
+             'lollipop'}
+"""Panel kinds whose isotope ratios can be mass-bias corrected."""
 
 FIELDS = [
     ('Data', 'Chart', 'kind', 'Chart type', 'combo', ALL, E.PANEL_KINDS),
@@ -431,6 +436,16 @@ FIELDS = [
     ('Stats', 'Fit', 'fit_band', '95% confidence band', 'check', {'scatter'}, None),
     ('Stats', 'Fit', 'sd_band', 'Fit ± SD of the residuals', 'check', {'scatter'}, None),
     ('Stats', 'Fit', 'show_r', "Show the line's equation", 'check', {'scatter'}, None),
+    ('Stats', 'Mass-bias correction', 'mb_method', 'Correction', 'combo', MASS_BIAS, MB.METHODS),
+    ('Stats', 'Mass-bias correction', 'mb_source', 'Reference', 'combo', MASS_BIAS, MB.SOURCES),
+    ('Stats', 'Mass-bias correction', 'mb_ref', 'Reference pair', 'text', MASS_BIAS,
+     'e.g. 205Tl / 203Tl'),
+    ('Stats', 'Mass-bias correction', 'mb_certified', 'Certified ratio', 'text', MASS_BIAS,
+     'e.g. 2.3871'),
+    ('Stats', 'Mass-bias correction', 'mb_measured_mode', 'Measured ratio from', 'combo', MASS_BIAS,
+     MB.MEASURED),
+    ('Stats', 'Mass-bias correction', 'mb_measured', 'Measured value', 'text', MASS_BIAS,
+     'typed value, also used where a sample has none'),
     ('Stats', 'Isotope ratios', 'poisson_band', 'Counting-statistics band (± kσ, 0 = off)', 'float',
      {'scatter'}, (0, 5, 0.5)),
     ('Stats', 'Isotope ratios', 'natural_line', 'Natural abundance ratio line', 'check', {'scatter'}, None),
@@ -816,6 +831,7 @@ class PanelEditor(QWidget):
         if key in ('kind', 'group_by', 'test', 'pie_mode', 'rules', 'y', 'heat_rows', 'heat_sort',
                    'heat_search', 'show_fit', 'fit_lines', 'trend',
                    'share_mode', 'facet', 'bin_mode', 'donut', 'color_by', 'show_missing', 'agg', 'stat_band',
+                   'mb_method', 'mb_source',
                    'natural_line', 'dl_value', 'marginals'):
             if key == 'kind' and value == 'code' and not (self.panel.get('code') or '').strip():
                 self.panel['code'] = E.CODE_EXAMPLE
@@ -915,6 +931,12 @@ class PanelEditor(QWidget):
                     and bool((p.get('heat_search') or '').strip()))
         if key == 'heat_spread':
             return kind == 'heatmap' and p.get('heat_rows') != 'particles'
+        if key.startswith('mb_') and key != 'mb_method':
+            if kind not in MASS_BIAS or p.get('mb_method', 'none') == 'none':
+                return False
+            if key in ('mb_ref', 'mb_certified'):
+                return p.get('mb_source', 'manual') == 'manual'
+            return True
         if key in ('c_min', 'c_max') and kind in ('scatter', 'ternary'):
             return bool((p.get('color_by') or '').strip())
         if key == 'show_missing':

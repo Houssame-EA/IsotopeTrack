@@ -160,6 +160,9 @@ class ParticleTable:
         sample_order: Sample names in the order the upstream node lists them.
         class_order: Classifier bucket labels in registry order.
         class_colors: Classifier bucket colours chosen by the user.
+        variables: User-defined variables, name to expression.
+        factors: Per-particle mass-bias factor columns installed by
+            :func:`results.figure_builder.core.massbias.prepare`, name to array.
     """
 
     particles: list
@@ -169,6 +172,7 @@ class ParticleTable:
     class_order: list = field(default_factory=list)
     class_colors: dict = field(default_factory=dict)
     variables: dict = field(default_factory=dict)
+    factors: dict = field(default_factory=dict)
     _cache: dict = field(default_factory=dict, repr=False)
     _busy: set = field(default_factory=set, repr=False)
 
@@ -304,6 +308,8 @@ class ParticleTable:
 
     def column(self, name: str) -> np.ndarray:
         """Return a column by its canonical name (see :meth:`names`)."""
+        if name in self.factors:
+            return self.factors[name]
         if name != 'total' and name in self._cache:
             return self._cache[name]
         if name == 'total' and ('total', self.default_prefix) in self._cache:
@@ -393,6 +399,7 @@ class ParticleTable:
             out.extend(f'{prefix}:{b}' for b in base)
         out.extend(SPECIAL_NAMES)
         out.extend(self.variables)
+        out.extend(self.factors)
         return out
 
     def samples(self) -> list[str]:
@@ -682,6 +689,10 @@ def pretty(expr: str, table: ParticleTable, style: str = 'isotope', with_unit: b
     text = (expr or '').strip()
     if not text:
         return ''
+    from results.figure_builder.core.massbias import CORRECTED
+    corrected = CORRECTED.match(text)
+    if corrected and corrected.group(2) in table.factors:
+        return f'{pretty(corrected.group(1), table, style, with_unit)} (corrected)'
     names = table.names()
     code, mapping = _substitute(text, names)
     single = re.fullmatch(r'_v\d+', code.strip())

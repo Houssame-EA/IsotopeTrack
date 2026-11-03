@@ -4107,3 +4107,92 @@ def build_quick_toggles_menu(parent_menu, cfg: dict,
             a.setChecked(cfg.get('shade_type', 'None') == st)
 
     return tm
+
+def equalize_panels(plot_widget, min_size: int = 80, fit_y: bool = False) -> None:
+    """Give every plot panel of a grid the same data-area width and height.
+
+    A ``GraphicsLayoutWidget`` shares its space out from each panel's own
+    preferred size, and the first panel of a row carries the Y-axis tick
+    values while the others hide them, so panels drawn side by side come out
+    with different data areas. This sets equal stretch on every row and
+    column that holds a plot, the same preferred and minimum size on every
+    plot, and the widest left-axis width and tallest bottom-axis height on
+    all of them, so the data areas match. It runs now and again once the
+    event loop has drawn the tick labels, when their final widths are known.
+    Colour bars and other items in the layout are left as they are.
+
+    Panels whose Y axes are linked share whichever range was set last, which
+    is the last panel's own data, so the others can be cut off. With *fit_y*,
+    linked panels are given one range covering the data of all of them.
+
+    Args:
+        plot_widget: The ``pg.GraphicsLayoutWidget`` holding the panels.
+        min_size: Smallest width and height, in pixels, a panel may shrink to.
+        fit_y: Fit the linked Y range to every linked panel; pass the node's
+            automatic Y range setting so a range typed by the user is kept.
+    """
+    from PySide6.QtCore import QTimer
+
+    def apply():
+        try:
+            ci = plot_widget.ci
+            layout = ci.layout
+        except RuntimeError:
+            return
+        plots = [(item, cells) for item, cells in ci.items.items() if isinstance(item, pg.PlotItem)]
+        if len(plots) < 2:
+            return
+        rows = sorted({r for _item, cells in plots for r, _c in cells})
+        cols = sorted({c for _item, cells in plots for _r, c in cells})
+        for c in cols:
+            layout.setColumnStretchFactor(c, 1)
+        for r in rows:
+            layout.setRowStretchFactor(r, 1)
+        left = [item.getAxis('left') for item, _cells in plots if item.getAxis('left').isVisible()]
+        bottom = [item.getAxis('bottom') for item, _cells in plots
+                  if item.getAxis('bottom').isVisible()]
+        if left:
+            width = max(axis.width() for axis in left)
+            for axis in left:
+                axis.setWidth(width)
+        if bottom:
+            height = max(axis.height() for axis in bottom)
+            for axis in bottom:
+                axis.setHeight(height)
+        for item, _cells in plots:
+            item.setPreferredWidth(min_size)
+            item.setMinimumWidth(min_size)
+            item.setPreferredHeight(min_size)
+            item.setMinimumHeight(min_size)
+        layout.invalidate()
+        if fit_y:
+            _fit_linked_y([item for item, _cells in plots])
+
+    apply()
+    QTimer.singleShot(0, apply)
+
+
+def _fit_linked_y(plots) -> None:
+    """Give Y-linked panels one range that covers the data of every one of them."""
+    views = [p.getViewBox() for p in plots]
+    linked = [v for v in views
+              if v.linkedView(pg.ViewBox.YAxis) is not None
+              or any(o.linkedView(pg.ViewBox.YAxis) is v for o in views)]
+    if len(linked) < 2:
+        return
+    lows, highs = [], []
+    for v in linked:
+        bounds = v.childrenBounds()[1]
+        if bounds is None:
+            continue
+        lo, hi = bounds
+        if np.isfinite(lo) and np.isfinite(hi):
+            lows.append(lo)
+            highs.append(hi)
+    if not lows:
+        return
+    lo, hi = min(lows), max(highs)
+    if hi <= lo:
+        return
+    for v in linked:
+        v.setYRange(lo, hi, padding=0.05)

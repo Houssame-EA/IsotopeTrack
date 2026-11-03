@@ -486,13 +486,14 @@ def test_new_panels_join_the_stories_when_the_data_allows(app, stream):
     assert render_problems(spec, table) == []
 
 
-def test_counting_band_only_on_ratio_against_its_denominator():
-    """The ±2σ band needs Y = isotope ratio in counts and X = the denominator's counts."""
+def test_counting_band_needs_an_isotope_ratio_of_counts_on_y():
+    """The ±2σ band needs Y = isotope ratio in counts; X can be anything."""
     from results.figure_builder.charts.overlays import counting_band_fits
     assert counting_band_fits({"x": "206Pb", "y": "207Pb / 206Pb"})
     assert counting_band_fits({"x": "counts:206Pb", "y": "counts:207Pb/counts:206Pb"})
+    assert counting_band_fits({"x": "56Fe", "y": "207Pb / 206Pb"})
+    assert counting_band_fits({"x": "mass:206Pb", "y": "207Pb / 206Pb"})
     assert not counting_band_fits({"x": "206Pb", "y": "207Pb"})
-    assert not counting_band_fits({"x": "56Fe", "y": "207Pb / 206Pb"})
     assert not counting_band_fits({"x": "206Pb", "y": "mass:207Pb / mass:206Pb"})
 
 

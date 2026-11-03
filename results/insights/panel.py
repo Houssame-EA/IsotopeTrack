@@ -721,15 +721,14 @@ class _Card(QFrame):
         QTimer.singleShot(1400, restore)
 
 
-EXPONENTIAL_LAW = "Exponential Law (instrumental mass fractionation)"
-"""The Isotopic Ratio node's name for the exponential-law mass-bias correction."""
+from results.figure_builder.core.massbias import EXPONENTIAL_LAW
 
 
 def mass_bias_reference(scene) -> dict | None:
     """The exponential-law reference set up in an Isotopic Ratio node on the canvas.
 
-    The first node whose correction is the exponential law with a complete
-    reference (two isotopes, a certified and a measured ratio) is used.
+    See :func:`results.figure_builder.core.massbias.node_reference`, which
+    Figure Builder panels use too.
 
     Args:
         scene: The canvas scene.
@@ -738,23 +737,8 @@ def mass_bias_reference(scene) -> dict | None:
         ``{ref_num, ref_den, certified, measured}``, or ``None`` when no node
         has one.
     """
-    for node in getattr(scene, "workflow_nodes", []) or []:
-        if getattr(node, "node_type", "") != "isotopic_ratio_plot":
-            continue
-        cfg = getattr(node, "config", None) or {}
-        if cfg.get("correction_method") != EXPONENTIAL_LAW:
-            continue
-        ref = {"ref_num": str(cfg.get("ref_isotope_num") or ""),
-               "ref_den": str(cfg.get("ref_isotope_den") or "")}
-        try:
-            ref["certified"] = float(cfg.get("ref_certified_ratio"))
-            ref["measured"] = float(cfg.get("ref_measured_ratio"))
-        except (TypeError, ValueError):
-            continue
-        if ref["ref_num"] and ref["ref_den"] and ref["certified"] > 0 and ref["measured"] > 0 \
-                and abs(ref["certified"] - ref["measured"]) > 1e-12:
-            return ref
-    return None
+    from results.figure_builder.core.massbias import node_reference
+    return node_reference(scene)
 
 
 OWN_SELECTOR_CATEGORIES = frozenset({"replicate", "time"})

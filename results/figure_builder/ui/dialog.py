@@ -103,6 +103,8 @@ class FigureBuilderNode(QObject):
         if window is not None:
             from results.figure_builder.core.limits import attach_limits
             attach_limits(table, window)
+        from results.figure_builder.core.massbias import attach
+        attach(table, window, getattr(self, 'scene_ref', None))
         return table
 
     @property

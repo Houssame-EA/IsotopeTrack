@@ -79,10 +79,12 @@ def draw_scatter(fig, ax, panel, table, report, style):
         if not m.any():
             if keep_missing and whole.any():
                 drawn.append((g, x[whole], y[whole]))
+                handles(report, panel).setdefault('band_index', {})[g.key] = np.flatnonzero(whole)
             continue
         total += int(m.sum())
         band = whole if keep_missing else m
         drawn.append((g, x[band], y[band]))
+        handles(report, panel).setdefault('band_index', {})[g.key] = np.flatnonzero(band)
         hover = handles(report, panel).setdefault('points', [])
         hover.append({'x': x[m], 'y': y[m], 'index': np.flatnonzero(m), 'group': g.label,
                       'color': g.color})

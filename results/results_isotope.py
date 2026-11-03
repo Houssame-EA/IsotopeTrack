@@ -15,7 +15,7 @@ import pandas as pd
 
 from results.utils_sort import extract_mass_and_element
 
-from results.shared_plot_utils import copy_figure_to_clipboard
+from results.shared_plot_utils import copy_figure_to_clipboard, equalize_panels
 from results.shared_plot_utils import (
     FONT_FAMILIES, FontSettingsGroup, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING, apply_font_to_pyqtgraph,
     LABEL_MODES, format_element_label, Renderer, apply_saturation_filter,
@@ -432,6 +432,51 @@ def ratio_mode(ratios, log: bool = False) -> float | None:
     except (np.linalg.LinAlgError, ValueError):
         return float(np.median(r))
     return float(10 ** peak) if log else peak
+
+
+COUNTS_PREFIX = '_counts_'
+"""Start of the column holding an isotope's counts next to the plotted quantity."""
+
+
+def with_counts(df: pd.DataFrame, particles: list, data_key: str) -> pd.DataFrame:
+    """Add each isotope's counts to a particle table built in another quantity.
+
+    An isotope ratio is a ratio of counted ions. In mass or moles each isotope
+    is converted with its own calibration slope, which already holds that
+    isotope's abundance in the standard, so a ratio of converted isotopes is
+    the measured ratio divided by the standard's. The counts are kept as
+    ``_counts_<label>`` columns so ratios, the mass-bias reference and the
+    counting-statistics band are computed from them while X stays in the
+    chosen quantity.
+    """
+    counts = build_element_matrix(particles, 'elements') if data_key != 'elements' else df
+    if counts is None or len(counts) != len(df):
+        return df
+    out = df.copy()
+    for col in counts.columns:
+        if str(col).startswith('_'):
+            continue
+        out[f'{COUNTS_PREFIX}{col}'] = pd.to_numeric(counts[col], errors='coerce').values
+    return out
+
+
+def counts_of(df: pd.DataFrame, label: str) -> pd.Series:
+    """An isotope's counts in a particle table: its ``_counts_`` column, or the column itself."""
+    col = f'{COUNTS_PREFIX}{label}'
+    source = df[col] if col in df.columns else df[label]
+    return pd.to_numeric(source, errors='coerce').astype(float)
+
+
+class PreparedSample(tuple):
+    """What :meth:`IsotopicRatioDisplayDialog._prepare_sample` returns, plus the band data.
+
+    Unpacks as ``(x, ratios, n_total, color_values, corrected_linear,
+    mean_raw)``. ``band`` holds what the counting-statistics band needs:
+    ``x`` in linear units, each particle's denominator ``counts`` and its
+    mass-bias ``factor``, aligned with the plotted points.
+    """
+
+    band: dict = {}
 
 
 def poisson_ratio_sigma(R: float, lambda_B: np.ndarray) -> np.ndarray:
@@ -2349,8 +2394,10 @@ class IsotopicRatioDisplayDialog(QDialog):
             mode = cfg.get('display_mode', DISPLAY_MODES[0])
             if mode == 'Individual Subplots':
                 self._draw_subplots(plot_data, cfg)
+                equalize_panels(self.plot_widget, fit_y=cfg.get('auto_y', True))
             elif mode == 'Side by Side Subplots':
                 self._draw_side_by_side(plot_data, cfg)
+                equalize_panels(self.plot_widget, fit_y=cfg.get('auto_y', True))
             else:
                 pi = self.plot_widget.addPlot(row=0, col=0)
                 self._draw_combined(pi, plot_data, cfg)
@@ -2419,6 +2466,11 @@ class IsotopicRatioDisplayDialog(QDialog):
         legacy ``filter_zeros`` config values: rows are skipped when numerator,
         denominator, x-values, or computed ratios are missing, non-finite, or
         nonpositive where required for ratio/log usage.
+
+        The isotope ratio is always computed from counts (see
+        :func:`with_counts`); X stays in the chosen quantity. The result also
+        carries, as ``band``, each plotted particle's denominator counts and
+        mass-bias factor for the counting-statistics band.
         """
         eff_cfg = get_sample_correction_config(cfg, sample_name)
 
@@ -2432,7 +2484,8 @@ class IsotopicRatioDisplayDialog(QDialog):
         if e1 not in element_data.columns or e2 not in element_data.columns:
             return None
 
-        meta_cols = [c for c in ['_source_sample', '_original_sample'] if c in element_data.columns]
+        meta_cols = [c for c in element_data.columns
+                     if c in ('_source_sample', '_original_sample') or str(c).startswith(COUNTS_PREFIX)]
         meta_data = element_data[meta_cols]
         numeric_data = element_data.drop(columns=meta_cols)
 
@@ -2443,38 +2496,38 @@ class IsotopicRatioDisplayDialog(QDialog):
         for col in meta_cols:
             df[col] = meta_data[col]
 
-        num = pd.to_numeric(df[e1], errors='coerce').astype(float)
-        den = pd.to_numeric(df[e2], errors='coerce').astype(float)
+        num = counts_of(df, e1)
+        den = counts_of(df, e2)
         valid_inputs = np.isfinite(num.values) & np.isfinite(den.values) & (num.values > 0) & (den.values > 0)
         df = df.loc[valid_inputs].copy()
 
         if len(df) == 0:
             return None
 
-        ratios = (pd.to_numeric(df[e1], errors='coerce').astype(float) /
-                  pd.to_numeric(df[e2], errors='coerce').astype(float)).values
+        def count_ratio(frame):
+            return (counts_of(frame, e1) / counts_of(frame, e2)).values
+
+        ratios = count_ratio(df)
 
         if cfg.get('filter_outliers', False):
             ratios = apply_outlier_filter(ratios[np.isfinite(ratios)], cfg)
             if len(ratios) == 0:
                 return None
             pct = float(cfg.get('outlier_percentile', 99.0))
-            raw_ratio = (pd.to_numeric(df[e1], errors='coerce').astype(float) /
-                         pd.to_numeric(df[e2], errors='coerce').astype(float)).values
+            raw_ratio = count_ratio(df)
             raw_ratio = raw_ratio[np.isfinite(raw_ratio)]
             if raw_ratio.size == 0:
                 return None
             lo, hi = np.percentile(raw_ratio,
                                    [100.0 - pct, pct])
-            ratio_raw = (pd.to_numeric(df[e1], errors='coerce').astype(float) /
-                         pd.to_numeric(df[e2], errors='coerce').astype(float)).values
+            ratio_raw = count_ratio(df)
             keep = (ratio_raw >= lo) & (ratio_raw <= hi)
             df = df[keep]
             if len(df) == 0:
                 return None
-            ratios = (pd.to_numeric(df[e1], errors='coerce').astype(float) /
-                      pd.to_numeric(df[e2], errors='coerce').astype(float)).values
+            ratios = count_ratio(df)
 
+        measured = ratios.copy()
         method = eff_cfg.get('correction_method', 'None')
         corr_col = '_original_sample' if '_original_sample' in df.columns else '_source_sample'
         if method != 'None' and corr_col in df.columns:
@@ -2493,9 +2546,12 @@ class IsotopicRatioDisplayDialog(QDialog):
         else:
             x = pd.to_numeric(df[e2], errors='coerce').astype(float).values
 
+        den_counts = counts_of(df, e2).values
+        with np.errstate(divide='ignore', invalid='ignore'):
+            factors = np.where(measured > 0, ratios / measured, 1.0)
+
         corrected_linear = ratios.copy()
-        raw_linear = (pd.to_numeric(df[e1], errors='coerce').astype(float) /
-                      pd.to_numeric(df[e2], errors='coerce').astype(float)).values
+        raw_linear = count_ratio(df)
         raw_linear = raw_linear[np.isfinite(raw_linear) & (raw_linear > 0)]
         if raw_linear.size == 0:
             return None
@@ -2512,6 +2568,8 @@ class IsotopicRatioDisplayDialog(QDialog):
         x = x[finite_mask]
         ratios = ratios[finite_mask]
         corrected_linear = corrected_linear[finite_mask]
+        den_counts = den_counts[finite_mask]
+        factors = factors[finite_mask]
         if color_values is not None:
             color_values = color_values[finite_mask]
         if len(ratios) == 0:
@@ -2520,15 +2578,22 @@ class IsotopicRatioDisplayDialog(QDialog):
         if cfg.get('log_x', False):
             mask = x > 0
             x, ratios = x[mask], ratios[mask]
+            corrected_linear = corrected_linear[mask]
+            den_counts, factors = den_counts[mask], factors[mask]
             if color_values is not None:
                 color_values = color_values[mask]
             if len(x) == 0:
                 return None
+            x_linear = x.copy()
             x = np.log10(x)
+        else:
+            x_linear = x.copy()
 
         if cfg.get('log_y', False):
             mask = ratios > 0
             x, ratios = x[mask], ratios[mask]
+            x_linear = x_linear[mask]
+            den_counts, factors = den_counts[mask], factors[mask]
             if color_values is not None:
                 color_values = color_values[mask]
             corrected_linear = corrected_linear[mask]
@@ -2536,8 +2601,11 @@ class IsotopicRatioDisplayDialog(QDialog):
                 return None
             ratios = np.log10(ratios)
 
-        return x, ratios, len(element_data), color_values, corrected_linear, mean_raw
-    
+        result = PreparedSample((x, ratios, len(element_data), color_values, corrected_linear,
+                                 mean_raw))
+        result.band = {'x': x_linear, 'counts': den_counts, 'factor': factors}
+        return result
+
     def _build_csv_data(self) -> pd.DataFrame | None:
         """Build a DataFrame of per-particle isotopic ratio data for CSV export."""
         
@@ -2634,11 +2702,11 @@ class IsotopicRatioDisplayDialog(QDialog):
 
             if ref_num_label in df.columns and ref_den_label in df.columns:
                 src_df = df[mask]
-                num_vals = src_df[ref_num_label].values.astype(float)
-                den_vals = src_df[ref_den_label].values.astype(float)
+                num_vals = counts_of(src_df, ref_num_label).values
+                den_vals = counts_of(src_df, ref_den_label).values
                 valid = (num_vals > 0) & (den_vals > 0)
                 if np.any(valid):
-                    R_M_std = float(np.mean(num_vals[valid])) / float(np.mean(den_vals[valid]))
+                    R_M_std = float(np.sum(num_vals[valid])) / float(np.sum(den_vals[valid]))
 
             if R_M_std is None or R_M_std <= 0:
                 R_M_std = self._compute_replicate_ref_ratio(
@@ -2664,6 +2732,11 @@ class IsotopicRatioDisplayDialog(QDialog):
         FIX (batch windows): Now searches ALL open windows â€” not just
         self.parent_window â€” using both the exact sample name and the
         stripped batch name (e.g., 'SampleA' from 'SampleA [W1]').
+
+        From particles, the ratio is the summed counts of the particles
+        carrying both reference isotopes. Averaging each isotope over its own
+        detections would mix two particle sets: the minor isotope is only
+        detected in particles where it reads high, which biases the ratio.
         """
         original_name = _strip_batch_suffix(sample_name)
         names_to_try = [sample_name]
@@ -2679,23 +2752,22 @@ class IsotopicRatioDisplayDialog(QDialog):
                 if w not in windows_to_search:
                     windows_to_search.append(w)
 
-        dk = DATA_KEY_MAPPING.get(
-            self.node.config.get('data_type_display', 'Counts'), 'elements')
-
         for w in windows_to_search:
             if not hasattr(w, 'sample_particle_data'):
                 continue
             for try_name in names_to_try:
                 particles = w.sample_particle_data.get(try_name, [])
                 if particles:
-                    num_vals = [p.get(dk, p.get('elements', {})).get(ref_num_label, 0)
-                                for p in particles]
-                    den_vals = [p.get(dk, p.get('elements', {})).get(ref_den_label, 0)
-                                for p in particles]
-                    num_vals = [v for v in num_vals if v > 0]
-                    den_vals = [v for v in den_vals if v > 0]
-                    if num_vals and den_vals:
-                        return float(np.mean(num_vals)) / float(np.mean(den_vals))
+                    num_sum = den_sum = 0.0
+                    for p in particles:
+                        counts = p.get('elements', {}) or {}
+                        a = float(counts.get(ref_num_label, 0) or 0)
+                        b = float(counts.get(ref_den_label, 0) or 0)
+                        if a > 0 and b > 0:
+                            num_sum += a
+                            den_sum += b
+                    if num_sum > 0 and den_sum > 0:
+                        return num_sum / den_sum
 
         for w in windows_to_search:
             if not hasattr(w, 'data_by_sample') or not hasattr(w, 'selected_isotopes'):
@@ -2828,49 +2900,54 @@ class IsotopicRatioDisplayDialog(QDialog):
         pi.vb.sigResized.connect(update_pos)
         update_pos()
 
-    def _add_poisson_ci(self, pi, cfg, mean_ratio, color, x_data=None, sample_name=None):
+    def _add_poisson_ci(self, pi, cfg, mean_ratio, color, x_data=None, sample_name=None,
+                        band=None):
+        """Draw the ±2σ counting-statistics band of the isotope ratio.
+
+        σ = √(R(1 + R) / N), with R the mean measured count ratio and N each
+        plotted particle's own denominator counts (see
+        :func:`results.figure_builder.core.isotopes.counting_envelope`), so
+        the band is exact whatever quantity X shows. A corrected ratio gets
+        the band of the measured ratio scaled by the mass-bias factor its
+        particles actually received, replicate by replicate.
+
+        Args:
+            band: ``PreparedSample.band`` of the plotted particles. Without it
+                the band is drawn only when X is the denominator in counts.
+        """
         if not cfg.get('show_confidence_intervals', True):
             return
+        from results.figure_builder.core.isotopes import counting_envelope
 
         log_x = cfg.get('log_x', False)
         log_y = cfg.get('log_y', False)
-        dt = cfg.get('data_type_display', 'Counts')
-
         R = mean_ratio
-        if R <= 0:
+        if R is None or not np.isfinite(R) or R <= 0:
             return
 
-        if x_data is not None and len(x_data) > 0:
-            x_min = float(np.min(x_data))
-            x_max = float(np.max(x_data))
-            margin = (x_max - x_min) * 0.05 if x_max > x_min else 1.0
-            x_min -= margin
-            x_max += margin
+        factor = 1.0
+        if band and len(band.get('counts', ())) >= 3:
+            env = counting_envelope(band['x'], band['counts'], R, 2.0, log_x)
+            f = np.asarray(band.get('factor', ()), dtype=float)
+            f = f[np.isfinite(f) & (f > 0)]
+            if f.size:
+                factor = float(np.mean(f))
         else:
-            x_min, x_max = 1, 10000
-
-        x_range = np.linspace(x_min, x_max, 200)
-
-        if log_x:
-            linear_x = 10.0 ** x_range
-        else:
-            linear_x = x_range.copy()
-
-        if dt == 'Counts':
-            lambda_B = np.maximum(linear_x, 1.0)
-        elif 'Mass' in dt:
-            lambda_B = np.maximum(linear_x * 100.0, 1.0)
-        elif 'Moles' in dt:
-            lambda_B = np.maximum(linear_x * 10000.0, 1.0)
-        else:
-            lambda_B = np.maximum(linear_x, 1.0)
-
-        upper, lower = poisson_ci_curves(R, lambda_B, k=2.0)
-
-        eff_cfg = get_sample_correction_config(cfg, sample_name)
-        cf = get_correction_factor(eff_cfg)
-        upper = upper * cf
-        lower = lower * cf
+            e2 = cfg.get('element2', '')
+            x_elem = cfg.get('x_axis_element', e2)
+            if cfg.get('data_type_display', 'Counts') != 'Counts' or x_elem != e2 \
+                    or x_data is None or len(x_data) < 3:
+                return
+            x_lin = 10.0 ** np.asarray(x_data, float) if log_x else np.asarray(x_data, float)
+            env = counting_envelope(x_lin, x_lin, R, 2.0, log_x)
+            eff_cfg = get_sample_correction_config(cfg, sample_name)
+            factor = get_correction_factor(eff_cfg)
+        if env is None:
+            return
+        xs, lower, upper = env
+        upper = upper * factor
+        lower = lower * factor
+        x_range = np.log10(xs) if log_x else xs
 
         if log_y:
             upper = np.where(upper > 0, np.log10(upper), np.nan)
@@ -2991,6 +3068,10 @@ class IsotopicRatioDisplayDialog(QDialog):
             every draw path so visual state does not silently persist between
             refreshes. This now also reapplies display-only custom axis-label
             content before shared styling is applied.
+
+            The ratio axis never takes an SI prefix: a ratio has no unit, and
+            on a log axis with every ratio below 1 pyqtgraph would otherwise
+            relabel 0.9 as 9·10² with "(x0.001)".
         """
         if x_label is None or y_label is None:
             x_label, y_label = self._build_labels(cfg, sample_name)
@@ -3003,6 +3084,7 @@ class IsotopicRatioDisplayDialog(QDialog):
 
         pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', False)))
         pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
+        pi.getAxis('left').enableAutoSIPrefix(False)
 
         if not cfg.get('auto_x', True):
             pi.setXRange(cfg.get('x_min', 0), cfg.get('x_max', 99999999), padding=0)
@@ -3033,7 +3115,8 @@ class IsotopicRatioDisplayDialog(QDialog):
             pi, x, ratios, cfg, color, color_values, is_single=True)
         legend_items = [(scatter, f"Ratio {_format_ratio_text(e1, e2, lm)}")]
 
-        self._add_poisson_ci(pi, cfg, mean_raw, color, x_data=x, sample_name=sample_key)
+        self._add_poisson_ci(pi, cfg, mean_raw, color, x_data=x, sample_name=sample_key,
+                             band=getattr(result, 'band', None))
         self._add_reference_lines(pi, cfg, corrected_linear, legend_items, sample_name=sample_key)
 
         legend = pi.addLegend()
@@ -3076,7 +3159,8 @@ class IsotopicRatioDisplayDialog(QDialog):
                 global_vmax = max(global_vmax, vmax)
             legend_items.append((scatter, dname))
 
-            self._add_poisson_ci(pi, cfg, mean_raw, color, x_data=x, sample_name=sn)
+            self._add_poisson_ci(pi, cfg, mean_raw, color, x_data=x, sample_name=sn,
+                                 band=getattr(result, 'band', None))
 
         self._add_reference_lines(pi, cfg,
                                   np.array(all_corrected) if all_corrected else np.array([]),
@@ -3162,7 +3246,8 @@ class IsotopicRatioDisplayDialog(QDialog):
             pi, x, ratios, cfg, color, color_values, sample_key=sample_name)
         legend_items = [(scatter, get_display_name(sample_name, cfg))]
 
-        self._add_poisson_ci(pi, cfg, mean_raw, color, x_data=x, sample_name=sample_name)
+        self._add_poisson_ci(pi, cfg, mean_raw, color, x_data=x, sample_name=sample_name,
+                             band=getattr(result, 'band', None))
         self._add_reference_lines(pi, cfg, corrected_linear, legend_items, sample_name=sample_name)
 
         legend = pi.addLegend()
@@ -3304,6 +3389,7 @@ class IsotopicRatioPlotNode(QObject):
             particles = self.input_data.get('particle_data')
             df = build_element_matrix(particles, dk) if particles else None
             if df is not None:
+                df = with_counts(df, particles, dk)
                 sources = [p.get('source_sample', '') for p in particles]
                 originals = [
                     p.get('original_sample', p.get('source_sample', ''))
@@ -3328,6 +3414,7 @@ class IsotopicRatioPlotNode(QObject):
             for sn, plist in grouped.items():
                 df = build_element_matrix(plist, dk)
                 if df is not None:
+                    df = with_counts(df, plist, dk)
                     sources = [p.get('source_sample', sn) for p in plist]
                     originals = [
                         p.get('original_sample', p.get('source_sample', sn))

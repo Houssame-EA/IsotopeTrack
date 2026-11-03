@@ -37,6 +37,7 @@ def _ensure_project_root_on_sys_path():
 _ensure_project_root_on_sys_path()
 
 from results.shared_plot_utils import (
+    equalize_panels,
     FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
     get_font_config, apply_font_to_pyqtgraph, set_axis_labels,
     apply_plot_item_text_styling, apply_plot_title_style, apply_axis_label_style,
@@ -3444,8 +3445,10 @@ class HistogramDisplayDialog(QDialog):
                     cfg.get('display_mode', HIST_DISPLAY_MODES[0]))
                 if mode == 'Individual Subplots':
                     self._draw_subplots(plot_data, cfg)
+                    equalize_panels(self.plot_widget, fit_y=cfg.get('auto_y', True))
                 elif mode == 'Side by Side Subplots':
                     self._draw_side_by_side(plot_data, cfg)
+                    equalize_panels(self.plot_widget, fit_y=cfg.get('auto_y', True))
                 else:
                     self._draw_overlaid(plot_data, cfg)
             else:
@@ -6417,8 +6420,10 @@ class ElementBarChartDisplayDialog(QDialog):
                 mode = cfg.get('display_mode', BAR_DISPLAY_MODES[0])
                 if mode == 'Individual Subplots':
                     self._draw_subplots(plot_data, cfg)
+                    equalize_panels(self.plot_widget, fit_y=cfg.get('auto_y', True))
                 elif mode == 'Side by Side Subplots':
                     self._draw_side_by_side(plot_data, cfg)
+                    equalize_panels(self.plot_widget, fit_y=cfg.get('auto_y', True))
                 elif mode == 'Stacked Bars':
                     self._draw_stacked(plot_data, cfg)
                 elif mode == 'By Sample (Element Colors)':

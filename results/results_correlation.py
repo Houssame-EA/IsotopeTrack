@@ -10,7 +10,7 @@ import pyqtgraph as pg
 import numpy as np
 import re
 
-from results.shared_plot_utils import copy_figure_to_clipboard
+from results.shared_plot_utils import copy_figure_to_clipboard, equalize_panels
 from results.shared_plot_utils import (
     FONT_FAMILIES, FontSettingsGroup, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING, get_font_config,
     apply_font_to_pyqtgraph, set_axis_labels, LABEL_MODES, format_label_text_tokens,
@@ -1750,9 +1750,11 @@ class CorrelationPlotDisplayDialog(QDialog):
                     dm = self._current_display_mode
                     if dm == self.DISPLAY_MODE_SUBPLOTS:
                         self._draw_subplots(plot_data, cfg)
+                        equalize_panels(self.plot_widget, fit_y=cfg.get('auto_y', True))
                         primary_plot = self.plot_widget.getItem(0, 0)
                     elif dm == self.DISPLAY_MODE_SIDE:
                         self._draw_side_by_side(plot_data, cfg)
+                        equalize_panels(self.plot_widget, fit_y=cfg.get('auto_y', True))
                         primary_plot = self.plot_widget.getItem(0, 0)
                     else:
                         pi = self.plot_widget.addPlot()
