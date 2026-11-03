@@ -11,10 +11,12 @@ import shiboken6
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout,
+    QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
-    QSizePolicy, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
+    QSizePolicy, QTextEdit, QVBoxLayout, QWidget,
 )
+
+from widget.results_table_view import ResultsTableView
 
 from results.ai.sandbox import to_float
 from results.ai.theme import CODE_RE, UI_PREFS, Theme, fs, inline_markdown, md_to_html, strip_thinking
@@ -596,21 +598,6 @@ class ExplorationBubble(QFrame):
                 pass
 
 
-class _NumericItem(QTableWidgetItem):
-    """QTableWidgetItem that sorts numerically when possible."""
-    def __lt__(self, other):
-        """Compare numerically when both cells hold numbers."""
-        def _num(s):
-            """Parse a cell as a number, ignoring thousands separators and %."""
-            try:
-                return float(s.replace(',', '').replace('%', ''))
-            except (ValueError, AttributeError):
-                return None
-        a, b = _num(self.text()), _num(other.text())
-        if a is not None and b is not None: return a < b
-        return self.text() < other.text()
-
-
 class InteractiveTableBubble(QFrame):
     """A result table: sortable, filterable, with column statistics and export.
 
@@ -699,12 +686,9 @@ class InteractiveTableBubble(QFrame):
         self._stats_col.currentIndexChanged.connect(self._refresh_stats)
         root.addWidget(self._stats_frame)
 
-        self._table = QTableWidget()
-        self._table.setColumnCount(len(headers))
-        self._table.setHorizontalHeaderLabels(headers)
-        self._table.setSortingEnabled(True)
-        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._table = ResultsTableView()
+        self._table.set_display_options(align_numbers=True, tooltips=True)
+        self._table.set_table(headers, [])
         self._table.setAlternatingRowColors(True)
         self._table.setWordWrap(False)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
@@ -723,16 +707,7 @@ class InteractiveTableBubble(QFrame):
         Args:
             rows (list): Rows to show.
         """
-        self._table.setSortingEnabled(False)
-        self._table.setRowCount(len(rows))
-        for r, row in enumerate(rows):
-            for c, val in enumerate(row):
-                item = _NumericItem(str(val))
-                item.setToolTip(str(val))
-                if to_float(str(val).replace('%', '')) is not None:
-                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                self._table.setItem(r, c, item)
-        self._table.setSortingEnabled(True)
+        self._table.set_table(self._headers, [[str(v) for v in row] for row in rows])
         self._fit_columns()
         self._fit_height()
         self._badge.setText(f"{len(rows)} rows")
@@ -750,7 +725,6 @@ class InteractiveTableBubble(QFrame):
     def _fit_height(self):
         """Make the table exactly as tall as its rows, up to a limit."""
         t = self._table
-        t.resizeRowsToContents()
         rows = t.verticalHeader().length()
         header = t.horizontalHeader().sizeHint().height()
         scroll = t.horizontalScrollBar().sizeHint().height()
@@ -812,7 +786,7 @@ class InteractiveTableBubble(QFrame):
     def _visible_rows(self):
         """The rows currently shown, in their current order."""
         t = self._table
-        return [[t.item(r, c).text() if t.item(r, c) else '' for c in range(t.columnCount())]
+        return [[t.cell_text(r, c) for c in range(t.columnCount())]
                 for r in range(t.rowCount())]
 
     def _copy_tsv(self):

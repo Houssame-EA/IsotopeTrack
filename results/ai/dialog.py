@@ -18,12 +18,12 @@ import threading
 import time
 
 import shiboken6
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QCursor, QKeySequence
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
-    QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QProgressBar, QPushButton,
-    QScrollArea, QSplitter, QStackedWidget, QToolButton, QVBoxLayout, QWidget,
+    QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QMenu, QMessageBox, QProgressBar, QPushButton,
+    QScrollArea, QSizePolicy, QSplitter, QStackedWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
 from results.ai.attachments import (
@@ -55,6 +55,7 @@ from results.ai.widgets import (
     Conversation, ConversationListItem, ExplorationBubble, FigureBubble, InteractiveTableBubble,
     NoticeBubble, OutputBubble, StreamBubble, TextBubble,
 )
+from tools import window_glass
 from tools.theme import theme as global_theme
 
 _itk_log = logging.getLogger("IsotopeTrack.results.ai.dialog")
@@ -121,6 +122,8 @@ class AIChatDialog(QDialog):
         self.setWindowTitle("AI Data Assistant")
         self.setMinimumSize(900, 650)
         self.resize(1240, 780)
+        self.setObjectName("aiChatDialog")
+        window_glass.attach(self, self._on_glass_active)
         self._build_ui()
         self._start_autodetect()
         install_server_shutdown_hooks()
@@ -1062,20 +1065,22 @@ class AIChatDialog(QDialog):
         """Build the toolbar, conversation list, chat panel and composer."""
         self._icon_buttons = []
         root = QVBoxLayout(self)
-        root.setContentsMargins(8, 8, 8, 8)
-        root.setSpacing(6)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
         toolbar = QFrame()
         toolbar.setObjectName('fbToolbar')
         bar = QHBoxLayout(toolbar)
         bar.setContentsMargins(6, 4, 6, 4)
         bar.setSpacing(2)
-        self._sidebar_btn = self._tool('', 'fa6s.table-columns', 'Show or hide the conversations',
+        self._sidebar_btn = self._tool('', 'mdi6.dock-left', 'Show or hide the conversations',
                                        self._toggle_sidebar)
         self._sidebar_btn.setCheckable(True)
         self._sidebar_btn.setChecked(True)
         bar.addWidget(self._sidebar_btn)
-        bar.addWidget(self._sep())
+        self._sidebar_sep = self._sep()
+        bar.addWidget(self._sidebar_sep)
+        self._toolbar_layout = bar
         self._new_chat_btn = self._tool('New chat', 'fa6s.pen-to-square', 'Start a new conversation (Ctrl+N)',
                                         lambda: self._new_conversation(switch_to=True))
         bar.addWidget(self._new_chat_btn)
@@ -1096,6 +1101,18 @@ class AIChatDialog(QDialog):
         bar.addWidget(self._eject_btn)
         self._cust_btn = self._tool('', 'fa6s.font', 'Font size, preview quality, timestamps', self._open_customize)
         bar.addWidget(self._cust_btn)
+        self._overflow_items = [bar.itemAt(i).widget() for i in range(bar.count())
+                                if bar.itemAt(i).widget() is not None]
+        self._overflow_btn = QToolButton()
+        self._overflow_btn.setText('»')
+        self._overflow_btn.setToolTip('More tools')
+        self._overflow_btn.setAutoRaise(True)
+        self._overflow_btn.setPopupMode(QToolButton.InstantPopup)
+        self._overflow_menu = QMenu(self)
+        self._overflow_menu.aboutToShow.connect(self._fill_overflow_menu)
+        self._overflow_btn.setMenu(self._overflow_menu)
+        self._overflow_btn.hide()
+        bar.addWidget(self._overflow_btn)
         bar.addStretch()
         self._speed = QLabel("")
         self._speed.setObjectName('fbStatus')
@@ -1118,17 +1135,28 @@ class AIChatDialog(QDialog):
         self._export_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._export_btn.clicked.connect(self._export_report)
         bar.addWidget(self._export_btn)
-        root.addWidget(toolbar)
         self._hdr = toolbar
+        self._toolbar_right = [self._speed, self._usage, self._dot, self._status, self._export_btn]
+        for w in self._overflow_items:
+            if isinstance(w, QToolButton):
+                w.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        toolbar.installEventFilter(self)
 
         split = QSplitter(Qt.Horizontal)
+        split.setObjectName('aiSplit')
         split.setChildrenCollapsible(False)
+        split.setHandleWidth(1)
+        self._split = split
         self._sidebar = QFrame()
         self._sidebar.setObjectName('aiPanel')
         self._sidebar.setMinimumWidth(190)
         sb = QVBoxLayout(self._sidebar)
         sb.setContentsMargins(8, 10, 8, 8)
         sb.setSpacing(6)
+        self._sb_top = QWidget()
+        self._sb_top.setObjectName('aiPlain')
+        self._sb_top.setFixedHeight(0)
+        sb.addWidget(self._sb_top)
         self._conv_hdr = QLabel("Conversations")
         self._conv_hdr.setObjectName('aiSection')
         sb.addWidget(self._conv_hdr)
@@ -1245,11 +1273,20 @@ class AIChatDialog(QDialog):
         outer_l.addWidget(self._composer)
         main.addWidget(outer)
         self._inp_frame = outer
-        split.addWidget(main_wrap)
+        right_col = QWidget()
+        right_col.setObjectName('aiMain')
+        right_lo = QVBoxLayout(right_col)
+        self._right_lo = right_lo
+        right_lo.setContentsMargins(8, 8, 8, 8)
+        right_lo.setSpacing(6)
+        right_lo.addWidget(toolbar)
+        right_lo.addWidget(main_wrap, stretch=1)
+        split.addWidget(right_col)
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
         split.setSizes([220, 1000])
         root.addWidget(split, stretch=1)
+        split.splitterMoved.connect(lambda *_: self._save_sidebar_state())
 
         self._attach_bar = self._preview_row
         self._attach_lbl = self._counter
@@ -1263,6 +1300,7 @@ class AIChatDialog(QDialog):
 
         self._add_conv_list_item(self._conversations[0], is_current=True)
 
+        self._restore_sidebar_state()
         self._apply_theme()
         global_theme.themeChanged.connect(self._on_global_theme_change)
         self._add_ai(
@@ -1270,9 +1308,118 @@ class AIChatDialog(QDialog):
             "Start Ollama or an MLX server, or click **Model** to choose one.")
         self._update_sug(None)
 
+    _SIDEBAR_VISIBLE_KEY = "ui/ai_sidebar_visible"
+    _SIDEBAR_WIDTH_KEY = "ui/ai_sidebar_width"
+
     def _toggle_sidebar(self):
-        """Show or hide the conversation list."""
+        """Show or hide the conversation list, and remember the choice."""
         self._sidebar.setVisible(self._sidebar_btn.isChecked())
+        self._update_toolbar_inset()
+        self._save_sidebar_state()
+
+    def _save_sidebar_state(self):
+        """Remember whether the conversation list is shown and how wide it is."""
+        from PySide6.QtCore import QSettings
+        settings = QSettings("IsotopeTrack", "IsotopeTrack")
+        settings.setValue(self._SIDEBAR_VISIBLE_KEY, self._sidebar_btn.isChecked())
+        if self._sidebar.isVisible() and self._sidebar.width() > 0:
+            settings.setValue(self._SIDEBAR_WIDTH_KEY, self._sidebar.width())
+
+    def _restore_sidebar_state(self):
+        """Apply the conversation list width and visibility chosen last time."""
+        from PySide6.QtCore import QSettings
+        settings = QSettings("IsotopeTrack", "IsotopeTrack")
+        try:
+            width = int(settings.value(self._SIDEBAR_WIDTH_KEY, 220))
+        except (TypeError, ValueError):
+            width = 220
+        visible = str(settings.value(self._SIDEBAR_VISIBLE_KEY, True)).lower() not in ("false", "0")
+        total = sum(self._split.sizes()) or 1220
+        self._split.setSizes([max(190, width), max(1, total - width)])
+        self._sidebar_btn.setChecked(visible)
+        self._sidebar.setVisible(visible)
+        self._update_toolbar_inset()
+
+    def _on_glass_active(self, inset):
+        """Frosted backdrop is on: the conversation list runs up under the window buttons.
+
+        The show/hide button moves into the title row, next to the window buttons.
+        """
+        self._glass_inset = inset
+        self._sb_top.setFixedHeight(max(0, inset - 6))
+        if inset:
+            size = 28
+            self._sidebar_btn.setFixedSize(size, size)
+            self._sidebar_btn.setIconSize(QSize(20, 20))
+            x, y = 78, max(0, (inset - size) // 2)
+            geo = window_glass.window_buttons_geometry(self)
+            if geo is not None:
+                x = int(round(geo[0] + 12))
+                y = max(0, int(round(geo[1] - size / 2)))
+            self._sidebar_btn.setParent(self)
+            self._sidebar_btn.move(x, y)
+            self._sidebar_btn.show()
+            self._sidebar_btn.raise_()
+            self._sidebar_sep.hide()
+            center = y + size / 2
+            bar_h = self._hdr.sizeHint().height()
+            self._right_lo.setContentsMargins(8, max(0, int(round(center - bar_h / 2))), 8, 8)
+        self._update_toolbar_inset()
+        self._apply_theme()
+
+    def _update_toolbar_inset(self):
+        """Keep the toolbar clear of the window buttons when the list is hidden."""
+        bar = getattr(self, '_toolbar_layout', None)
+        if bar is None:
+            return
+        inset = getattr(self, '_glass_inset', 0)
+        left = 6
+        if inset and not self._sidebar.isVisible():
+            left = self._sidebar_btn.x() + self._sidebar_btn.width()
+        bar.setContentsMargins(left, 4, 6, 4)
+        QTimer.singleShot(0, self._fit_toolbar)
+
+    def _fit_toolbar(self):
+        """Hide toolbar tools from the right when they do not fit, behind a » menu."""
+        bar = getattr(self, '_toolbar_layout', None)
+        if bar is None:
+            return
+        items = [w for w in self._overflow_items if w is not self._sidebar_btn]
+        margins = bar.contentsMargins()
+        spacing = bar.spacing()
+        room = self._hdr.width() - margins.left() - margins.right() - 24
+        room -= sum(w.sizeHint().width() + spacing for w in self._toolbar_right if not w.isHidden())
+        if self._sidebar_btn.parent() is self._hdr:
+            room -= self._sidebar_btn.sizeHint().width() + spacing
+        total = sum(w.sizeHint().width() + spacing for w in items)
+        hidden = []
+        if total > room:
+            room -= self._overflow_btn.sizeHint().width() + spacing
+            used = 0
+            for w in items:
+                width = w.sizeHint().width() + spacing
+                if hidden or used + width > room:
+                    hidden.append(w)
+                else:
+                    used += width
+        visible = [w for w in items if w not in hidden]
+        while hidden and visible and visible[-1].objectName() == 'fbSep':
+            hidden.insert(0, visible.pop())
+        for w in items:
+            w.setVisible(w not in hidden)
+        self._overflow_hidden = hidden
+        self._overflow_btn.setVisible(bool(hidden))
+
+    def _fill_overflow_menu(self):
+        """List the tools that did not fit in the toolbar."""
+        menu = self._overflow_menu
+        menu.clear()
+        for w in getattr(self, '_overflow_hidden', []):
+            if isinstance(w, QToolButton):
+                label = w.text() or w.toolTip().split('\n')[0].split(' (')[0]
+                menu.addAction(w.icon(), label, w.click)
+            elif w.objectName() == 'fbSep' and menu.actions():
+                menu.addSeparator()
 
     def _open_settings(self):
         """Open the backend settings and apply the chosen model."""
@@ -1317,8 +1464,10 @@ class AIChatDialog(QDialog):
         self._counter.setText(f"{n_chars:,} characters · ~{tokens:,} tokens")
 
     def eventFilter(self, obj, event):
-        """Outline the message box while the user is typing in it."""
+        """Outline the message box while typing; re-fit the toolbar when it resizes."""
         from PySide6.QtCore import QEvent
+        if obj is getattr(self, '_hdr', None) and event.type() == QEvent.Resize:
+            QTimer.singleShot(0, self._fit_toolbar)
         if obj is getattr(self, '_input', None) and event.type() in (QEvent.FocusIn, QEvent.FocusOut):
             self._composer.setProperty('focused', event.type() == QEvent.FocusIn)
             self._composer.style().unpolish(self._composer)
@@ -1607,12 +1756,23 @@ class AIChatDialog(QDialog):
         from results.figure_builder.ui import look
         p = look.palette()
         size = fs()
+        if getattr(self, '_glass_active', False):
+            from tools.theme import glass_rgba
+            panel_bg = glass_rgba(p, p.bg_secondary)
+            dialog_bg = "transparent"
+        else:
+            panel_bg = p.bg_secondary
+            dialog_bg = p.bg_primary
         return look.window_qss(p) + f"""
         QFrame#aiPanel {{
-            background: {p.bg_secondary};
-            border: 1px solid {p.border_subtle};
-            border-radius: 8px;
+            background: {panel_bg};
+            border: none;
+            border-right: 1px solid {p.border_subtle};
+            border-radius: 0px;
         }}
+        QDialog#aiChatDialog {{ background: {dialog_bg}; }}
+        QWidget#aiMain {{ background: {p.bg_primary}; }}
+        QSplitter#aiSplit::handle {{ background: {p.border_subtle}; }}
         QLabel#aiSection {{
             color: {p.text_muted}; font-size: {fs(-3)}px; font-weight: 700;
             letter-spacing: 0.6px; text-transform: uppercase; padding-left: 4px;
@@ -1665,7 +1825,7 @@ class AIChatDialog(QDialog):
         QPushButton#fbPrimary:disabled {{ background: {p.disabled}; }}
         QFrame#aiRow {{ background: transparent; border: none; }}
         QFrame#aiCard QHeaderView {{ background: {p.bg_tertiary}; border: none; }}
-        QFrame#aiCard QTableWidget {{ border-radius: 4px; }}
+        QFrame#aiCard QTableWidget, QFrame#aiCard QTableView {{ border-radius: 4px; }}
         QFrame#aiCard {{
             background: {p.bg_secondary};
             border: 1px solid {p.border_subtle};
@@ -1710,6 +1870,11 @@ class AIChatDialog(QDialog):
         from results.figure_builder.ui import look
         p = look.palette()
         self.setStyleSheet(self._window_qss())
+        if hasattr(self, '_sidebar_btn'):
+            self._sidebar_btn.setStyleSheet(
+                "QToolButton { border: none; border-radius: 6px; padding: 2px; background: transparent; }"
+                "QToolButton:checked { background: transparent; }"
+                f"QToolButton:hover {{ background: {p.bg_hover}; }}")
         for button, name, inverse in getattr(self, '_icon_buttons', []):
             try:
                 button.setIcon(_icon(name, p.text_inverse if inverse else look.icon_color()))

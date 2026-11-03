@@ -15,6 +15,8 @@ from __future__ import annotations
 import logging
 
 from results.figure_builder.charts import DRAWERS
+from results.figure_builder.core import massbias
+from results.figure_builder.core.isotopes import counts_for_isotope_ratios
 from results.figure_builder.core.common import (
     CBAR_LOCATIONS, Group, RenderReport, annotate, candidate_groups, draw_shapes, fit_decorations,
     fit_outside_legend, merge_legend, place_colorbar, resolve_groups)
@@ -370,6 +372,8 @@ def _render_panel(fig, index, panel, spec, table, report, style, fw, fh, bg, Rec
     try:
         if len(table) == 0 and kind not in ('text', 'code'):
             raise ExpressionError('No particles: connect a sample or filter node')
+        panel = counts_for_isotope_ratios(panel, ptable)
+        panel = massbias.prepare(panel, ptable, report)
         DRAWERS.get(kind, DRAWERS['scatter'])(fig, ax, panel, ptable, report,
                                                panel.get('label_style') or style)
         if kind in SHAPE_KINDS:

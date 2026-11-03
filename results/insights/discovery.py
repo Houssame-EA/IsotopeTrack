@@ -84,6 +84,18 @@ REPLICATE_RATE_GAP = 0.15
 REPLICATE_MARGIN = 2.0
 """How many times the replicate spread a group difference must exceed."""
 
+RATIO_SPLIT_MIN_PARTICLES = 30
+"""Particles each side of a ratio split, with and without the third element, must hold."""
+
+RATIO_SPLIT_MIN_FOLD = 1.5
+"""Smallest factor between the two populations' median ratios worth a card."""
+
+RATIO_SPLIT_MAX_ELEMENTS = 12
+"""Most frequent elements searched for ratio splits, which test every pair against every third."""
+
+RATIO_SPLIT_WITH_COLOR = "#c2410c"
+RATIO_SPLIT_WITHOUT_COLOR = "#64748b"
+
 _SUPERSCRIPT_PLUS = "⁺"
 _SUPERSCRIPT_TWO_PLUS = "²⁺"
 
@@ -454,6 +466,135 @@ def analyse_stoichiometry(ctx, progress=None) -> list:
             node_type=node_type,
             config=config,
             elements=(a, b),
+        ))
+    return out
+
+
+def ratio_split_rules(c: str) -> dict:
+    """Grouping rules splitting particles by whether they carry *c*."""
+    return {"group_by": "rules", "show_other": False, "rules": [
+        {"name": f"With {c}", "when": f"{c} > 0", "color": RATIO_SPLIT_WITH_COLOR},
+        {"name": f"Without {c}", "when": f"{c} == 0", "color": RATIO_SPLIT_WITHOUT_COLOR},
+    ]}
+
+
+def ratio_split_panel(a: str, b: str, c: str) -> dict:
+    """The scatter that shows a ratio split: a/b against b, coloured by c, grey without c.
+
+    Each population gets its own counting-statistics envelope, so the plot
+    shows at once whether the gap between the two ratios is more than
+    counting noise.
+    """
+    return {"kind": "scatter", "title": f"{a}/{b} against {b}, coloured by {c}",
+            "x": b, "y": f"{a} / {b}", "color_by": f"log10({c})", "colormap": "jet",
+            "show_missing": True, "poisson_band": 2.0, "cbar_label": f"log10 {c} (counts)",
+            "x_label": f"{b} (counts)", "y_label": f"{a}/{b}", "marker_size": 14,
+            "legend_loc": "below", **ratio_split_rules(c)}
+
+
+def analyse_ratio_split(ctx, progress=None) -> list:
+    """Find element ratios that take two values depending on whether a third element is present.
+
+    A mineral powder can hold two phases sharing two elements, such as talc
+    and an Al-bearing clay that both carry Si and Mg in different
+    proportions. Pooled, their particles give one broad ratio whose mean
+    describes neither phase. Split by the third element, the ratio falls into
+    two populations.
+
+    For every pair of frequent elements and every third element, the log
+    ratio of the pair in particles carrying the third is compared with the
+    ratio in particles without it (Mann–Whitney), and the family is corrected
+    for false discovery. A split must also reach :data:`RATIO_SPLIT_MIN_FOLD`
+    between the medians, and the gap must exceed the robust spread within
+    each population, so the two form separate peaks. Only the strongest
+    third element is kept for each pair. Counts are used, the unit the
+    counting-statistics envelope of the plot is defined in.
+
+    Args:
+        ctx: Analysis context for one replicate group.
+        progress: Optional callable receiving status strings.
+
+    Returns:
+        Up to three Figure Builder suggestions.
+    """
+    rr = _rr()
+    rr._say(progress, "Looking for ratios that split by a third element…")
+    els = [e for e in ctx.frequent_elements() if e in ctx.matrix][:RATIO_SPLIT_MAX_ELEMENTS]
+    if len(els) < 3:
+        return []
+    tests = []
+    for i in range(len(els)):
+        for j in range(i + 1, len(els)):
+            a, b = els[i], els[j]
+            if _same_symbol(a, b) or mass_related(a, b):
+                continue
+            co = ctx.det_mask[a] & ctx.det_mask[b]
+            if int(co.sum()) < 2 * RATIO_SPLIT_MIN_PARTICLES:
+                continue
+            lr_all = np.log10(ctx.matrix[a][co] / ctx.matrix[b][co])
+            if float(np.median(lr_all)) < 0:
+                a, b = b, a
+            lr = np.full(ctx.n, np.nan)
+            lr[co] = np.log10(ctx.matrix[a][co] / ctx.matrix[b][co])
+            for c in els:
+                if c in (a, b) or any(_same_symbol(c, x) or mass_related(c, x) for x in (a, b)):
+                    continue
+                if not ctx.involves(a, b, c):
+                    continue
+                with_c = co & ctx.det_mask[c]
+                without_c = co & ~ctx.det_mask[c]
+                n_w, n_wo = int(with_c.sum()), int(without_c.sum())
+                if min(n_w, n_wo) < RATIO_SPLIT_MIN_PARTICLES:
+                    continue
+                lw, lwo = lr[with_c], lr[without_c]
+                med_w, med_wo = float(np.median(lw)), float(np.median(lwo))
+                gap = abs(med_w - med_wo)
+                if 10 ** gap < RATIO_SPLIT_MIN_FOLD:
+                    continue
+                if gap <= max(_robust_sd(lw), _robust_sd(lwo)):
+                    continue
+                try:
+                    p = float(_stats.mannwhitneyu(lw, lwo).pvalue)
+                except ValueError:
+                    continue
+                tests.append((a, b, c, med_w, med_wo, n_w, n_wo, gap, p))
+    if not tests:
+        return []
+    significant, adjusted = rr._benjamini_hochberg([t[-1] for t in tests])
+    kept = [(t, float(adjusted[k])) for k, t in enumerate(tests) if significant[k]]
+    kept.sort(key=lambda x: -(x[0][7] * math.sqrt(min(x[0][5], x[0][6]) / (x[0][5] + x[0][6]))))
+    out = []
+    pairs: set = set()
+    for (a, b, c, med_w, med_wo, n_w, n_wo, gap, _p), q in kept:
+        if len(out) >= ctx.cap(3) or (a, b) in pairs:
+            continue
+        pairs.add((a, b))
+        r_w, r_wo = 10 ** med_w, 10 ** med_wo
+        fold = 10 ** gap
+        share = n_w / (n_w + n_wo)
+        out.append(rr.Suggestion(
+            title=f"{a}/{b} splits by {c}",
+            reasoning=(
+                f"In {n_w + n_wo:,} particles carrying {a} and {b}, the {a}/{b} ratio is "
+                f"{r_wo:.3g} without {c} and {r_w:.3g} with it, {fold:.1f}× apart "
+                f"({share:.0%} of them carry {c}). Two ratio populations point to two phases "
+                f"sharing {a} and {b}, so one mean over all particles describes neither. "
+                f"Mann–Whitney {rr._fmt_q(q)} across {len(tests)} "
+                f"test{'s' if len(tests) != 1 else ''}."
+            ),
+            category="ratio_split",
+            confidence=min(0.55 + 0.25 * math.log2(fold), 0.9),
+            explain_key="ratio_split",
+            details=[("Ratio", f"{a}/{b} (counts)"),
+                     (f"Without {c}", f"{r_wo:.3g} ({n_wo:,} particles)"),
+                     (f"With {c}", f"{r_w:.3g} ({n_w:,} particles)"),
+                     ("Fold between the medians", f"{fold:.2f}×"),
+                     ("False discovery", rr._fmt_q(q)),
+                     ("Tests", str(len(tests)))],
+            node_type="figure_builder",
+            config=_figure_spec("Counts", **ratio_split_panel(a, b, c)),
+            elements=(a, b, c),
+            facts={"ratio_split": (a, b, c), "medians": (r_w, r_wo)},
         ))
     return out
 

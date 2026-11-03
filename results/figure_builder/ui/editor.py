@@ -11,11 +11,57 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QGroupBox,
-    QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QScrollArea, QSpinBox,
-    QTabWidget, QToolButton, QVBoxLayout, QWidget,
+    QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QGroupBox,
+    QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy,
+    QSpinBox, QTabWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
+
+class _WrapTabStrip(QWidget):
+    """Tab buttons for a QTabWidget that wrap onto more lines instead of being cut."""
+
+    def __init__(self, tabs, extra=None):
+        super().__init__()
+        self._tabs = tabs
+        self._buttons = []
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        self._flow = _FlowLayout(self)
+        self._extra = extra
+        policy = QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+        tabs.currentChanged.connect(lambda *_: self.refresh())
+
+    def refresh(self):
+        """Match the buttons to the tabs: names, which are shown, which is current."""
+        while len(self._buttons) < self._tabs.count():
+            index = len(self._buttons)
+            btn = QToolButton()
+            btn.setObjectName('fbWrapTab')
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda _=False, i=index: self._tabs.setCurrentIndex(i))
+            self._group.addButton(btn)
+            self._buttons.append(btn)
+            if self._extra is not None:
+                self._flow.removeWidget(self._extra)
+            self._flow.addWidget(btn)
+            if self._extra is not None:
+                self._flow.addWidget(self._extra)
+        for i, btn in enumerate(self._buttons):
+            btn.setText(self._tabs.tabText(i))
+            btn.setVisible(self._tabs.isTabVisible(i))
+            btn.setChecked(i == self._tabs.currentIndex())
+        self.updateGeometry()
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._flow.heightForWidth(width)
+
+from widget.flow_layout import FlowLayout as _FlowLayout
 from results.figure_builder.core import engine as E
 from results.figure_builder.charts.categorical import BAR_SORTS, PIE_LABELS, PIE_MODES
 from results.figure_builder.charts.distributions import MARKS
@@ -25,6 +71,7 @@ from results.figure_builder.charts.matrices import (
 from results.figure_builder.charts.more import LOLLI_STATS, SHARE_MODES, TIME_MODES
 from results.figure_builder.charts.network import NODE_SIZES, PCA_TRANSFORMS
 from results.figure_builder.charts.special import TERNARY_FILTERS
+from results.figure_builder.core import massbias as MB
 from results.figure_builder.charts.xy import FIT_LINES
 from results.figure_builder.charts.overlays import (
     ELLIPSES, INSET_LOCS, MARGINAL_UNITS, MARGINALS, TRENDS)
@@ -110,6 +157,10 @@ ANNOTATION_COLUMNS = [
     ('italic', 'Italic', 'check', None, 40),
     ('box', 'Box', 'check', None, 40),
 ]
+
+MASS_BIAS = {'scatter', 'histogram', 'box', 'violin', 'strip', 'bar', 'line', 'ecdf', 'ridgeline',
+             'lollipop'}
+"""Panel kinds whose isotope ratios can be mass-bias corrected."""
 
 FIELDS = [
     ('Data', 'Chart', 'kind', 'Chart type', 'combo', ALL, E.PANEL_KINDS),
@@ -226,6 +277,9 @@ FIELDS = [
     ('Style', 'Around the groups', 'marg_top_label', 'Top edge title', 'text', {'scatter'}, 'automatic'),
     ('Style', 'Around the groups', 'marg_right_label', 'Right edge title', 'text', {'scatter'}, 'automatic'),
     ('Style', 'Colour scale', 'color_by', 'Colour by value', 'expr', {'scatter', 'ternary'}, 'optional, e.g. total'),
+    ('Style', 'Colour scale', 'show_missing', 'Show particles without a value', 'check', {'scatter'}, None),
+    ('Style', 'Colour scale', 'missing_color', 'Their colour', 'color', {'scatter'}, None),
+    ('Style', 'Colour scale', 'missing_label', 'Their legend name', 'text', {'scatter'}, 'e.g. no 27Al'),
     ('Style', 'Colour scale', 'colormap', 'Colour map', 'combo',
      {'scatter', 'density', 'heatmap', 'cooccurrence', 'hexbin', 'ternary'},
      {k: k for k in S.COLORMAPS}),
@@ -382,6 +436,16 @@ FIELDS = [
     ('Stats', 'Fit', 'fit_band', '95% confidence band', 'check', {'scatter'}, None),
     ('Stats', 'Fit', 'sd_band', 'Fit ± SD of the residuals', 'check', {'scatter'}, None),
     ('Stats', 'Fit', 'show_r', "Show the line's equation", 'check', {'scatter'}, None),
+    ('Stats', 'Mass-bias correction', 'mb_method', 'Correction', 'combo', MASS_BIAS, MB.METHODS),
+    ('Stats', 'Mass-bias correction', 'mb_source', 'Reference', 'combo', MASS_BIAS, MB.SOURCES),
+    ('Stats', 'Mass-bias correction', 'mb_ref', 'Reference pair', 'text', MASS_BIAS,
+     'e.g. 205Tl / 203Tl'),
+    ('Stats', 'Mass-bias correction', 'mb_certified', 'Certified ratio', 'text', MASS_BIAS,
+     'e.g. 2.3871'),
+    ('Stats', 'Mass-bias correction', 'mb_measured_mode', 'Measured ratio from', 'combo', MASS_BIAS,
+     MB.MEASURED),
+    ('Stats', 'Mass-bias correction', 'mb_measured', 'Measured value', 'text', MASS_BIAS,
+     'typed value, also used where a sample has none'),
     ('Stats', 'Isotope ratios', 'poisson_band', 'Counting-statistics band (± kσ, 0 = off)', 'float',
      {'scatter'}, (0, 5, 0.5)),
     ('Stats', 'Isotope ratios', 'natural_line', 'Natural abundance ratio line', 'check', {'scatter'}, None),
@@ -495,13 +559,16 @@ class PanelEditor(QWidget):
         self.insert_btn.setAutoRaise(True)
         self.insert_menu = QMenu(self.insert_btn)
         self.insert_btn.setMenu(self.insert_menu)
-        self.tabs.setCornerWidget(self.insert_btn, Qt.TopRightCorner)
+        self.tabs.tabBar().hide()
+        self.tab_strip = _WrapTabStrip(self.tabs, self.insert_btn)
+        root.addWidget(self.tab_strip)
         root.addWidget(self.tabs, 1)
         for tab, section, key, label, kind, _kinds, opts in FIELDS:
             if tab not in self.tab_pages:
                 scroll = QScrollArea()
                 scroll.setWidgetResizable(True)
                 scroll.setFrameShape(QFrame.NoFrame)
+                scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
                 page = QWidget()
                 lay = QVBoxLayout(page)
                 lay.setContentsMargins(2, 4, 2, 4)
@@ -518,7 +585,8 @@ class PanelEditor(QWidget):
                 box = QGroupBox(section)
                 form = QFormLayout(box)
                 form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
-                form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+                form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 form.setVerticalSpacing(4)
                 form.setHorizontalSpacing(8)
                 form.setContentsMargins(6, 4, 6, 4)
@@ -532,10 +600,18 @@ class PanelEditor(QWidget):
                 self.rows[key] = (None, w)
             else:
                 form.addRow(label, w)
-                self.rows[key] = (form.labelForField(w), w)
+                lab = form.labelForField(w)
+                if isinstance(lab, QLabel):
+                    lab.setWordWrap(True)
+                if isinstance(w, QComboBox):
+                    w.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+                    w.setMinimumContentsLength(8)
+                self.rows[key] = (lab, w)
         for _scroll, lay in self.tab_pages.values():
             lay.addStretch()
+        self.tab_strip.refresh()
         self.tabs.hide()
+        self.tab_strip.hide()
 
     def _make(self, key, kind, opts):
         """Create the widget for one field and wire it to the panel."""
@@ -693,6 +769,7 @@ class PanelEditor(QWidget):
         self.panel = panel
         self.empty.setVisible(panel is None)
         self.tabs.setVisible(panel is not None)
+        self.tab_strip.setVisible(panel is not None)
         if panel is None:
             self.error.hide()
             return
@@ -753,7 +830,8 @@ class PanelEditor(QWidget):
         self.panel[key] = value
         if key in ('kind', 'group_by', 'test', 'pie_mode', 'rules', 'y', 'heat_rows', 'heat_sort',
                    'heat_search', 'show_fit', 'fit_lines', 'trend',
-                   'share_mode', 'facet', 'bin_mode', 'donut', 'color_by', 'agg', 'stat_band',
+                   'share_mode', 'facet', 'bin_mode', 'donut', 'color_by', 'show_missing', 'agg', 'stat_band',
+                   'mb_method', 'mb_source',
                    'natural_line', 'dl_value', 'marginals'):
             if key == 'kind' and value == 'code' and not (self.panel.get('code') or '').strip():
                 self.panel['code'] = E.CODE_EXAMPLE
@@ -853,8 +931,19 @@ class PanelEditor(QWidget):
                     and bool((p.get('heat_search') or '').strip()))
         if key == 'heat_spread':
             return kind == 'heatmap' and p.get('heat_rows') != 'particles'
+        if key.startswith('mb_') and key != 'mb_method':
+            if kind not in MASS_BIAS or p.get('mb_method', 'none') == 'none':
+                return False
+            if key in ('mb_ref', 'mb_certified'):
+                return p.get('mb_source', 'manual') == 'manual'
+            return True
         if key in ('c_min', 'c_max') and kind in ('scatter', 'ternary'):
             return bool((p.get('color_by') or '').strip())
+        if key == 'show_missing':
+            return kind == 'scatter' and bool((p.get('color_by') or '').strip())
+        if key in ('missing_color', 'missing_label'):
+            return (kind == 'scatter' and bool((p.get('color_by') or '').strip())
+                    and bool(p.get('show_missing')))
         if key == 'agg' and kind == 'line':
             return bool((p.get('y') or '').strip())
         if key.startswith('cbar_') and key != 'cbar_label' and kind == 'scatter':
@@ -901,6 +990,7 @@ class PanelEditor(QWidget):
         for i in range(self.tabs.count()):
             name = self.tabs.tabText(i)
             self.tabs.setTabVisible(i, tab_any.get(name, False))
+        self.tab_strip.refresh()
 
     def _check_expressions(self):
         """Mark expression fields that do not evaluate on the current data."""

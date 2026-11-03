@@ -115,6 +115,11 @@ a = Analysis(
         'PySide6.QtOpenGL',
         'PySide6.QtOpenGLWidgets',
         'PySide6.QtPrintSupport',
+        'PySide6.QtTest',
+
+        'objc',
+        'AppKit',
+        'Foundation',
 
         'pyqtgraph',
         'pyqtgraph.Qt',

@@ -8,15 +8,15 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, Q
                                QCheckBox, QDoubleSpinBox, QGroupBox, QDialog,
                                QMenu, QListView, QAbstractItemView, QTreeView, QSpinBox,
                                QApplication, QScrollArea, QListWidget, QMainWindow, QFrame, QProgressBar, QSplitter, QStackedWidget, QProgressDialog)
-from PySide6.QtGui import QFont
 from PySide6.QtCore import Qt, Signal
 import loading.vitesse_loading
 from widget.periodic_table_widget import PeriodicTableWidget
-from widget.numeric_table import NumericTableWidgetItem
-from widget.custom_plot_widget import EnhancedPlotWidget, CalibrationPlotWidget
+from widget.results_table_view import ResultsTableView
+from widget.custom_plot_widget import EnhancedPlotWidget, CalibrationPlotWidget, StyledPlotWidget
 from processing.peak_detection import PeakDetection
 
 
+from save_export.te_store import read_te_channel
 from calibration_methods.te_common import (
     section_stylesheet,
     HISTOGRAM_COLORS,
@@ -24,8 +24,11 @@ from calibration_methods.te_common import (
     NumericDelegate,
     export_table_to_csv, populate_detection_row,
     read_detection_row, apply_global_method, plot_detection_results,
-    plot_raw_signal,
-    highlight_particle, snr_to_color, particle_mass_from_diameter,
+    plot_raw_signal, set_detection_row_params,
+    make_remove_button, style_remove_button, remove_menu_label, remove_menu_icon,
+    confirm_remove_samples, mark_project_unsaved, remove_rows_by_name,
+    quiet_progress,
+    highlight_particle, particle_mass_from_diameter,
     base_stylesheet,
     show_data_source_dialog,
     run_all_fits_on_subset, compute_outlier_indices,
@@ -166,6 +169,9 @@ class MassMethodWidget(QMainWindow):
         """Re-apply themed stylesheet; refresh plots and dynamic labels."""
         p = theme.palette
         self.setStyleSheet(base_stylesheet(p) + section_stylesheet(p))
+        for attr in ("remove_particles_btn", "remove_standards_btn"):
+            if getattr(self, attr, None) is not None:
+                style_remove_button(getattr(self, attr), p)
         for attr in (
             "plot_widget", "regression_plot", "calibration_raw_plot",
             "diameter_distribution_plot",
@@ -176,6 +182,10 @@ class MassMethodWidget(QMainWindow):
                     w.setBackground(p.plot_bg)
                 except Exception:
                     _itk_log.exception("Handled exception in apply_theme")
+        if getattr(self, '_last_regression', None):
+            self._draw_regression()
+        if getattr(self, '_last_diameters', None):
+            self.plot_multiple_diameter_distributions(self._last_diameters)
         for attr in ("folder_status_label", "element_selection_label"):
             lbl = getattr(self, attr, None)
             if lbl is None:
@@ -274,12 +284,19 @@ class MassMethodWidget(QMainWindow):
         folder_button = QPushButton("Select Particle Folders")
         folder_button.clicked.connect(self.select_particle_folders)
         folder_button.setMaximumWidth(210)
+        self.remove_particles_btn = make_remove_button(
+            self.remove_selected_particle_samples,
+            "Remove the selected particle samples: their data, detection results and table rows")
         btn_row.addWidget(folder_button)
         btn_row.addStretch()
+        btn_row.addWidget(self.remove_particles_btn)
         layout.addLayout(btn_row)
 
         self.folder_list = QListWidget()
         self.folder_list.setAlternatingRowColors(True)
+        self.folder_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.folder_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.folder_list.customContextMenuRequested.connect(self._show_particle_list_menu)
         self.folder_list.itemClicked.connect(self.on_folder_selected)
         self.folder_list.setMinimumHeight(120)
         self.folder_list.setMaximumHeight(180)
@@ -388,7 +405,7 @@ class MassMethodWidget(QMainWindow):
 
         controls_row = QHBoxLayout()
         self.sample_combo = NoWheelComboBox()
-        self.sample_combo.currentTextChanged.connect(self.update_sample_visualization)
+        self.sample_combo.currentTextChanged.connect(lambda _t: self.update_sample_visualization())
         self.visualization_status_label = QLabel("Click a sample row above to preview its signal")
         self.visualization_status_label.setObjectName("hintLabel")
         controls_row.addWidget(QLabel("Sample:"))
@@ -428,15 +445,12 @@ class MassMethodWidget(QMainWindow):
         left_hdr.setObjectName("panelHeader")
         ll.addWidget(left_hdr)
         ll.addWidget(self._hint("Click a particle row to zoom in on it in the plot above."))
-        self.results_table = QTableWidget()
-        self.results_table.setColumnCount(5)
-        self.results_table.setHorizontalHeaderLabels([
-            'Sample Name', 'Peak Start (s)', 'Peak End (s)', 'Total Counts', 'Peak Height (counts)'
-        ])
+        self.results_table = ResultsTableView()
+        self.results_table.set_table(self._RESULT_HEADERS, [])
         self.results_table.horizontalHeader().setStretchLastSection(True)
         self.results_table.setAlternatingRowColors(True)
-        self.results_table.setSortingEnabled(True)
-        self.results_table.itemSelectionChanged.connect(self.highlight_selected_particle)
+        self.results_table.selectionModel().selectionChanged.connect(
+            lambda *_: self.highlight_selected_particle())
         self.results_table.setMinimumHeight(200)
         ll.addWidget(self.results_table)
         export_btn = QPushButton("Export Data to CSV")
@@ -458,6 +472,10 @@ class MassMethodWidget(QMainWindow):
         self.file_info_table.horizontalHeader().setStretchLastSection(True)
         self.file_info_table.setAlternatingRowColors(True)
         self.file_info_table.setMinimumHeight(200)
+        self.file_info_table.itemChanged.connect(self._on_file_info_edited)
+        rl.addWidget(self._hint(
+            "Files with the same diameter are averaged into one point (mean ± SD). "
+            "Type -1 as the diameter to leave a file out of the calibration."))
         rl.addWidget(self.file_info_table)
 
         splitter.addWidget(left)
@@ -488,12 +506,11 @@ class MassMethodWidget(QMainWindow):
         reg_hdr.setObjectName("panelHeader")
         layout.addWidget(reg_hdr)
 
-        self.regression_plot = pg.PlotWidget()
-        self.regression_plot.setBackground(theme.palette.plot_bg)
+        self.regression_plot = StyledPlotWidget()
         self.regression_plot.setLabel('left', 'Average Counts')
-        self.regression_plot.setLabel('bottom', 'Particle Mass (fg)')
-        self.regression_plot.showGrid(x=True, y=True, alpha=0.3)
-        self.regression_plot.setMinimumHeight(280)
+        self.regression_plot.setLabel('bottom', 'Particle Mass', units='fg')
+        self.regression_plot.setMinimumHeight(320)
+        self.regression_plot.legend.anchor((1, 1), (1, 1), offset=(-20, -60))
         layout.addWidget(self.regression_plot)
 
         self.calculate_button = QPushButton("Calculate Mass and Regression")
@@ -528,12 +545,10 @@ class MassMethodWidget(QMainWindow):
         diam_hdr.setObjectName("panelHeader")
         layout.addWidget(diam_hdr)
 
-        self.diameter_distribution_plot = pg.PlotWidget()
-        self.diameter_distribution_plot.setBackground(theme.palette.plot_bg)
-        self.diameter_distribution_plot.setLabel('left', 'Frequency')
-        self.diameter_distribution_plot.setLabel('bottom', 'Diameter (nm)')
-        self.diameter_distribution_plot.showGrid(x=True, y=True, alpha=0.3)
-        self.diameter_distribution_plot.setMinimumHeight(280)
+        self.diameter_distribution_plot = StyledPlotWidget()
+        self.diameter_distribution_plot.setLabel('left', 'Particles')
+        self.diameter_distribution_plot.setLabel('bottom', 'Diameter', units='nm')
+        self.diameter_distribution_plot.setMinimumHeight(320)
         layout.addWidget(self.diameter_distribution_plot)
     
     def _build_ionic_calibration_content(self):
@@ -562,6 +577,10 @@ class MassMethodWidget(QMainWindow):
         fill_m1_btn.setToolTip("Fill selected cells with -1 to exclude from calibration")
         folder_controls.addWidget(fill_m1_btn)
         folder_controls.addStretch()
+        self.remove_standards_btn = make_remove_button(
+            self.remove_selected_standards,
+            "Remove every standard that has a selected cell: its data, concentration and points in the fit")
+        folder_controls.addWidget(self.remove_standards_btn)
         layout.addLayout(folder_controls)
 
         layout.addWidget(self._hint(
@@ -780,6 +799,7 @@ class MassMethodWidget(QMainWindow):
             
             self.load_element_data_for_all_samples()
             self.update_detection_parameters_table()
+            self._show_raw_signal_for_new_element()
 
             if hasattr(self, 'element_section'):
                 sym  = element['symbol']
@@ -813,6 +833,7 @@ class MassMethodWidget(QMainWindow):
                                 0, len(self.particle_folder_paths), self)
         progress.setWindowModality(Qt.WindowModal)
         progress.setMinimumDuration(500)
+        quiet_progress(self, progress)
         
         for i, folder_path in enumerate(self.particle_folder_paths):
             progress.setValue(i)
@@ -827,7 +848,26 @@ class MassMethodWidget(QMainWindow):
                 continue
                 
             try:
-                if self.folder_data[folder_path].get('is_tofwerk'):
+                stored = self._project_info_for(folder_path)
+                from_project = None
+                if stored is not None:
+                    try:
+                        from_project = read_te_channel(self._project_store[0], stored, selected_mass)
+                    except (ValueError, KeyError, OSError):
+                        from_project = None
+                if from_project is not None:
+                    isotope_signal, closest_mass, mass_index = from_project
+                    dwell_time = float(stored.get('dwell') or 0.0)
+                    time_array = np.arange(len(isotope_signal)) * dwell_time
+                    self.folder_data[folder_path].update({
+                        'isotope_signal': isotope_signal,
+                        'time_array': time_array,
+                        'dwell_time': dwell_time,
+                        'mass_index': mass_index,
+                        'selected_mass': closest_mass,
+                        'total_acquisition_time': time_array[-1] + dwell_time if len(time_array) > 0 else 0
+                    })
+                elif self.folder_data[folder_path].get('is_tofwerk'):
                     try:
                         h5_path = Path(folder_path)
                         
@@ -1107,6 +1147,45 @@ class MassMethodWidget(QMainWindow):
         else:
             self.visualization_status_label.setText(f"No signal data available for: {sample_name}")
 
+    def _show_raw_signal_for_new_element(self):
+        """Show the raw signal of the newly selected element right away.
+
+        Detection results of the previous element no longer apply, so they are
+        cleared; the plot shows the raw signal of the sample selected in the
+        sample list (or the first loaded sample) until Detect is clicked.
+        """
+        self.detection_results.clear()
+        self.detected_particles.clear()
+        self.folder_avg_counts.clear()
+        self.results_table.clear_rows()
+        if hasattr(self, 'results_section'):
+            self.results_section.set_status("")
+
+        folder_path = self.sample_combo.currentData()
+        if folder_path not in self.folder_data or 'isotope_signal' not in self.folder_data[folder_path]:
+            folder_path = next(
+                (f for f in self.particle_folder_paths
+                 if 'isotope_signal' in self.folder_data.get(f, {})),
+                None,
+            )
+            if folder_path is not None:
+                for i in range(self.sample_combo.count()):
+                    if self.sample_combo.itemData(i) == folder_path:
+                        self.sample_combo.blockSignals(True)
+                        self.sample_combo.setCurrentIndex(i)
+                        self.sample_combo.blockSignals(False)
+                        break
+        if folder_path is None:
+            return
+
+        sample_name = self.folder_data[folder_path].get('sample_name', Path(folder_path).name)
+        self.plot_raw_signal_preview(folder_path, sample_name)
+        self.visualization_status_label.setText(f"Showing raw signal preview for: {sample_name}")
+        try:
+            self._rebuild_plot_exclusion_regions()
+        except Exception:
+            _itk_log.exception("Handled exception in _show_raw_signal_for_new_element")
+
     def plot_raw_signal_preview(self, folder_path, sample_name):
         """
         Plot raw signal preview for a sample.
@@ -1146,12 +1225,12 @@ class MassMethodWidget(QMainWindow):
         self.detected_particles.clear()
         self.folder_avg_counts.clear()
         
-        self.results_table.setRowCount(0)
-        self.results_table.clearContents()
+        self.results_table.clear_rows()
         
         progress = QProgressDialog("Detecting particles...", "Cancel", 0, len(valid_samples), self)
         progress.setWindowModality(Qt.WindowModal)
         progress.setMinimumDuration(500)
+        quiet_progress(self, progress)
         
         for i, folder_path in enumerate(valid_samples):
             progress.setValue(i)
@@ -1225,9 +1304,27 @@ class MassMethodWidget(QMainWindow):
                 continue
         
         progress.setValue(len(valid_samples))
-        
-        self.update_results_table()
+
+        self._show_detected_sample()
         self.update_file_info_table()
+
+    def _show_detected_sample(self):
+        """After detection, show a sample that has results in both the plot and the table.
+
+        Keeps the selected sample when it was detected; otherwise switches to the
+        first detected sample.
+        """
+        if self.detection_results and self.sample_combo.currentData() not in self.detection_results:
+            for i in range(self.sample_combo.count()):
+                if self.sample_combo.itemData(i) in self.detection_results:
+                    self.sample_combo.blockSignals(True)
+                    self.sample_combo.setCurrentIndex(i)
+                    self.sample_combo.blockSignals(False)
+                    break
+        if self.sample_combo.currentData() in self.detection_results:
+            self.update_sample_visualization()
+        else:
+            self.update_results_table()
 
     def toggle_calibration_view(self):
         """
@@ -1408,74 +1505,63 @@ class MassMethodWidget(QMainWindow):
 
         return params
 
+    _RESULT_HEADERS = ['Sample Name', 'Peak Start (s)', 'Peak End (s)',
+                       'Total Counts', 'Peak Height (counts)']
+    _RESULT_FORMATS = [None, '.4f', '.4f', '.0f', '.0f']
+
     def update_results_table(self):
         """
-        Update results table with all detection results.
-        
-        Populates table with detected particles from all samples, includes color coding
-        based on signal-to-noise ratio for quality assessment.
+        Fill the Detection Results table with the particles of the selected sample.
+
+        The section header shows that sample's count and the total over all samples.
         """
-        self.results_table.setSortingEnabled(False)
-        
-        self.results_table.setRowCount(0)
-        self.results_table.clearContents()
-        
-        for folder_path, results in self.detection_results.items():
-            sample_name = results['sample_name']
-            particles = results['particles']
-            time_array = results['time_array']
-            threshold = results['threshold']
-            
-            if not particles:
-                continue
-                
-            for particle in particles:
-                if particle is None:
-                    continue
-                    
-                row_position = self.results_table.rowCount()
-                self.results_table.insertRow(row_position)
-                
-                start_time = time_array[particle['left_idx']]
-                end_time = time_array[particle['right_idx']]
-                
-                height_threshold_ratio = particle['max_height'] / threshold if threshold > 0 else 0
-                
-                sample_item = NumericTableWidgetItem(str(sample_name))
-                sample_item.setData(Qt.UserRole, {'folder_path': folder_path, 'particle': particle})
-                
-                start_item = NumericTableWidgetItem(f"{start_time:.4f}")
-                start_item.setData(Qt.UserRole, {'folder_path': folder_path, 'particle': particle})
-                
-                end_item = NumericTableWidgetItem(f"{end_time:.4f}")
-                end_item.setData(Qt.UserRole, {'folder_path': folder_path, 'particle': particle})
-                
-                counts_item = NumericTableWidgetItem(f"{particle['total_counts']:.0f}")
-                counts_item.setData(Qt.UserRole, {'folder_path': folder_path, 'particle': particle})
-                
-                height_item = NumericTableWidgetItem(f"{particle['max_height']:.0f}")
-                height_item.setData(Qt.UserRole, {'folder_path': folder_path, 'particle': particle})
-                
-                color = snr_to_color(height_threshold_ratio)
-                
-                for item in [sample_item, start_item, end_item, counts_item, height_item]:
-                    item.setBackground(color)
-                
-                self.results_table.setItem(row_position, 0, sample_item)
-                self.results_table.setItem(row_position, 1, start_item)
-                self.results_table.setItem(row_position, 2, end_item)
-                self.results_table.setItem(row_position, 3, counts_item)
-                self.results_table.setItem(row_position, 4, height_item)
-        
-        self.results_table.setSortingEnabled(True)
-        self.results_table.sortItems(0, Qt.AscendingOrder)
+        current = self.sample_combo.currentData()
+        rows = self._result_rows(current)
+        self.results_table.set_table(self._RESULT_HEADERS, rows, self._RESULT_FORMATS)
+        if self.results_table.horizontalHeader().sortIndicatorSection() < 0:
+            self.results_table.sortByColumn(0, Qt.AscendingOrder)
 
         if hasattr(self, 'results_section'):
             n = self.results_table.rowCount()
+            total = sum(len([p for p in r['particles'] if p is not None])
+                        for r in self.detection_results.values() if r.get('particles'))
             self.results_section.expand()
-            self.results_section.set_status(
-                f"{n} particle{'s' if n != 1 else ''} detected"
-            )
+            if current is not None and len(self.detection_results) > 1:
+                self.results_section.set_status(
+                    f"{n} particle{'s' if n != 1 else ''} in this sample · {total} in all samples")
+            else:
+                self.results_section.set_status(f"{n} particle{'s' if n != 1 else ''} detected")
+
+    def _result_rows(self, folder=None):
+        """Build Detection Results rows for one sample, or for all samples.
+
+        Args:
+            folder (str | None): Sample folder to keep; None keeps every sample.
+
+        Returns:
+            list[list]: Rows of visible values followed by the particle payload
+            used when a row is clicked.
+        """
+        rows = []
+        for folder_path, results in self.detection_results.items():
+            if folder is not None and folder_path != folder:
+                continue
+            particles = results['particles']
+            if not particles:
+                continue
+            time_array = results['time_array']
+            for particle in particles:
+                if particle is None:
+                    continue
+                rows.append([
+                    str(results['sample_name']),
+                    float(time_array[particle['left_idx']]),
+                    float(time_array[particle['right_idx']]),
+                    float(particle['total_counts']),
+                    float(particle['max_height']),
+                    {'folder_path': folder_path, 'particle': particle},
+                ])
+        return rows
 
     def highlight_selected_particle(self):
         """
@@ -1484,23 +1570,24 @@ class MassMethodWidget(QMainWindow):
         Retrieves particle data from selected table row, switches to appropriate sample,
         zooms plot to particle location, and highlights the particle.
         """
-        selected_items = self.results_table.selectedItems()
-        if not selected_items:
+        row = self.results_table.selected_row()
+        if row is None:
             return
-            
-        item_data = selected_items[0].data(Qt.UserRole)
+
+        item_data = self.results_table.cell_value(row, 5)
         if not item_data:
             return
-            
+
         folder_path = item_data['folder_path']
         particle = item_data['particle']
-        
-        for i in range(self.sample_combo.count()):
-            if self.sample_combo.itemData(i) == folder_path:
-                self.sample_combo.setCurrentIndex(i)
-                break
-        
-        self.update_sample_visualization()
+
+        if self.sample_combo.currentData() != folder_path:
+            for i in range(self.sample_combo.count()):
+                if self.sample_combo.itemData(i) == folder_path:
+                    self.sample_combo.setCurrentIndex(i)
+                    break
+
+        self.update_sample_visualization(refresh_table=False)
         
         if folder_path in self.detection_results:
             results = self.detection_results[folder_path]
@@ -1531,11 +1618,16 @@ class MassMethodWidget(QMainWindow):
             self.current_highlighted_particle
         )
 
-    def update_sample_visualization(self):
+    def update_sample_visualization(self, refresh_table=True):
         """
         Update visualization for selected sample.
-        
-        Displays detection results for the currently selected sample in the combo box.
+
+        Displays detection results for the currently selected sample in the combo
+        box, and limits the Detection Results table to that sample.
+
+        Args:
+            refresh_table (bool): Refill the table; False when called from a
+                table click, so the selection is not reset.
         """
         if not self.detection_results:
             return
@@ -1543,9 +1635,11 @@ class MassMethodWidget(QMainWindow):
         current_data = self.sample_combo.currentData()
         if not current_data or current_data not in self.detection_results:
             return
-            
+
+        if refresh_table:
+            self.update_results_table()
         results = self.detection_results[current_data]
-        
+
         self.plot_sample_results(
             results['sample_name'],
             results['signal'],
@@ -1580,6 +1674,7 @@ class MassMethodWidget(QMainWindow):
         Populates table with sample names, particle diameters, densities, and average counts
         for all processed samples.
         """
+        self.file_info_table.blockSignals(True)
         try:
             self.file_info_table.setRowCount(len(self.particle_folder_paths))
             self.file_info_table.setColumnCount(4)
@@ -1609,6 +1704,23 @@ class MassMethodWidget(QMainWindow):
         except Exception as e:
             _itk_log.exception("Handled exception in update_file_info_table")
             _itk_log.error(f"Error updating file info table: {str(e)}")
+        finally:
+            self.file_info_table.blockSignals(False)
+
+    def _on_file_info_edited(self, item):
+        """Keep edited diameters and densities, so -1 (excluded) survives a re-detection."""
+        row, col = item.row(), item.column()
+        if col not in (1, 2) or row >= len(self.particle_folder_paths):
+            return
+        try:
+            value = float(item.text())
+        except ValueError:
+            return
+        folder_path = self.particle_folder_paths[row]
+        if col == 1:
+            self.folder_diameters[folder_path] = value
+        else:
+            self.folder_densities[folder_path] = value
 
     def on_folder_selected(self, item):
         """
@@ -1665,125 +1777,125 @@ class MassMethodWidget(QMainWindow):
             QMessageBox.warning(self, "No Data", "Please detect particles first.")
             return
 
-        masses = []
-        counts = []
-        folders = []
-
         progress_dialog = QDialog(self)
         progress_dialog.setWindowTitle("Calculating Regression")
         progress_layout = QVBoxLayout(progress_dialog)
-        
         progress_label = QLabel("Processing folder data...")
         progress_layout.addWidget(progress_label)
-        
         progress_bar = QProgressBar()
         progress_bar.setRange(0, self.file_info_table.rowCount())
         progress_layout.addWidget(progress_bar)
-        
         progress_dialog.setModal(True)
         progress_dialog.show()
         QApplication.processEvents()
 
         try:
+            groups = {}
             for row in range(self.file_info_table.rowCount()):
                 progress_bar.setValue(row + 1)
                 QApplication.processEvents()
-                
-                diameter = float(self.file_info_table.item(row, 1).text())
-                density = float(self.file_info_table.item(row, 2).text())
-                avg_total_count_item = self.file_info_table.item(row, 3)
-                
-                if avg_total_count_item and avg_total_count_item.text() and avg_total_count_item.text() != "N/A":
-                    avg_total_count = float(avg_total_count_item.text())
-                    folder_name = self.file_info_table.item(row, 0).text()
+                try:
+                    diameter = float(self.file_info_table.item(row, 1).text())
+                    density = float(self.file_info_table.item(row, 2).text())
+                except (AttributeError, ValueError):
+                    continue
+                if diameter <= 0 or density <= 0:
+                    continue
+                count_item = self.file_info_table.item(row, 3)
+                if not count_item or count_item.text() in ("", "N/A"):
+                    continue
+                avg_total_count = float(count_item.text())
+                if avg_total_count <= 0:
+                    continue
+                key = (diameter, density)
+                groups.setdefault(key, []).append(avg_total_count)
 
-                    if avg_total_count > 0:
-                        mass = self.calculate_particle_mass(diameter, density)
-                        masses.append(mass)
-                        counts.append(avg_total_count)
-                        folders.append(folder_name)
-
-            if len(masses) == 0:
-                progress_dialog.close()
+            progress_dialog.close()
+            if not groups:
                 QMessageBox.warning(self, "Insufficient Data", "No valid data points for regression.")
                 return
 
-            is_single_folder = len(set(folders)) == 1
+            points = []
+            for (diameter, density), values in sorted(groups.items()):
+                arr = np.asarray(values, dtype=float)
+                points.append({
+                    'diameter': diameter,
+                    'mass': self.calculate_particle_mass(diameter, density),
+                    'mean': float(arr.mean()),
+                    'sd': float(arr.std(ddof=1)) if arr.size > 1 else 0.0,
+                    'n': int(arr.size),
+                })
 
+            masses = np.array([0.0] + [pt['mass'] for pt in points])
+            means = np.array([0.0] + [pt['mean'] for pt in points])
+            if len(points) == 1:
+                slope = points[0]['mean'] / points[0]['mass']
+                intercept = 0.0
+                r2 = None
+            else:
+                slope, intercept, r_value, _, _ = stats.linregress(masses, means)
+                r2 = r_value ** 2
+
+            self.particle_calibration_slope = slope
+            self._last_regression = {'points': points, 'slope': slope,
+                                     'intercept': intercept, 'r2': r2}
             if hasattr(self, 'analysis_section'):
                 self.analysis_section.expand()
-
-            self.regression_plot.clear()
-
-            if is_single_folder:
-                progress_label.setText("Calculating single-folder regression...")
-                QApplication.processEvents()
-                
-                mass = masses[0]
-                count = counts[0]
-                slope = count / mass
-                
-                plot_masses = np.array([0, mass])
-                plot_counts = np.array([0, count])
-                
-                scatter = pg.ScatterPlotItem(plot_masses, plot_counts, size=10, brush=pg.mkBrush(30, 30, 255, 200))
-                self.regression_plot.addItem(scatter)
-                
-                line = self.regression_plot.plot(plot_masses, slope * plot_masses, pen=pg.mkPen('r', width=2))
-                
-                text = pg.TextItem(f"Slope: {slope:.2e}", anchor=(0, 1), color='k')
-                text.setFont(QFont("Arial", 12))
-                self.regression_plot.addItem(text)
-                text.setPos(mass * 0.6, count * 0.9)
-                
-                self.regression_plot.setXRange(-mass * 0.05, mass * 1.05)
-                self.regression_plot.setYRange(-count * 0.05, count * 1.05)
-                
-                progress_dialog.close()
-                
+            self._draw_regression()
+            if r2 is None:
                 QMessageBox.information(self, "Regression Results", f"Slope: {slope:.2e}")
-                self.particle_calibration_slope = slope
 
-            else:
-                progress_label.setText("Calculating multi-folder regression...")
-                QApplication.processEvents()
-                
-                masses = np.array(masses)
-                counts = np.array(counts)
-
-                sort_indices = np.argsort(masses)
-                masses = masses[sort_indices]
-                counts = counts[sort_indices]
-
-                masses = np.insert(masses, 0, 0)
-                counts = np.insert(counts, 0, 0)
-
-                slope, intercept, r_value, _, _ = stats.linregress(masses, counts)
-
-                scatter = pg.ScatterPlotItem(masses, counts, size=10, brush=pg.mkBrush(30, 30, 255, 200))
-                self.regression_plot.addItem(scatter)
-
-                line = self.regression_plot.plot(masses, slope * masses + intercept, pen=pg.mkPen('r', width=2))
-                text = pg.TextItem(f"Slope: {slope:.2e}\nR²: {r_value**2:.4f}", anchor=(0, 1), color='k')
-                text.setFont(QFont("Arial", 12))
-                self.regression_plot.addItem(text)
-                text.setPos(masses[-1] * 0.6, counts[-1] * 0.9)
-
-                self.regression_plot.setXRange(-masses[-1] * 0.05, masses[-1] * 1.05)
-                self.regression_plot.setYRange(-counts[-1] * 0.05, counts[-1] * 1.05)
-
-                progress_dialog.close()
-                
-                self.particle_calibration_slope = slope
-
-            self.regression_plot.setLabel('left', 'Average Counts')
-            self.regression_plot.setLabel('bottom', 'Particle Mass (fg)')
-            self.regression_plot.showGrid(x=True, y=True, alpha=0.3)
-            
         except Exception as e:
             progress_dialog.close()
             QMessageBox.critical(self, "Regression Error", f"Error during regression calculation: {str(e)}")
-    
+
+    def _draw_regression(self):
+        """Draw the mass calibration: one mean ± SD point per diameter and the fit line."""
+        data = getattr(self, '_last_regression', None)
+        if not data:
+            return
+        p = theme.palette
+        plot = self.regression_plot
+        plot.clear()
+        points = data['points']
+        slope, intercept, r2 = data['slope'], data['intercept'], data['r2']
+
+        x = np.array([pt['mass'] for pt in points])
+        y = np.array([pt['mean'] for pt in points])
+        sd = np.array([pt['sd'] for pt in points])
+        x_max = float(x.max()) if x.size else 1.0
+        y_max = float((y + sd).max()) if y.size else 1.0
+
+        fit_x = np.array([0.0, x_max * 1.05])
+        plot.plot(fit_x, slope * fit_x + intercept,
+                  pen=pg.mkPen(p.danger, width=2), name="Linear fit")
+        if np.any(sd > 0):
+            beam = x_max * 0.015
+            plot.addItem(pg.ErrorBarItem(x=x, y=y, top=sd, bottom=sd, beam=beam,
+                                         pen=pg.mkPen(p.plot_fg, width=1.5)))
+        plot.addItem(pg.ScatterPlotItem(x=x, y=y, size=11, brush=pg.mkBrush(p.accent),
+                                        pen=pg.mkPen(p.plot_fg, width=1), name="Mean ± SD"))
+
+        lines = [f"Slope: {slope:.3e} counts/fg"]
+        if r2 is not None:
+            lines.append(f"R²: {r2:.4f}")
+        for pt in points:
+            sd_txt = f" ± {pt['sd']:.1f}" if pt['n'] > 1 else ""
+            lines.append(f"{pt['diameter']:g} nm (n={pt['n']}): {pt['mean']:.1f}{sd_txt}")
+        box = pg.TextItem(
+            html=(f"<div style='background:{p.bg_secondary}; color:{p.text_primary};"
+                  f" border:1px solid {p.border}; padding:6px 9px; font-size:11pt;'>"
+                  + "<br>".join(lines) + "</div>"),
+            anchor=(0, 0))
+        box.setPos(x_max * 0.02, y_max * 1.08)
+        plot.addItem(box)
+
+        plot.setXRange(-x_max * 0.05, x_max * 1.08, padding=0)
+        plot.setYRange(-y_max * 0.05, y_max * 1.12, padding=0)
+        plot.setLabel('left', 'Average Counts')
+        plot.setLabel('bottom', 'Particle Mass', units='fg')
+        plot.apply_theme()
+
     def select_calibration_folders(self):
         """
         Enhanced calibration folder selection dialog matching particle folder approach.
@@ -2608,10 +2720,18 @@ class MassMethodWidget(QMainWindow):
         for conc in common_concentrations:
             action = concentrations_menu.addAction(f"{conc} ppb")
             conc_actions[action] = conc
-        
+
+        remove_action = None
+        rows = sorted({index.row() for index in self.concentration_table.selectedIndexes()})
+        if rows:
+            menu.addSeparator()
+            remove_action = menu.addAction(remove_menu_icon(), remove_menu_label(len(rows)))
+
         action = menu.exec(self.concentration_table.viewport().mapToGlobal(position))
-        
-        if action == set_minus_one_action:
+
+        if remove_action is not None and action == remove_action:
+            self.remove_selected_standards()
+        elif action == set_minus_one_action:
             self.set_selected_cells_to_minus_one()
         elif action == set_zero_action:
             self.set_selected_concentration_cells_to_value(0)
@@ -2829,9 +2949,12 @@ class MassMethodWidget(QMainWindow):
         self.concentration_table.setItemDelegateForColumn(1, numeric_delegate)
         
         for i, folder_path in enumerate(self.calibration_folder_paths):
+            cached_name = (self.calibration_data_cache.get(folder_path) or {}).get('sample_name')
             try:
                 run_info_path = Path(folder_path) / "run.info"
-                if run_info_path.exists():
+                if cached_name:
+                    sample_name = cached_name
+                elif run_info_path.exists():
                     with open(run_info_path, "r", encoding="utf-8", errors="replace") as fp:
                         run_info = json.load(fp)
                     sample_name = run_info.get("SampleName", Path(folder_path).name)
@@ -2902,6 +3025,7 @@ class MassMethodWidget(QMainWindow):
         progress = QProgressDialog("Calculating calibration...", None, 0, 100, self)
         progress.setWindowModality(Qt.WindowModal)
         progress.setMinimumDuration(500)
+        quiet_progress(self, progress)
         progress.setValue(10)
         QApplication.processEvents()
 
@@ -2958,6 +3082,14 @@ class MassMethodWidget(QMainWindow):
 
                     element_symbol = self.selected_element.get('symbol', '')
                     isotope_key = f"{element_symbol}-{element_mass}"
+
+                    if abs(float(np.asarray(masses)[mass_index]) - float(element_mass)) > 1.0:
+                        progress.close()
+                        QMessageBox.warning(
+                            self, "Error",
+                            f"'{sample_name}' was saved in the project with another element only.\n\n"
+                            f"Load the calibration folders again to use {element_symbol}.")
+                        return
                     
                     if is_tofwerk:
                         dwell_time = cached_data['dwell_time']
@@ -3273,102 +3405,508 @@ class MassMethodWidget(QMainWindow):
 
     def plot_multiple_diameter_distributions(self, all_diameters):
         """
-        Plot histogram of particle diameters for multiple files with statistics.
-        
+        Plot one histogram of particle diameters per file, in the IsotopeTrack plot style.
+
+        The statistics box lists each file, then, for diameters measured in several
+        files, the mean ± SD of the file means.
+
         Args:
-            all_diameters: Dictionary mapping folder names to lists of particle diameters
-            
-        Creates overlaid histogram plot with color coding, legend, and statistics panel.
+            all_diameters (dict): Folder name -> list of particle diameters (nm).
         """
-        self.diameter_distribution_plot.clear()
-        
+        self._last_diameters = all_diameters
+        plot = self.diameter_distribution_plot
+        plot.clear()
+        p = theme.palette
+
         if not all_diameters:
-            self.diameter_distribution_plot.setTitle("No particle data available")
+            plot.setTitle("No particle data available")
             return
-        
-        colors = HISTOGRAM_COLORS    
-        
-        legend_items = []
-        
-        all_stats = {}
-        combined_diameters = []
-        
+        plot.setTitle(None)
+
+        nominal = {}
+        for folder_path in self.particle_folder_paths:
+            nominal[Path(folder_path).name] = self.folder_diameters.get(folder_path, self.default_diameter)
+
+        colors = HISTOGRAM_COLORS
         global_min = float('inf')
         global_max = float('-inf')
-        
+        y_top = 0
+        file_lines = []
+        by_size = {}
+
         for folder_idx, (folder_name, diameters) in enumerate(all_diameters.items()):
             if not diameters:
                 continue
-                
-            color_idx = folder_idx % len(colors)
-            color = colors[color_idx]
-            
+            color = colors[folder_idx % len(colors)]
             global_min = min(global_min, min(diameters))
             global_max = max(global_max, max(diameters))
-            
-            combined_diameters.extend(diameters)
-            
-            y, x = np.histogram(diameters, bins=30)
-            x = (x[:-1] + x[1:]) / 2
-            
-            bargraph = pg.BarGraphItem(x=x, height=y, width=(x[1]-x[0])*0.8, brush=pg.mkBrush(*color), name=folder_name)
-            self.diameter_distribution_plot.addItem(bargraph)
-            
-            legend_items.append((bargraph, folder_name))
-            
-            stats = {
-                'mean': np.mean(diameters),
-                'median': np.median(diameters),
-                'std': np.std(diameters),
-                'min': np.min(diameters),
-                'max': np.max(diameters),
-                'count': len(diameters),
-                'p10': np.percentile(diameters, 10),
-                'p90': np.percentile(diameters, 90)
-            }
-            all_stats[folder_name] = stats
-        
-        legend = self.diameter_distribution_plot.addLegend()
-        for item, name in legend_items:
-            legend.addItem(item, name)
-        
-        stats_text = "Size Distribution Statistics:\n\n"
-        for folder_name, stats in all_stats.items():
-            stats_text += f"{folder_name}:\n"
-            stats_text += f"  Mean: {stats['mean']:.2f} nm\n"
-            stats_text += f"  Median: {stats['median']:.2f} nm\n"
-            stats_text += f"  Range: {stats['min']:.1f} - {stats['max']:.1f} nm\n"
-            stats_text += f"  Count: {stats['count']}\n"
-        
-        text_item = pg.TextItem(
-            text=stats_text,
-            color='k',
-            anchor=(1, 0),
-            border=pg.mkPen('k'),
-            fill=pg.mkBrush(255, 255, 255, 220)
-        )
-        self.diameter_distribution_plot.addItem(text_item)
-        
-        view_box = self.diameter_distribution_plot.getViewBox()
-        view_range = view_box.viewRange()
-        if view_range and len(view_range) >= 2:
-            x_max = view_range[0][1]
-            y_max = view_range[1][1]
-            text_item.setPos(x_max - 20, y_max - 20)
+
+            y, edges = np.histogram(diameters, bins=30)
+            x = (edges[:-1] + edges[1:]) / 2
+            y_top = max(y_top, int(y.max()))
+            plot.addItem(pg.BarGraphItem(x=x, height=y, width=(x[1] - x[0]) * 0.8,
+                                         brush=pg.mkBrush(*color), pen=pg.mkPen(None),
+                                         name=folder_name))
+
+            mean = float(np.mean(diameters))
+            file_lines.append(
+                f"<b>{folder_name}</b>: {mean:.1f} nm (median {np.median(diameters):.1f}, "
+                f"n={len(diameters)})")
+            size = nominal.get(folder_name)
+            if size is not None and size > 0:
+                by_size.setdefault(size, []).append(mean)
+
+        size_lines = []
+        for size, means in sorted(by_size.items()):
+            if len(means) > 1:
+                arr = np.asarray(means)
+                size_lines.append(f"<b>{size:g} nm</b> ({len(means)} files): "
+                                  f"{arr.mean():.1f} ± {arr.std(ddof=1):.1f} nm")
+
+        lines = file_lines + ([""] + size_lines if size_lines else [])
+        box = pg.TextItem(
+            html=(f"<div style='background:{p.bg_secondary}; color:{p.text_primary};"
+                  f" border:1px solid {p.border}; padding:6px 9px; font-size:10pt;'>"
+                  + "<br>".join(lines) + "</div>"),
+            anchor=(0, 0))
+        x_padding = (global_max - global_min) * 0.1 or 1.0
+        box.setPos(global_min - x_padding * 0.9, y_top * 1.25)
+        plot.addItem(box)
+
+        plot.setXRange(global_min - x_padding, global_max + x_padding, padding=0)
+        plot.setYRange(0, y_top * 1.3 if y_top else 1, padding=0)
+        plot.setLabel('left', 'Particles')
+        plot.setLabel('bottom', 'Diameter', units='nm')
+        plot.apply_theme()
+
+    def _show_particle_list_menu(self, position):
+        """Offer to remove the selected particle samples from the list's context menu.
+
+        Args:
+            position (QPoint): Click position in the list viewport.
+        """
+        rows = sorted({index.row() for index in self.folder_list.selectedIndexes()})
+        if not rows:
+            return
+        menu = QMenu(self)
+        action = menu.addAction(remove_menu_icon(), remove_menu_label(len(rows)))
+        if menu.exec(self.folder_list.viewport().mapToGlobal(position)) == action:
+            self.remove_selected_particle_samples()
+
+    def _clear_transport_results(self):
+        """Clear the regression and transport rate results that no longer apply."""
+        self._last_regression = None
+        if hasattr(self, 'particle_calibration_slope'):
+            del self.particle_calibration_slope
+        if getattr(self, 'regression_plot', None) is not None:
+            self.regression_plot.clear()
+        self.transport_rate_table.setRowCount(0)
+
+    def remove_selected_particle_samples(self):
+        """Remove the particle samples selected in the list, after confirmation.
+
+        Their data, detection results, diameters, densities, exclusions and
+        detection rows are dropped. The regression and transport rate are
+        cleared so the user calculates again.
+        """
+        rows = sorted({index.row() for index in self.folder_list.selectedIndexes()})
+        folders = [self.particle_folder_paths[r] for r in rows if r < len(self.particle_folder_paths)]
+        if not folders:
+            QMessageBox.information(self, "Remove Samples",
+                                    "Select the particle samples you want to remove in the list.")
+            return
+        names = [self.folder_data.get(f, {}).get('sample_name', Path(f).name) for f in folders]
+        if not confirm_remove_samples(
+                self, names, "The regression and transport rate are cleared — calculate again."):
+            return
+
+        for folder_path, name in zip(folders, names):
+            self.particle_folder_paths.remove(folder_path)
+            self.folder_data.pop(folder_path, None)
+            self.sample_name_to_folder.pop(name, None)
+            for store in (self.detection_results, self.detected_particles, self.folder_avg_counts,
+                          self.folder_diameters, self.folder_densities):
+                store.pop(folder_path, None)
+            self._exclusion_regions_by_sample.pop(name, None)
+        remove_rows_by_name(self.detection_params_table, set(names))
+        self._clear_transport_results()
+
+        self.update_folder_list()
+        self.enable_ui_elements()
+        self.update_file_info_table()
+        if self.detection_results:
+            self._show_detected_sample()
         else:
-            text_item.setPos(global_max, 0)
-        
-        self.diameter_distribution_plot.setLabel('left', 'Particles')
-        self.diameter_distribution_plot.setLabel('bottom', 'Diameter (nm)')
-        self.diameter_distribution_plot.setTitle("Particle Size Distribution (Multiple Files)")
-        self.diameter_distribution_plot.showGrid(x=True, y=True, alpha=0.3)
-        
-        x_padding = (global_max - global_min) * 0.1
-        self.diameter_distribution_plot.setXRange(global_min - x_padding, global_max + x_padding)
+            self.results_table.clear_rows()
+            self.plot_widget.clear()
+        mark_project_unsaved(self)
+
+    def remove_selected_standards(self):
+        """Remove every ionic standard that has a selected cell, after confirmation.
+
+        The standard's data, concentration row and exclusions are dropped. The
+        ionic fit and transport rate are cleared so the user calculates again.
+        """
+        rows = sorted({index.row() for index in self.concentration_table.selectedIndexes()})
+        rows = [r for r in rows if r < len(self.calibration_folder_paths)]
+        if not rows:
+            QMessageBox.information(self, "Remove Standards",
+                                    "Select a cell in the rows of the standards you want to remove.")
+            return
+        names = []
+        for row in rows:
+            item = self.concentration_table.item(row, 0)
+            names.append(item.text() if item else f"Row {row + 1}")
+        if not confirm_remove_samples(
+                self, names, "The ionic calibration and transport rate are cleared — calculate again."):
+            return
+
+        self.concentration_table.blockSignals(True)
+        try:
+            for row in reversed(rows):
+                folder_path = self.calibration_folder_paths.pop(row)
+                self.calibration_data_cache.pop(folder_path, None)
+                self._ionic_cal_exclusions_sample.pop(folder_path, None)
+                for key in [k for k in self._ionic_cal_exclusions_element
+                            if isinstance(k, tuple) and k and k[0] == folder_path]:
+                    self._ionic_cal_exclusions_element.pop(key, None)
+                self.ionic_excluded_folders.discard(folder_path)
+                self.concentration_table.removeRow(row)
+        finally:
+            self.concentration_table.blockSignals(False)
+
+        for attr in ('ionic_calibration_slope', 'ionic_calibration_intercept',
+                     'ionic_calibration_r_squared'):
+            if hasattr(self, attr):
+                delattr(self, attr)
+        self.ionic_calibration_result = None
+        self.transport_rate_table.setRowCount(0)
+        self.concentration_table.clearSelection()
+        mark_project_unsaved(self)
+
+    def _project_info_for(self, folder_path):
+        """Return where a particle sample is stored in the project file, or None.
+
+        Args:
+            folder_path (str): Sample source.
+
+        Returns:
+            dict | None: Entry of the TE index for this sample.
+        """
+        store = getattr(self, '_project_store', None)
+        if not store or not store[0]:
+            return None
+        return store[1].get(folder_path)
+
+    def attach_project_store(self, project_path, index, ionic_index=None):
+        """Read the samples stored in a project file from now on.
+
+        Args:
+            project_path (str): Project file path.
+            index (dict): Particle sample source -> stored entry.
+            ionic_index (dict | None): Ionic standard source -> stored entry.
+        """
+        self._project_store = (project_path, dict(index or {}))
+        self._project_ionic_index = dict(ionic_index or {})
+
+    def _standard_element_signal(self, cached, element_mass):
+        """Return the selected element signal of one cached ionic standard.
+
+        Args:
+            cached (dict): Entry of ``calibration_data_cache``.
+            element_mass (float): Selected isotope mass.
+
+        Returns:
+            tuple | None: (signal, stored mass, dwell time), or None.
+        """
+        if cached.get('status') != 'Loaded' or cached.get('signals') is None:
+            return None
+        masses = np.asarray(cached['masses'], dtype=np.float64)
+        idx = int(np.argmin(np.abs(masses - float(element_mass))))
+        if abs(masses[idx] - float(element_mass)) > 1.0:
+            return None
+        signals = cached['signals']
+        if hasattr(signals.dtype, 'names') and signals.dtype.names:
+            signal = np.asarray(signals[signals.dtype.names[idx]])
+        else:
+            signal = np.asarray(signals)[:, idx]
+        dwell = cached.get('dwell_time')
+        if dwell is None and cached.get('run_info'):
+            try:
+                run_info = cached['run_info']
+                acqtime = run_info["SegmentInfo"][0]["AcquisitionPeriodNs"] * 1e-9
+                dwell = acqtime * run_info["NumAccumulations1"] * run_info["NumAccumulations2"]
+            except (KeyError, IndexError, TypeError):
+                dwell = None
+        if dwell is None and cached.get('time_array') is not None and len(cached['time_array']) > 1:
+            dwell = float(np.mean(np.diff(cached['time_array'])))
+        if dwell is None:
+            return None
+        return signal, float(masses[idx]), float(dwell)
+
+    def export_memory_arrays(self):
+        """Return the selected element signal of every loaded sample and standard.
+
+        Only the element used for the calibration is kept in the project.
+
+        Returns:
+            tuple[dict, dict]: (particle samples, ionic standards), each
+            source -> {'channels': {mass: array}, 'time_array': array}.
+        """
+        particles = {}
+        standards = {}
+        if not self.selected_element or self.selected_element.get('selected_isotope') is None:
+            return particles, standards
+        element_mass = self.selected_element['selected_isotope']
+        for folder_path in self.particle_folder_paths:
+            data = self.folder_data.get(folder_path, {})
+            signal = data.get('isotope_signal')
+            time_array = data.get('time_array')
+            if signal is None or time_array is None:
+                continue
+            mass = data.get('selected_mass', element_mass)
+            particles[folder_path] = {'channels': {float(mass): signal}, 'time_array': time_array}
+        for folder_path in self.calibration_folder_paths:
+            found = self._standard_element_signal(self.calibration_data_cache.get(folder_path) or {}, element_mass)
+            if found is None:
+                continue
+            signal, mass, dwell = found
+            standards[folder_path] = {
+                'channels': {mass: signal},
+                'time_array': np.arange(len(signal)) * dwell,
+            }
+        return particles, standards
+
+    def export_project_state(self):
+        """Return the window state stored inside a project file.
+
+        Detected particles and the ionic fit are not stored: they are computed
+        again on restore from the same signals and settings. Must be called on
+        the GUI thread.
+
+        Returns:
+            dict: Session state.
+        """
+        from save_export.te_store import picklable_dict
+
+        folder_meta = {}
+        for folder_path in self.particle_folder_paths:
+            data = self.folder_data.get(folder_path, {})
+            folder_meta[folder_path] = {
+                'sample_name': data.get('sample_name', Path(folder_path).name),
+                'status': data.get('status', 'Unknown'),
+                'is_tofwerk': bool(data.get('is_tofwerk')),
+            }
+
+        calibration_meta = {}
+        for folder_path in self.calibration_folder_paths:
+            cached = self.calibration_data_cache.get(folder_path) or {}
+            calibration_meta[folder_path] = picklable_dict({
+                key: cached.get(key) for key in
+                ('sample_name', 'status', 'source_type', 'is_tofwerk', 'run_info')
+            })
+
+        detection_params = []
+        for row in range(self.detection_params_table.rowCount()):
+            item = self.detection_params_table.item(row, 0)
+            detection_params.append({
+                'sample_name': item.text() if item else '',
+                'params': self.get_sample_detection_parameters(row),
+            })
+
+        concentration_rows = []
+        for row in range(self.concentration_table.rowCount()):
+            item = self.concentration_table.item(row, 1)
+            unit = self.concentration_table.cellWidget(row, 2)
+            concentration_rows.append({
+                'conc': item.text() if item else '-1',
+                'unit': unit.currentText() if unit is not None else 'ppb',
+            })
+
+        transport_rows = []
+        for row in range(self.transport_rate_table.rowCount()):
+            values = []
+            for col in range(self.transport_rate_table.columnCount()):
+                item = self.transport_rate_table.item(row, col)
+                values.append(item.text() if item else '')
+            transport_rows.append(values)
+
+        return {
+            'particle_folder_paths': list(self.particle_folder_paths),
+            'folder_meta': folder_meta,
+            'sample_name_to_folder': dict(self.sample_name_to_folder),
+            'all_masses': [float(m) for m in (self.all_masses or [])],
+            'selected_element': picklable_dict(self.selected_element),
+            'default_diameter': self.default_diameter,
+            'default_density': self.default_density,
+            'folder_diameters': dict(self.folder_diameters),
+            'folder_densities': dict(self.folder_densities),
+            'detection_params': detection_params,
+            'detected': bool(self.detection_results),
+            'exclusions': dict(self._exclusion_regions_by_sample),
+            'regression': getattr(self, '_last_regression', None),
+            'particle_slope': getattr(self, 'particle_calibration_slope', None),
+            'calibration_folder_paths': list(self.calibration_folder_paths),
+            'calibration_meta': calibration_meta,
+            'concentration_rows': concentration_rows,
+            'ionic_method': self.calibration_method_combo.currentText(),
+            'ionic_calibrated': hasattr(self, 'ionic_calibration_slope'),
+            'ionic_excl_element': dict(self._ionic_cal_exclusions_element),
+            'ionic_excl_sample': dict(self._ionic_cal_exclusions_sample),
+            'ionic_excluded_folders': list(self.ionic_excluded_folders),
+            'transport_rows': transport_rows,
+        }
+
+    def restore_project_state(self, state, project_path, index, ionic_index, progress=None):
+        """Restore the window from a session stored in a project file.
+
+        Samples and standards are read from the project; detection, the ionic
+        fit and the regression are computed again, then the saved tables are
+        put back.
+
+        Args:
+            state (dict): State from ``export_project_state``.
+            project_path (str | None): Project file holding the signals.
+            index (dict): Particle sample source -> stored entry.
+            ionic_index (dict): Ionic standard source -> stored entry.
+            progress (callable | None): Called with (fraction 0–1, message)
+                as the restore advances.
+        """
+        self._restoring = True
+        self._restore_progress = progress
+        try:
+            self._restore_project_state(state, project_path, index, ionic_index)
+        finally:
+            self._restoring = False
+            self._restore_progress = None
+
+    def _report_restore(self, fraction, message):
+        """Report restore progress to the caller, when it asked for it.
+
+        Args:
+            fraction (float): Progress of this widget's restore, 0–1.
+            message (str): Step description.
+        """
+        callback = getattr(self, '_restore_progress', None)
+        if callback is not None:
+            callback(fraction, message)
+
+    def _restore_project_state(self, state, project_path, index, ionic_index):
+        """Do the work of ``restore_project_state`` with progress windows hidden.
+
+        Args:
+            state (dict): State from ``export_project_state``.
+            project_path (str | None): Project file holding the signals.
+            index (dict): Particle sample source -> stored entry.
+            ionic_index (dict): Ionic standard source -> stored entry.
+        """
+        self._report_restore(0.05, "Mass method: restoring samples and standards")
+        self.attach_project_store(project_path, index, ionic_index)
+
+        self.particle_folder_paths = list(state.get('particle_folder_paths') or [])
+        self.folder_data = {}
+        for folder_path in self.particle_folder_paths:
+            meta = dict((state.get('folder_meta') or {}).get(folder_path) or {})
+            meta['data_loaded'] = False
+            self.folder_data[folder_path] = meta
+        self.sample_name_to_folder = dict(state.get('sample_name_to_folder') or {})
+        self.all_masses = list(state.get('all_masses') or []) or None
+        self.folder_diameters = dict(state.get('folder_diameters') or {})
+        self.folder_densities = dict(state.get('folder_densities') or {})
+        self._exclusion_regions_by_sample = dict(state.get('exclusions') or {})
+        self._ionic_cal_exclusions_element = dict(state.get('ionic_excl_element') or {})
+        self._ionic_cal_exclusions_sample = dict(state.get('ionic_excl_sample') or {})
+        self.ionic_excluded_folders = set(state.get('ionic_excluded_folders') or [])
+
+        if self.particle_folder_paths:
+            self.update_folder_list()
+            self.enable_ui_elements()
+
+        element = state.get('selected_element')
+        has_element = bool(element) and element.get('selected_isotope') is not None
+
+        self.calibration_folder_paths = list(state.get('calibration_folder_paths') or [])
+        self.calibration_data_cache = {}
+        for folder_path in self.calibration_folder_paths:
+            meta = dict((state.get('calibration_meta') or {}).get(folder_path) or {})
+            info = (ionic_index or {}).get(folder_path)
+            entry = dict(meta)
+            if has_element and info is not None and project_path:
+                try:
+                    signal, mass, _idx = read_te_channel(project_path, info, element['selected_isotope'])
+                    dwell = float(info.get('dwell') or 0.0)
+                    entry.update({
+                        'masses': np.array([mass]),
+                        'signals': np.asarray(signal).reshape(-1, 1),
+                        'dwell_time': dwell,
+                        'time_array': np.arange(len(signal)) * dwell,
+                        'status': 'Loaded',
+                    })
+                except (ValueError, KeyError, OSError):
+                    entry['status'] = 'Not in project: load the calibration folders again'
+            else:
+                entry['status'] = 'Not in project: load the calibration folders again'
+            self.calibration_data_cache[folder_path] = entry
+        if self.calibration_folder_paths:
+            self.update_concentration_table()
+            self.concentration_table.blockSignals(True)
+            try:
+                for row, saved in enumerate(state.get('concentration_rows') or []):
+                    if row >= self.concentration_table.rowCount():
+                        break
+                    self.concentration_table.setItem(row, 1, QTableWidgetItem(str(saved.get('conc', '-1'))))
+                    unit = self.concentration_table.cellWidget(row, 2)
+                    if unit is not None and saved.get('unit'):
+                        unit.setCurrentText(saved['unit'])
+            finally:
+                self.concentration_table.blockSignals(False)
+        if state.get('ionic_method'):
+            self.calibration_method_combo.setCurrentText(state['ionic_method'])
+
+        if not has_element:
+            return
+
+        self._report_restore(0.2, "Mass method: loading signals")
+        self.on_element_selected(dict(element))
+        self.default_diameter = state.get('default_diameter', self.default_diameter)
+        self.default_density = state.get('default_density', self.default_density)
+        for row, saved in enumerate(state.get('detection_params') or []):
+            if row < self.detection_params_table.rowCount():
+                set_detection_row_params(self.detection_params_table, row, saved.get('params') or {})
+
+        if state.get('detected'):
+            self._report_restore(0.45, "Mass method: detecting particles")
+            self.detect_particles_all_samples()
+
+        if state.get('ionic_calibrated') and self.calibration_folder_paths:
+            self._report_restore(0.75, "Mass method: recalculating the ionic calibration")
+            self.calculate_calibration()
+
+        self._report_restore(0.9, "Mass method: restoring results")
+
+        regression = state.get('regression')
+        if regression and state.get('particle_slope') is not None:
+            self._last_regression = regression
+            self.particle_calibration_slope = state['particle_slope']
+            if hasattr(self, 'analysis_section'):
+                self.analysis_section.expand()
+            self._draw_regression()
+
+        transport_rows = state.get('transport_rows') or []
+        if transport_rows:
+            self.transport_rate_table.setRowCount(len(transport_rows))
+            for row, values in enumerate(transport_rows):
+                for col, value in enumerate(values):
+                    self.transport_rate_table.setItem(row, col, QTableWidgetItem(value))
+        self._report_restore(1.0, "Mass method restored")
 
     def export_to_csv(self):
         """Export detection results to CSV file."""
-        export_table_to_csv(self.results_table, self)
+        table = ResultsTableView()
+        table.set_table(self._RESULT_HEADERS, self._result_rows(), self._RESULT_FORMATS)
+        table.sortByColumn(0, Qt.AscendingOrder)
+        export_table_to_csv(table, self)
+        table.deleteLater()
     
 
 if __name__ == '__main__':

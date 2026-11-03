@@ -266,7 +266,8 @@ SECTIONS: tuple[tuple[str, frozenset], ...] = (
     ("Isotope ratios", frozenset({"isotope", "isotope_groups"})),
     ("Differences between groups", frozenset({"comparison", "signature"})),
     ("Replicates", frozenset({"replicate"})),
-    ("Fixed ratios and co-occurrence", frozenset({"stoichiometry", "cooccurrence"})),
+    ("Fixed ratios and co-occurrence", frozenset({"stoichiometry", "ratio_split",
+                                                  "cooccurrence"})),
     ("Correlations", frozenset({"correlation", "network"})),
     ("Composition", frozenset({"composition", "ternary", "single_multi", "size"})),
     ("Particle types", frozenset({"types"})),
@@ -422,6 +423,73 @@ class _StrengthDots(QWidget):
         painter.end()
 
 
+def evidence_cells(evidence) -> list[tuple[str, str, bool | None]]:
+    """The evidence strip's cells: ``(heading, value, passed)``.
+
+    *passed* is ``None`` for a plain number, ``True`` or ``False`` for a check.
+    """
+    cells = []
+    if evidence.effect:
+        cells.append(("Effect", evidence.effect, None))
+    if evidence.evidence:
+        cells.append(("Evidence", evidence.evidence.replace("q ", "", 1), None))
+    if evidence.replicates:
+        n = len(evidence.replicates)
+        cells.append(("Reproducible", f"{evidence.n_ok} of {n} replicates", evidence.reproducible))
+    fold = evidence.coincidence_fold
+    if fold is not None:
+        from results.insights.robustness import COINCIDENCE_MIN_FOLD
+        text = f"{fold:.0f}× above chance" if fold >= COINCIDENCE_MIN_FOLD else "≈ chance"
+        cells.append(("Coincidence", text, fold >= COINCIDENCE_MIN_FOLD))
+    return cells
+
+
+STRIP_COLUMNS = {1: 1, 2: 2, 3: 3, 4: 2}
+"""Cells per row of the evidence strip; four go two by two to fit a narrow panel."""
+
+
+def evidence_strip(evidence) -> QFrame | None:
+    """The strip under a card's text: effect, evidence, replicates and coincidence.
+
+    Returns:
+        The strip, or ``None`` when the evidence holds nothing to show.
+    """
+    cells = evidence_cells(evidence)
+    if not cells:
+        return None
+    from PySide6.QtWidgets import QGridLayout
+    strip = QFrame()
+    strip.setObjectName("iStrip")
+    grid = QGridLayout(strip)
+    grid.setContentsMargins(8, 6, 8, 6)
+    grid.setHorizontalSpacing(12)
+    grid.setVerticalSpacing(1)
+    tips = {
+        "Effect": "How large the pattern is, measured on the finding's particles",
+        "Evidence": "False discovery rate after correcting for every test of this kind",
+        "Reproducible": "Replicates where the pattern is seen on its own",
+        "Coincidence": "Particles carrying both elements against those two particles "
+                       "arriving in one event would give by chance",
+    }
+    for col, (head, value, passed) in enumerate(cells):
+        key = QLabel(head)
+        key.setObjectName("iStripKey")
+        mark = "" if passed is None else ("✓ " if passed else "✗ ")
+        val = QLabel(mark + value)
+        val.setObjectName("iStripValue" if passed is None
+                          else ("iStripOk" if passed else "iStripBad"))
+        if head == "Reproducible" and evidence.replicates:
+            val.setToolTip("\n".join(f"{'✓' if c.ok else '✗'} {c.label}: {c.value}"
+                                      for c in evidence.replicates))
+        else:
+            val.setToolTip(tips.get(head, ""))
+        key.setToolTip(tips.get(head, ""))
+        row, col = divmod(col, STRIP_COLUMNS[len(cells)])
+        grid.addWidget(key, 2 * row, col)
+        grid.addWidget(val, 2 * row + 1, col)
+    return strip
+
+
 class _Card(QFrame):
     """One finding in the panel.
 
@@ -492,6 +560,18 @@ class _Card(QFrame):
             samples.setWordWrap(True)
             root.addWidget(samples)
 
+        evidence = getattr(self._s, "evidence", None)
+        if evidence is not None:
+            strip = evidence_strip(evidence)
+            if strip is not None:
+                root.addWidget(strip)
+            missing = evidence.failed
+            if missing:
+                note = QLabel("Not seen in " + ", ".join(f"{c.label} ({c.value})" for c in missing))
+                note.setObjectName("iStripNote")
+                note.setWordWrap(True)
+                root.addWidget(note)
+
         explanation = explanation_for(self._s.explain_key, self._s.category)
         if self._s.details or explanation is not None:
             self._details_btn = QToolButton()
@@ -510,6 +590,8 @@ class _Card(QFrame):
         dots = _StrengthDots(filled)
         dots.setToolTip(f"Ranking score {self._s.confidence:.2f}")
         footer.addWidget(dots)
+        if evidence is not None:
+            word = f"{word} · score {self._s.confidence:.2f}"
         strength = QLabel(word)
         strength.setObjectName("iMuted")
         footer.addWidget(strength)
@@ -639,15 +721,14 @@ class _Card(QFrame):
         QTimer.singleShot(1400, restore)
 
 
-EXPONENTIAL_LAW = "Exponential Law (instrumental mass fractionation)"
-"""The Isotopic Ratio node's name for the exponential-law mass-bias correction."""
+from results.figure_builder.core.massbias import EXPONENTIAL_LAW
 
 
 def mass_bias_reference(scene) -> dict | None:
     """The exponential-law reference set up in an Isotopic Ratio node on the canvas.
 
-    The first node whose correction is the exponential law with a complete
-    reference (two isotopes, a certified and a measured ratio) is used.
+    See :func:`results.figure_builder.core.massbias.node_reference`, which
+    Figure Builder panels use too.
 
     Args:
         scene: The canvas scene.
@@ -656,23 +737,8 @@ def mass_bias_reference(scene) -> dict | None:
         ``{ref_num, ref_den, certified, measured}``, or ``None`` when no node
         has one.
     """
-    for node in getattr(scene, "workflow_nodes", []) or []:
-        if getattr(node, "node_type", "") != "isotopic_ratio_plot":
-            continue
-        cfg = getattr(node, "config", None) or {}
-        if cfg.get("correction_method") != EXPONENTIAL_LAW:
-            continue
-        ref = {"ref_num": str(cfg.get("ref_isotope_num") or ""),
-               "ref_den": str(cfg.get("ref_isotope_den") or "")}
-        try:
-            ref["certified"] = float(cfg.get("ref_certified_ratio"))
-            ref["measured"] = float(cfg.get("ref_measured_ratio"))
-        except (TypeError, ValueError):
-            continue
-        if ref["ref_num"] and ref["ref_den"] and ref["certified"] > 0 and ref["measured"] > 0 \
-                and abs(ref["certified"] - ref["measured"]) > 1e-12:
-            return ref
-    return None
+    from results.figure_builder.core.massbias import node_reference
+    return node_reference(scene)
 
 
 OWN_SELECTOR_CATEGORIES = frozenset({"replicate", "time"})
@@ -1115,6 +1181,13 @@ class SmartInsightsPanel(QWidget):
             QPushButton#iNewBar:hover {{ background: {p.accent}; color: {p.text_inverse}; }}
             QFrame#iDetails {{ background: {p.bg_primary}; border: 1px solid {p.border_subtle};
                               border-radius: 6px; }}
+            QFrame#iStrip {{ background: {p.bg_primary}; border: 1px solid {p.border_subtle};
+                            border-radius: 6px; }}
+            QLabel#iStripKey {{ color: {p.text_muted}; font-size: 9px; }}
+            QLabel#iStripValue {{ color: {p.text_primary}; font-size: 11px; font-weight: 600; }}
+            QLabel#iStripOk {{ color: {p.success}; font-size: 11px; font-weight: 600; }}
+            QLabel#iStripBad {{ color: {p.danger}; font-size: 11px; font-weight: 600; }}
+            QLabel#iStripNote {{ color: {p.danger}; font-size: 10px; }}
             QLabel#iDetailKey {{ color: {p.text_muted}; font-size: 10px; }}
             QLabel#iDetailValue {{ color: {p.text_primary}; font-size: 10px; }}
             QLabel#iDetailText {{ color: {p.text_secondary}; font-size: 11px; }}

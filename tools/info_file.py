@@ -244,6 +244,54 @@ class Card(QWidget):
         self._row_count = 0
 
 
+class CollapsibleCard(Card):
+    """Card whose rows are hidden until its header is clicked."""
+    def __init__(self, title, parent=None):
+        super().__init__(f"{title}  ▸", parent)
+        self._title = title
+        header = self._layout.itemAt(0).widget()
+        header.setCursor(Qt.PointingHandCursor)
+        header.setToolTip("Click to show or hide")
+        header.mousePressEvent = lambda _event: self.toggle()
+        self._header_label = next(
+            (w for w in header.findChildren(QLabel) if w.text().strip()), None)
+        self._body = QWidget()
+        body_layout = QVBoxLayout(self._body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+        self._layout.addWidget(self._body)
+        self._layout = body_layout
+        self._body.setVisible(False)
+
+    def toggle(self):
+        """Show or hide the rows."""
+        visible = not self._body.isVisible()
+        self._body.setVisible(visible)
+        if self._header_label is not None:
+            arrow = "▾" if visible else "▸"
+            self._header_label.setText(f"{self._title}  {arrow}".upper())
+
+
+def _fmt_value(value):
+    """Format a tuning value for display.
+
+    Args:
+        value: Register value.
+
+    Returns:
+        str: Text with at most 3 significant decimals; tiny values show as 0.
+    """
+    if not isinstance(value, (int, float)):
+        return str(value)
+    if abs(value) < 1e-9:
+        return "0"
+    if abs(value - round(value)) < 1e-6:
+        return f"{value:.0f}"
+    if abs(value) >= 100:
+        return f"{value:.1f}"
+    return f"{value:.3g}" if abs(value) < 1 else f"{value:.2f}"
+
+
 class SummaryBar(QWidget):
     """Dark top bar showing key stats at a glance."""
     def __init__(self, stats, parent=None):
@@ -310,11 +358,13 @@ class SummaryBar(QWidget):
 class FileInfoDialog(QDialog):
     """Dialog for displaying detailed file information."""
 
-    def __init__(self, sample_name, run_info, method_info, time_array, masses, parent=None):
+    def __init__(self, sample_name, run_info, method_info, time_array, masses, parent=None,
+                 tuning_info=None):
         super().__init__(parent)
         self.sample_name = sample_name
         self.run_info = run_info
         self.method_info = method_info
+        self.tuning_info = tuning_info
         self.time_array = time_array
         self.masses = masses
 
@@ -473,6 +523,9 @@ class FileInfoDialog(QDialog):
 
             self._build_run_info_card()
 
+            if self.tuning_info:
+                self._build_tuning_cards()
+
         except Exception as e:
             _itk_log.exception("Handled exception in _build_content")
             err = QLabel(f"Error loading information:\n{e}")
@@ -521,6 +574,121 @@ class FileInfoDialog(QDialog):
 
         self._insert_card(card)
 
+    def _tuning_row(self, card, label, keys, unit=""):
+        """Add one tuning row, joining several registers with ' / '.
+
+        Rows whose registers are all missing are skipped.
+
+        Args:
+            card (Card): Card to add to.
+            label (str): Row label.
+            keys (list[str]): Register names.
+            unit (str): Unit text.
+        """
+        values = [self.tuning_info.get(k) for k in keys]
+        if all(v is None for v in values):
+            return
+        card.add_row(label, " / ".join("–" if v is None else _fmt_value(v) for v in values), unit)
+
+    def _tuning_status(self, card, label, key):
+        """Add an on/off row for one register, if present.
+
+        Args:
+            card (Card): Card to add to.
+            label (str): Row label.
+            key (str): Register name.
+        """
+        value = self.tuning_info.get(key)
+        if value is not None:
+            card.add_status_row(label, bool(value))
+
+    def _build_tuning_cards(self):
+        """Add the instrument tuning cards read from the run's Snapshot.tuning."""
+        row, status = self._tuning_row, self._tuning_status
+        flow = "mL/min"
+
+        card = Card("Plasma & Gases")
+        card.add_divider("Plasma")
+        row(card, "RF power", ["plasma_rfpower"], "W")
+        row(card, "RF forward", ["plasma_rfforward"], "W")
+        card.add_divider("Gas flows")
+        row(card, "Coolant gas", ["plasma_coolantflow"], flow)
+        row(card, "Auxiliary gas", ["plasma_auxflow"], flow)
+        row(card, "Nebulizer gas", ["plasma_nebflow"], flow)
+        row(card, "Nebulizer flush", ["plasma_nebflowflush"], flow)
+        row(card, "Additional gas", ["plasma_addflow"], flow)
+        status(card, "Additional gas", "plasma_addenable")
+        card.add_divider("Sample introduction")
+        row(card, "Peristaltic pump speed", ["peripump_speed"])
+        status(card, "Peristaltic pump", "peripump_enable")
+        row(card, "Torch position X / Y / Z",
+            ["torchstage_runposx", "torchstage_runposy", "torchstage_runposz"], "mm")
+        self._insert_card(card)
+
+        card = Card("Collision / Reaction Cell")
+        card.add_divider("Cell gas")
+        for n in range(1, 5):
+            flow_value = self.tuning_info.get(f"cellgas_flow{n}")
+            valve = self.tuning_info.get(f"cellgas_valve{n}")
+            if (flow_value or 0) == 0 and not valve:
+                continue
+            row(card, f"Cell gas {n}", [f"cellgas_flow{n}"], flow)
+            status(card, f"Valve {n}", f"cellgas_valve{n}")
+        card.add_divider("Cell voltages")
+        row(card, "Cell entrance", ["reactioncell_vcellentrance"], "V")
+        row(card, "Cell exit", ["reactioncell_vcellexit"], "V")
+        row(card, "Entrance aperture / offset", ["reactioncell_ventranceap", "reactioncell_ventranceoffset"], "V")
+        row(card, "Exit aperture / offset", ["reactioncell_vexitap", "reactioncell_vexitoffset"], "V")
+        row(card, "First / last segment", ["reactioncell_vfirstseg", "reactioncell_vlastseg"], "V")
+        row(card, "RF set", ["reactioncell_vrfset"])
+        self._insert_card(card)
+
+        card = Card("Extraction")
+        row(card, "Source acceleration", ["attenuator_vsrcaccel"], "V")
+        row(card, "Extraction 1 / 2", ["frontendhv_vextraction1", "frontendhv_vextraction2"], "V")
+        row(card, "Source focus", ["frontendhv_vsrcfocus"], "V")
+        row(card, "Source focus (lens)", ["frontendhv_vsourcefocus"], "V")
+        row(card, "Source deflection H / V", ["frontendhv_vsourceh", "frontendhv_vsourcev"], "V")
+        row(card, "Source deflection + / −", ["frontendhv_vsrcdefpos", "frontendhv_vsrcdefneg"], "V")
+        row(card, "Source deceleration", ["frontendhv_vsrcdecel"], "V")
+        row(card, "Bias 1 / 2", ["frontendhv_vbias1", "frontendhv_vbias2"], "V")
+        self._insert_card(card)
+
+        card = Card("Quadrupole")
+        row(card, "AC (RF amplitude)", ["quadrupole_vac"])
+        row(card, "DC / Bias", ["quadrupole_vdc", "quadrupole_vbias"], "V")
+        row(card, "Bypass focus", ["frontendhv_vquadbypassfocus"], "V")
+        row(card, "Bypass deflection H / V", ["frontendhv_vquadbypassdefh", "frontendhv_vquadbypassdefv"], "V")
+        self._insert_card(card)
+
+        card = Card("Time-of-Flight")
+        row(card, "Flight tube", ["backendhv_vtof"], "V")
+        row(card, "Reflectron", ["backendhv_vreflectron"], "V")
+        row(card, "Push / Pull", ["pushhub_vpush", "pushhub_vpull"], "V")
+        row(card, "Push bias / Pull bias", ["pushhub_vpushbias", "pushhub_vpullbias"], "V")
+        row(card, "Blanker 1 (a / b)", ["pushhub_vblanker1a", "pushhub_vblanker1b"], "V")
+        row(card, "Blanker 2 (a / b)", ["pushhub_vblanker2a", "pushhub_vblanker2b"], "V")
+        self._insert_card(card)
+
+        card = Card("Detector")
+        row(card, "Detector voltage", ["backendhv_vdetector"], "V")
+        row(card, "Discriminator threshold", ["discriminator_vthreshold"], "V")
+        if self.run_info and self.run_info.get("AverageSingleIonArea") is not None:
+            card.add_row("Average single-ion area", _fmt_value(self.run_info["AverageSingleIonArea"]))
+        self._insert_card(card)
+
+        card = CollapsibleCard("Attenuator Lenses")
+        row(card, "Energy", ["attenuator_venergy"], "V")
+        row(card, "Entrance", ["attenuator_ventrance"], "V")
+        row(card, "Extract", ["attenuator_vextract"], "V")
+        row(card, "Focus", ["attenuator_vfocus"], "V")
+        row(card, "Bias 3", ["attenuator_vbias3"], "V")
+        card.add_divider("Lenses at attenuation ×1 / ×35 / ×1000")
+        for n in range(3, 11):
+            row(card, f"Lens {n}",
+                [f"attenuator_vlens{n}a1", f"attenuator_vlens{n}a35", f"attenuator_vlens{n}a1000"], "V")
+        self._insert_card(card)
+
     def _build_run_info_card(self):
         segs = self.run_info["SegmentInfo"]
         card = Card("Run Information")
@@ -544,15 +712,18 @@ class FileInfoDialog(QDialog):
 
 class FileInfoMenu:
     @staticmethod
-    def create_menu(sample_name, run_info, method_info, time_array, masses, parent=None):
+    def create_menu(sample_name, run_info, method_info, time_array, masses, parent=None,
+                    tuning_info=None):
         menu = QMenu(parent)
         action = menu.addAction("Show Method Information")
         action.triggered.connect(lambda: FileInfoMenu.show_file_info(
-            sample_name, run_info, method_info, time_array, masses, parent
+            sample_name, run_info, method_info, time_array, masses, parent, tuning_info
         ))
         return menu
 
     @staticmethod
-    def show_file_info(sample_name, run_info, method_info, time_array, masses, parent=None):
-        dialog = FileInfoDialog(sample_name, run_info, method_info, time_array, masses, parent)
+    def show_file_info(sample_name, run_info, method_info, time_array, masses, parent=None,
+                       tuning_info=None):
+        dialog = FileInfoDialog(sample_name, run_info, method_info, time_array, masses, parent,
+                                tuning_info=tuning_info)
         dialog.exec()

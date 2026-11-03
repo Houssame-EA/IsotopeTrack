@@ -527,6 +527,7 @@ class CompoundPoissonLognormaltable:
           λ ≤ 0              → 0
           0 < λ ≤ table max  → table lookup (with Eqn-1 transform)
           λ > table max      → analytical CPLN (lognormal) fallback
+          σ outside table    → analytical CPLN (lognormal) fallback, logged once
           table not loaded   → analytical CPLN (lognormal) fallback
 
         Args:
@@ -541,6 +542,10 @@ class CompoundPoissonLognormaltable:
             return 0.0
 
         if not self._ready or lambda_bkgd > self._lam_max:
+            return self._fallback.get_threshold(lambda_bkgd, alpha, sigma)
+
+        if not (self._sig_min <= sigma <= self._sig_max):
+            self._warn_sigma_out_of_range(sigma)
             return self._fallback.get_threshold(lambda_bkgd, alpha, sigma)
 
         e_lam = np.exp(-lambda_bkgd)
@@ -567,6 +572,27 @@ class CompoundPoissonLognormaltable:
             _itk_log.exception("Handled exception in get_threshold")
             _itk_log.error(f"[CompoundPoissonLognormaltable] interp failed, falling back: {exc}")
             return self._fallback.get_threshold(lambda_bkgd, alpha, sigma)
+
+    _sigma_warned: set = set()
+
+    def _warn_sigma_out_of_range(self, sigma: float) -> None:
+        """Log once per sigma value that the table range was exceeded.
+
+        The table only covers sigma between its first and last grid values;
+        outside that range the analytical CPLN is used instead of clipping
+        sigma, which would silently give the threshold of the range edge.
+
+        Args:
+            sigma (float): Requested sigma.
+        """
+        key = round(float(sigma), 3)
+        if key in CompoundPoissonLognormaltable._sigma_warned:
+            return
+        CompoundPoissonLognormaltable._sigma_warned.add(key)
+        _itk_log.warning(
+            f"CPLN table covers sigma {self._sig_min:.2f}–{self._sig_max:.2f}; "
+            f"sigma = {sigma:.3f} is outside it, so the analytical CPLN is used "
+            f"for this threshold. Check the single-ion distribution if this is unexpected.")
 
     def clear_cache(self) -> None:
         """No-op kept for interface compatibility with other classes."""
