@@ -35,6 +35,7 @@ from tools.splash_screen import SplashCoordinator
 from utils.pyqtgraph_patches import apply_pyqtgraph_patches
 from utils.dialog_chrome import install_dialog_chrome
 from utils.file_dialog_memory import install_file_dialog_memory
+from utils.native_menu import install_native_menus
 from mainwindow import MainWindow
 
 apply_pyqtgraph_patches()
@@ -115,6 +116,7 @@ if __name__ == "__main__":
     app.main_windows = []
 
     install_dialog_chrome(app)
+    install_native_menus(app)
 
     from tools.crash_reporting import start_crash_reporting, shutdown_crash_reporting
     start_crash_reporting()
