@@ -20,7 +20,7 @@ and :func:`make_insights_toggle_button`.
 | `_NODE_SLOT_H` | `125` |
 | `_SLOT_SPAN` | `6` |
 | `_ISOTOPE_IN_TEXT` | `re.compile('(?<![\\w.])(\\d{1,3})([A-Z][a-z]?)(?![a-z])')` |
-| `EXPONENTIAL_LAW` | `'Exponential Law (instrumental mass fractionation)'` |
+| `STRIP_COLUMNS` | `{1: 1, 2: 2, 3: 3, 4: 2}` |
 | `OWN_SELECTOR_CATEGORIES` | `frozenset({'replicate', 'time'})` |
 | `_FILTER_KEY` | `'insights/plot_filter'` |
 
@@ -166,6 +166,8 @@ instantiating this directly.
 | `isotope_markup` | `(text: str) → str` | Write isotope labels in text with a superscript mass number. |
 | `section_of` | `(category: str) → str` | Return the section heading a finding of *category* is listed under. |
 | `strength_label` | `(confidence: float) → tuple[str, int]` | Word and number of filled dots describing how strong a finding is. |
+| `evidence_cells` | `(evidence) → list[tuple[str, str, bool \| None]]` | The evidence strip's cells: ``(heading, value, passed)``. |
+| `evidence_strip` | `(evidence) → QFrame \| None` | The strip under a card's text: effect, evidence, replicates and coincidence. |
 | `mass_bias_reference` | `(scene) → dict \| None` | The exponential-law reference set up in an Isotopic Ratio node on the canvas. |
 | `node_units` | `(scope: AnalysisScope) → list[tuple[str, tuple[str, ...]]]` | The samples a node sends on, grouped the way it pools them: one unit per group. |
 | `selection_units` | `(s: Suggestion, scope: AnalysisScope \| None) → list[tuple[str, tuple[s` | Group a suggestion's samples the way its selector will treat them. |

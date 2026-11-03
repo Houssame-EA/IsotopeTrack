@@ -14,6 +14,16 @@ Instrument data readers: Nu Vitesse, TOFWERK, CSV, and background threads.
 
 **1** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **8** methods
 
+### [`nu_raw_spectrum.py`](nu-raw-spectrum.md)
+Resolved mass spectrum rebuilt from the ``.raw`` snapshots of a Nu run.
+
+**0** classes &nbsp;·&nbsp; **7** functions &nbsp;·&nbsp; **0** methods
+
+### [`nu_tuning.py`](nu-tuning.md)
+Reader for the instrument tuning snapshot written by Nu Instruments software.
+
+**0** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **0** methods
+
 ### [`sia_stats.py`](sia-stats.md)
 Statistics and history for single-ion area (SIA) distributions.
 

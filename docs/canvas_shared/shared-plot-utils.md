@@ -316,3 +316,5 @@ Call .build() to get the QGroupBox, then .collect() to read current values.
 | `_add_det_limit_h` | `(plot_item, cfg: dict)` | Horizontal detection limit line (for box plot / scatter plots). |
 | `_add_ref_line_vertical` | `(plot_item, cfg: dict, num_label: str='X', den_label: str='Y')` | Customisable vertical reference line (e.g. ratio = 1). |
 | `build_quick_toggles_menu` | `(parent_menu, cfg: dict, display_toggles: list, stat_toggles: list \| N` | Build the uniform Quick Toggles submenu. |
+| `equalize_panels` | `(plot_widget, min_size: int=80, fit_y: bool=False) → None` | Give every plot panel of a grid the same data-area width and height. |
+| `_fit_linked_y` | `(plots) → None` | Give Y-linked panels one range that covers the data of every one of them. |

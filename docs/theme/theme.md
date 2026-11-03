@@ -8,6 +8,7 @@
 |------|-------|
 | `LIGHT` | `Palette(name='light', bg_primary='#e8edf3', bg_secondary=…` |
 | `DARK` | `Palette(name='dark', bg_primary='#1e1e1e', bg_secondary='…` |
+| `_GLASS_ALPHA` | `{('darwin', 'light'): (0.7, 0.48), ('darwin', 'dark'): (0…` |
 
 ## Classes
 
@@ -55,12 +56,16 @@ The saved setting can be ``'light'``, ``'dark'``, or ``'system'``
 |----------|-----------|-------------|
 | `_detect_system_theme` | `() → str` | Detect the OS dark/light mode preference. |
 | `main_window_qss` | `(p: Palette) → str` |  |
-| `sidebar_qss` | `(p: Palette) → str` |  |
+| `_rgba` | `(hex_color: str, alpha: float) → str` | Return ``hex_color`` as a QSS ``rgba()`` string with the given opacity. |
+| `_glass_alpha` | `(p: Palette)` | Return (sidebar, panel) opacities for the frosted sidebar on this OS. |
+| `glass_rgba` | `(p: Palette, color: str, panel: bool=False) → str` | Return ``color`` at the frosted-sidebar opacity used by every glass window. |
+| `glass_window_qss` | `(p: Palette) → str` | Extra main-window rules used while the frosted backdrop is active. |
+| `sidebar_qss` | `(p: Palette, glass: bool=False) → str` |  |
 | `edge_strip_qss` | `(p: Palette) → str` |  |
 | `sidebar_logo_qss` | `(p: Palette) → str` |  |
 | `sidebar_list_label_qss` | `(p: Palette) → str` |  |
-| `calibration_panel_qss` | `(p: Palette) → str` |  |
-| `sample_table_qss` | `(p: Palette) → str` |  |
+| `calibration_panel_qss` | `(p: Palette, glass: bool=False) → str` |  |
+| `sample_table_qss` | `(p: Palette, glass: bool=False) → str` |  |
 | `parameters_table_qss` | `(p: Palette) → str` |  |
 | `info_button_qss` | `(p: Palette) → str` |  |
 | `theme_toggle_button_qss` | `(p: Palette) → str` |  |
@@ -73,6 +78,7 @@ The saved setting can be ``'light'``, ``'dark'``, or ``'system'``
 | `summary_label_qss` | `(p: Palette) → str` |  |
 | `results_container_qss` | `(p: Palette) → str` |  |
 | `results_header_qss` | `(p: Palette) → str` |  |
+| `results_tabs_qss` | `(p: Palette) → str` | Underline tabs that switch between the Single Element and Multi-Element tables. |
 | `results_title_qss` | `(p: Palette) → str` |  |
 | `perf_tip_qss` | `(p: Palette) → str` |  |
 | `enhanced_checkbox_qss` | `(p: Palette) → str` |  |

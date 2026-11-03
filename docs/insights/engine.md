@@ -97,7 +97,10 @@ Attributes:
         shown in the card's details section.
     facts: Numbers behind the finding in machine-readable form, for the
         explained figure, such as ``{"ratio_cut": ("208Pb", 45.0)}``
-        for the signal cut an isotope ratio was measured above.
+        for the signal cut an isotope ratio was measured above.        evidence: How well the finding holds up, measured after the detector
+        ran (see :mod:`results.insights.robustness`): its effect, evidence,
+        per-replicate checks and chance coincidence. ``None`` for kinds of
+        finding that are not measured.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

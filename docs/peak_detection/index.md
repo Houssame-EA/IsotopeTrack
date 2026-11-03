@@ -12,4 +12,4 @@ Registry of single-particle detection threshold methods.
 ### [`peak_detection.py`](peak-detection.md)
 
 
-**4** classes &nbsp;·&nbsp; **13** functions &nbsp;·&nbsp; **42** methods
+**4** classes &nbsp;·&nbsp; **13** functions &nbsp;·&nbsp; **43** methods

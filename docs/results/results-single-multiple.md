@@ -93,6 +93,7 @@ Main dialog with matplotlib figure and right-click context menu.
 | `_pie_one` | `(self, ax, results, ctype, custom_colors, pml, dil, si, cfg, fp, lc, s` |  |
 | `_draw_heatmaps` | `(self, ad, cfg)` |  |
 | `_update_stats` | `(self, ad)` |  |
+| `_summary_row_brush` | `(row)` | Tint SUMMARY rows with the theme's soft accent colour. |
 | `_update_table` | `(self, ad)` |  |
 
 ### `SingleMultipleElementPlotNode` *(extends `QObject`)*

@@ -20,5 +20,7 @@ Weight-method calibration widget with live preview and direct-rate entry.
 | `_read_inputs` | `(self)` | Parse and unit-convert all measurement fields. |
 | `_set_preview` | `(self, text, style_key='default')` | Update the preview label's text and style. |
 | `_update_preview` | `(self)` | Recalculate and display the transport rate in the preview label. |
+| `export_project_state` | `(self)` | Return the typed values stored inside a project file. |
+| `restore_project_state` | `(self, state)` | Put back the values saved in a project file. |
 | `_calculate` | `(self)` | Compute the transport rate, emit the result, and show a detail dialog. |
 | `_submit_direct` | `(self)` | Validate and emit a user-supplied transport rate. |

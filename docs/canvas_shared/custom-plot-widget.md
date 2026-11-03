@@ -180,6 +180,18 @@ so the region can ask the owner to apply the chosen action.
 | `clear_plot` | `(self)` |  |
 | `setTitle` | `(self, title)` |  |
 
+### `StyledPlotWidget` *(extends `EnhancedPlotWidget`)*
+
+IsotopeTrack-styled plot for non-time data (regressions, histograms).
+
+Same fonts, axes, legend and light/dark theming as the main time plot, but
+without the crosshair and the time-exclusion right-click entries.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `setup_interaction_features` | `(self)` | Mouse zoom only; no crosshair lines. |
+| `_install_exclusion_context_menu` | `(self)` | Time-exclusion bands do not apply to these plots. |
+
 ### `CalibrationPlotWidget` *(extends `EnhancedPlotWidget`)*
 
 Calibration plot with interactive exclusion of outlier points.
@@ -189,6 +201,7 @@ Calibration plot with interactive exclusion of outlier points.
 | `__init__` | `(self, parent=None)` |  |
 | `setup_interaction_features` | `(self)` | Override: calibration plot uses no crosshair lines. |
 | `_setup_calibration_appearance` | `(self)` |  |
+| `apply_theme` | `(self, *args)` | Theme the axes and legend, plus the error bars, markers and labels. |
 | `_build_calibration_items` | `(self)` |  |
 | `setLabel` | `(self, axis, text, units=None, color=None, font=None)` |  |
 | `setTitle` | `(self, title)` |  |
@@ -234,9 +247,43 @@ Gives the same double-click-to-edit experience as EnhancedPlotWidget:
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, parent=None)` |  |
+| `resizeEvent` | `(self, event)` | Keep the View All button in the top-right corner. |
 | `open_plot_settings` | `(self)` |  |
 | `set_bar_meta` | `(self, meta)` | Store per-bar metadata dicts for hit-testing on double-click. |
 | `mouseDoubleClickEvent` | `(self, event)` | Hit-detection priority (same order as EnhancedPlotWidget): |
+
+### `SpectrumPlotWidget` *(extends `pg.PlotWidget`)*
+
+Resolved mass spectrum for the Spectrum view, styled like the signal plot.
+
+Choosing an isotope zooms onto its peak, shades the integration window
+(green) and the baseline windows (orange), and shows the peak check in a
+box in the top-right corner of the plot.
+
+  Double-click title       → TitleEditorDialog
+  Double-click left axis   → AxisLabelEditorDialog('left')
+  Double-click bottom axis → AxisLabelEditorDialog('bottom')
+  Double-click the trace   → TraceEditorDialog
+  Double-click empty area  → BackgroundEditorDialog
+  ⤢ button                 → full spectrum
+  Right-click              → Zoom to isotope / Show full spectrum / Plot Settings…
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, parent=None)` |  |
+| `resizeEvent` | `(self, event)` | Move the View All button and the overlays with the plot. |
+| `_setup_appearance` | `(self)` | Use the fonts and label style of the signal plot. |
+| `apply_theme` | `(self, *args)` | Repaint the background, axes, labels, trace and overlays from the theme. |
+| `open_plot_settings` | `(self)` | Open the shared Plot Settings dialog (fonts, grid, traces). |
+| `set_units` | `(self, units)` | Set the intensity units, unless the user renamed the left axis. |
+| `set_spectrum` | `(self, key, masses, intensity)` | Show a spectrum; nothing is redrawn when the same sample is shown again. |
+| `set_isotope` | `(self, target, windows, rows)` | Mark the selected isotope and zoom onto its peak. |
+| `zoom_to_isotope` | `(self)` | Zoom onto the selected isotope. |
+| `show_full_spectrum` | `(self)` | Show the whole mass range. |
+| `show_message` | `(self, text)` | Clear the plot and show a message in its centre. |
+| `_render_info` | `(self)` | Draw the peak check box from the stored rows. |
+| `_place_overlays` | `(self, *args)` | Keep the peak check box in the top-right corner and the message centred. |
+| `mouseDoubleClickEvent` | `(self, event)` | Open the editor for the title, an axis, the trace or the background. |
 
 ## Functions
 
@@ -255,3 +302,5 @@ Gives the same double-click-to-edit experience as EnhancedPlotWidget:
 | `_install_theme_subscription` | `(dialog)` | Attach the editor_dialog_qss to a dialog AND keep it updated when the |
 | `make_trace_pen` | `(color, width, style=Qt.SolidLine)` | Build a pen for a plot trace. |
 | `get_system_font_families` | `()` | Get available system font families from Qt font database, |
+| `add_view_all_button` | `(widget, callback, tooltip='Auto-scale (View All)')` | Overlay the signal plot's View All button in the top-right corner of a plot. |
+| `place_view_all_button` | `(widget, btn)` | Keep a View All button in the top-right corner of its plot. |

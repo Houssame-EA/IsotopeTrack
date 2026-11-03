@@ -34,6 +34,11 @@ Isobaric correction engine for spICP-ToF-MS.
 
 **2** classes &nbsp;·&nbsp; **25** functions &nbsp;·&nbsp; **7** methods
 
+### [`native_menu.py`](native-menu.md)
+System right-click menus on macOS.
+
+**3** classes &nbsp;·&nbsp; **15** functions &nbsp;·&nbsp; **10** methods
+
 ### [`numba_guard.py`](numba-guard.md)
 Process-wide serialisation of Numba parallel regions.
 

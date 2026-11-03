@@ -126,6 +126,7 @@ Attributes:
 | `_signature` | `(s, ctx)` |  |
 | `_share_size_sentence` | `(ctx: FigureContext, el: str, rule: str='') → str` | Measured detected share by size class, adding a check on its trend. |
 | `_stoichiometry` | `(s, ctx)` |  |
+| `_ratio_split` | `(s, ctx)` |  |
 | `_correlation` | `(s, ctx)` |  |
 | `_cooccurrence` | `(s, ctx)` |  |
 | `_rare` | `(s, ctx)` |  |

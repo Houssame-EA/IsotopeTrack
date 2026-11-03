@@ -40,6 +40,11 @@ that two replicates of one material are never reported as different samples.
 | `REPLICATE_FOLD` | `1.5` |
 | `REPLICATE_RATE_GAP` | `0.15` |
 | `REPLICATE_MARGIN` | `2.0` |
+| `RATIO_SPLIT_MIN_PARTICLES` | `30` |
+| `RATIO_SPLIT_MIN_FOLD` | `1.5` |
+| `RATIO_SPLIT_MAX_ELEMENTS` | `12` |
+| `RATIO_SPLIT_WITH_COLOR` | `'#c2410c'` |
+| `RATIO_SPLIT_WITHOUT_COLOR` | `'#64748b'` |
 | `_SUPERSCRIPT_PLUS` | `'⁺'` |
 | `_SUPERSCRIPT_TWO_PLUS` | `'²⁺'` |
 | `ISOTOPE_MIN_PARTICLES` | `20` |
@@ -75,6 +80,9 @@ that two replicates of one material are never reported as different samples.
 | `interference_pair` | `(ctx, a: str, b: str) → bool` | Return whether one of two masses behaves like an interference from the other. |
 | `_interference_stats` | `(ctx, parent: str, child: str) → dict \| None` | Measure how much *child* behaves like an interference from *parent*. |
 | `analyse_stoichiometry` | `(ctx, progress=None) → list` | Find element pairs held at a fixed ratio, the mark of one defined phase. |
+| `ratio_split_rules` | `(c: str) → dict` | Grouping rules splitting particles by whether they carry *c*. |
+| `ratio_split_panel` | `(a: str, b: str, c: str) → dict` | The scatter that shows a ratio split: a/b against b, coloured by c, grey without c. |
+| `analyse_ratio_split` | `(ctx, progress=None) → list` | Find element ratios that take two values depending on whether a third element is present. |
 | `analyse_cooccurrence` | `(ctx, progress=None) → list` | Find elements that turn up together, or avoid each other, more than chance allows. |
 | `analyse_rare` | `(ctx, progress=None) → list` | Point out elements found in only a handful of particles. |
 | `analyse_network` | `(ctx, progress=None) → list` | Find a connected group of four or more mutually correlated elements. |

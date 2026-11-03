@@ -2,6 +2,12 @@
 
 ---
 
+## Constants
+
+| Name | Value |
+|------|-------|
+| `_SUPERSCRIPT_DIGITS` | `str.maketrans('0123456789', '⁰¹²³⁴⁵⁶⁷⁸⁹')` |
+
 ## Classes
 
 ### `NoWheelSpinBox` *(extends `QDoubleSpinBox`)*
@@ -36,6 +42,17 @@ Args:
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `wheelEvent` | `(self, event)` | Ignore mouse wheel scroll events. |
+
+### `PlotStack` *(extends `QStackedWidget`)*
+
+Stack of the Time, Count and Spectrum plots with a fixed preferred size.
+
+A plot's own preferred size follows its current size, so inside the
+scrolling page the frame grew a little every time the view was switched.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `sizeHint` | `(self)` | Return a constant preferred size so switching views never resizes the frame. |
 
 ### `MainWindow` *(extends `QMainWindow`)*
 
@@ -82,6 +99,7 @@ Args:
 | `create_table_header` | `(self, title, bg_color, text_color)` | Create styled header label for tables. |
 | `create_enhanced_checkbox` | `(self, text, tooltip)` | Create styled checkbox with custom appearance. |
 | `toggle_sidebar` | `(self)` | Animate sidebar visibility toggle. |
+| `_update_toggle_icon` | `(self)` | Point the sidebar toggle arrow the right way and keep it readable. |
 | `_set_content_frozen` | `(self, frozen)` | Suspend/resume repaints of the heavy plot widget during the slide. |
 | `_apply_sidebar_grip_style` | `(self)` | Style the resize grip's divider line and pill holder for the theme. |
 | `_sidebar_grip_press` | `(self, event)` | Begin a sidebar resize drag. |
@@ -95,6 +113,11 @@ Args:
 | `exit_fullscreen` | `(self)` | Exit fullscreen mode. |
 | `keyPressEvent` | `(self, event)` | Handle keyboard events. |
 | `resizeEvent` | `(self, event)` | Handle window resize events. |
+| `showEvent` | `(self, event)` | Install the frosted sidebar backdrop the first time the window shows. |
+| `_restore_sidebar_visible` | `(self)` | Close the sidebar on start-up if it was closed last time. |
+| `_activate_glass` | `(self)` | Apply the backdrop once Qt has finished creating and showing the window. |
+| `_move_toggle_to_titlebar` | `(self, inset)` | Put the sidebar toggle in the title row, just right of the window buttons. |
+| `_apply_titlebar_inset` | `(self)` | Keep the sidebar and content clear of the merged macOS title bar strip. |
 | `changeEvent` | `(self, event)` | Attribute subsequent log records to whichever window is active. |
 | `_has_loaded_samples` | `(self)` | Check whether any sample data is currently loaded in this window. |
 | `_probe_masses` | `(self, paths, source_type)` | Quickly probe the mass list of the first accessible path. |
@@ -106,7 +129,7 @@ Args:
 | `get_unique_sample_name` | `(self, base_name)` | Generate a unique sample name by appending a number if name already exists. |
 | `select_folders` | `(self)` | Select NU folders for data loading. |
 | `check_data_source_accessible` | `(self, path)` | Check if a data source path is still accessible. |
-| `verify_all_data_sources` | `(self)` | Verify that all loaded data sources are still accessible. |
+| `verify_all_data_sources` | `(self, samples=None)` | Verify that loaded data sources are still accessible. |
 | `prompt_reconnect_data_source` | `(self, inaccessible_samples)` | Prompt user to reconnect inaccessible data sources. |
 | `rebuild_isotope_dict_from_set` | `(self, isotope_set)` | Rebuild isotope dictionary from a set of (element, isotope) tuples. |
 | `select_csv_files` | `(self)` | Select CSV/Excel files for data loading. |
@@ -125,11 +148,13 @@ Args:
 | `on_sample_selected` | `(self, item)` | Handle sample selection from sample table. |
 | `update_sample_table` | `(self)` | Update sample table with all loaded samples. |
 | `show_sample_context_menu` | `(self, position)` | Show context menu for sample table. |
+| `_tuning_for` | `(self, sample_name)` | Return the instrument tuning of a sample, reading it from its folder if needed. |
 | `remove_sample` | `(self, sample_name)` | Remove sample and all associated data. |
 | `remove_all_samples` | `(self)` | Remove all samples and reset application. |
 | `sample_table_key_press` | `(self, event)` | Handle keyboard navigation in sample table. |
 | `show_periodic_table` | `(self)` | Display periodic table for element selection. |
 | `show_periodic_table_after_load` | `(self)` | Show periodic table after data is loaded. |
+| `_add_isotopes_from_reserve` | `(self, newly_added)` | Add newly selected isotopes without going back to the raw data when possible. |
 | `handle_isotopes_selected` | `(self, selected_isotopes)` | Handle confirmed isotope selections from periodic table. |
 | `handle_isotopes_selection_from_calibration` | `(self, selected_isotopes)` | Handle isotope selections from ionic calibration window. |
 | `find_closest_isotope` | `(self, target_mass, data=None, tolerance=None)` | Find the channel in a sample's data that carries one isotope. |
@@ -141,6 +166,7 @@ Args:
 | `update_parameters_table` | `(self, force=True)` | Rebuild the detection-parameters table. |
 | `_populate_parameters_table` | `(self)` | Populate detection parameters table with element-specific settings. |
 | `color_parameters_table_rows` | `(self)` | Highlight parameter table rows red when >=90% of that element's |
+| `_default_detection_parameters` | `(sigma)` | Return the default detection parameters for one element. |
 | `load_or_initialize_parameters` | `(self, sample_name)` | Load or initialize detection parameters for sample. |
 | `save_current_parameters` | `(self)` | Save current table parameters back to sample_parameters dict. |
 | `update_parameter_ranges` | `(self, row, method)` | No-op: enabled states are now derived by the delegate from model data. |
@@ -169,23 +195,32 @@ Args:
 | `get_parameter_hash` | `(self, sample_name, element_key)` | Generate hash of current parameters for change detection. |
 | `update_results_table` | `(self, detected_particles, signal, element, isotope)` | Update single element results table with detection results. |
 | `update_multi_element_table` | `(self)` | Update multi-element particle results table. |
+| `_redraw_plot_for_theme` | `(self)` | Redraw the time plot so every line, marker and label uses the new theme. |
+| `_replot_current_element` | `(self, preserve_view_range=None)` | Redraw the selected element's signal, peaks and thresholds. |
 | `toggle_element_results` | `(self, checked)` | Show or hide single element results table. |
 | `toggle_particle_results` | `(self, checked)` | Show or hide multi-element particle results table. |
+| `_update_results_tabs` | `(self)` | Refresh the result counts in the tab names and the element/sample caption. |
 | `restore_results_tables` | `(self, sample_name)` | Restore results tables for selected sample. |
 | `update_element_summary` | `(self, element, isotope, detected_particles)` | Update summary statistics for selected element. |
 | `rebuild_particle_data` | `(self, sample_name=None)` | Rebuild the multi-element particle list of a sample from the |
 | `show_results` | `(self)` | Display particle detection results in canvas dialog. |
 | `plot_results` | `(self, mass, signal, particles, lambda_bkgd, threshold, preserve_view_` | Plot detection results with peaks and thresholds. |
+| `_raw_spectrum_for` | `(self, sample_name)` | Return the resolved spectrum of a sample, reading its .raw files once. |
+| `_fit_plot_view` | `(self)` | Fit the time plot to its data now, not at the next repaint. |
+| `_refresh_spectrum_view` | `(self)` | Redraw the Spectrum view when it is shown, after the sample or element changed. |
+| `_update_spectrum_plot` | `(self)` | Show the resolved spectrum of the current sample, zoomed onto the selected isotope. |
 | `show_mass_spectrum_popup` | `(self)` | Open a floating window showing the mean signal intensity for every |
-| `switch_plot_view` | `(self, mode: str)` | Switch the main plot area between the time-domain trace ('time') |
+| `switch_plot_view` | `(self, mode: str)` | Switch the main plot area between the time-domain trace ('time'), |
 | `_update_mz_plot` | `(self)` | " |
 | `highlight_selected_particle` | `(self)` | Highlight selected particle from single element results table. |
 | `highlight_multi_element_particle` | `(self)` | Highlight and display selected multi-element particle. |
 | `show_signal_selector` | `(self)` | Display signal selector dialog for multi-signal view. |
 | `toggle_all_signals` | `(self)` | Toggle between single and multi-signal view. |
+| `_restore_te_session_into_window` | `(self)` | Fill a newly created TE window from the open project, if it holds a session. |
 | `open_transport_rate_calibration` | `(self)` | Open transport rate calibration window. |
 | `show_calibration_info` | `(parent)` | Display enhanced calibration information dialog. |
 | `handle_calibration_result` | `(self, method, calibration_data)` | Process calibration results from calibration windows. |
+| `_restore_ionic_session_into_window` | `(self)` | Fill a newly created sensitivity window from the open project, if it holds a session. |
 | `open_ionic_calibration` | `(self)` | Open ionic calibration window for sensitivity calibration. |
 | `calculate_average_transport_rate` | `(self)` | Calculate average transport rate from selected methods. |
 | `update_calibration_display` | `(self)` | Update calibration information display panel. |
@@ -245,3 +280,4 @@ Args:
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `element_chip_qss` | `(p) → str` | Stylesheet for a single element chip in the quick-selector. |
+| `superscript_mass` | `(label)` | Write the leading mass number of an isotope label as superscript, e.g. 115In → ¹¹⁵In. |

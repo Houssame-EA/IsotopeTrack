@@ -52,6 +52,15 @@ White card with border and title, containing stacked rows.
 | `add_status_row` | `(self, label, enabled)` |  |
 | `add_divider` | `(self, sub_title)` | Add a visual sub-group divider with a label. |
 
+### `CollapsibleCard` *(extends `Card`)*
+
+Card whose rows are hidden until its header is clicked.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, title, parent=None)` |  |
+| `toggle` | `(self)` | Show or hide the rows. |
+
 ### `SummaryBar` *(extends `QWidget`)*
 
 Dark top bar showing key stats at a glance.
@@ -72,17 +81,21 @@ Dialog for displaying detailed file information.
 | `_insert_card` | `(self, card)` | Insert card before the trailing stretch. |
 | `_build_content` | `(self)` |  |
 | `_build_method_card` | `(self, segment)` |  |
+| `_tuning_row` | `(self, card, label, keys, unit='')` | Add one tuning row, joining several registers with ' / '. |
+| `_tuning_status` | `(self, card, label, key)` | Add an on/off row for one register, if present. |
+| `_build_tuning_cards` | `(self)` | Add the instrument tuning cards read from the run's Snapshot.tuning. |
 | `_build_run_info_card` | `(self)` |  |
 
 ### `FileInfoMenu`
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `create_menu` | `(sample_name, run_info, method_info, time_array, masses, parent=None)` |  |
-| `show_file_info` | `(sample_name, run_info, method_info, time_array, masses, parent=None)` |  |
+| `create_menu` | `(sample_name, run_info, method_info, time_array, masses, parent=None, ` |  |
+| `show_file_info` | `(sample_name, run_info, method_info, time_array, masses, parent=None, ` |  |
 
 ## Functions
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `info_palette` | `() → InfoPalette` | Build the card-UI palette from the current global theme. |
+| `_fmt_value` | `(value)` | Format a tuning value for display. |

@@ -71,6 +71,7 @@ methods without rescaling.
 | `__init__` | `(self, lut_path: str \| None=None)` |  |
 | `_load_table` | `(self, path: str) → None` | Load and build the RegularGridInterpolator from the .npz file. |
 | `get_threshold` | `(self, lambda_bkgd: float, alpha: float, sigma: float=0.55) → float` | Return the CPLN detection threshold. |
+| `_warn_sigma_out_of_range` | `(self, sigma: float) → None` | Log once per sigma value that the table range was exceeded. |
 | `clear_cache` | `(self) → None` | No-op kept for interface compatibility with other classes. |
 
 ### `PeakDetection`

@@ -78,17 +78,31 @@ QComboBox that ignores mouse-wheel events to prevent accidental changes.
 | `_on_exclusion_regions_changed` | `(self)` | Sync the plot's current exclusion bands into the bookkeeping store. |
 | `_rebuild_plot_exclusion_regions` | `(self)` | Redraw the plot's exclusion bands from the bookkeeping store. |
 | `on_detection_params_selection_changed` | `(self)` | Handle selection change in detection parameters table to show sample preview. |
+| `_show_raw_signal_for_new_element` | `(self)` | Show the raw signal of the newly selected element right away. |
 | `plot_raw_signal_preview` | `(self, folder_path, sample_name)` | Plot raw signal preview for a sample. |
 | `update_detection_parameters_table` | `(self)` | Update detection parameters table with all samples. |
 | `apply_global_detection_params` | `(self, method)` | Apply global detection method to all samples. |
 | `detect_particles_all_samples` | `(self)` | Detect particles for all samples with individual parameters. |
+| `_show_detected_sample` | `(self)` | After detection, show a sample that has results in both the plot and the table. |
 | `get_sample_detection_parameters` | `(self, row)` | Get detection parameters for a specific sample row. |
-| `update_results_table` | `(self)` | Update results table with all detection results (simplified to 4 columns). |
+| `update_results_table` | `(self)` | Fill the Detection Results table with the particles of the selected sample. |
+| `_result_rows` | `(self, folder=None)` | Build Detection Results rows for one sample, or for all samples. |
 | `highlight_selected_particle` | `(self)` | Zoom in on selected particle in plot. |
 | `highlight_particle_in_plot` | `(self, particle, results)` | Add highlighting to a specific particle in the plot. |
-| `update_sample_visualization` | `(self)` | Update visualization for selected sample. |
+| `update_sample_visualization` | `(self, refresh_table=True)` | Update visualization for selected sample. |
 | `plot_sample_results` | `(self, sample_name, signal, particles, lambda_bkgd, threshold, time_ar` | Plot results for a specific sample. |
 | `update_calibration_data_table` | `(self)` | Update calibration data table with sample information and default values. |
 | `auto_fill_calibration_data` | `(self)` | Automatically fill calibration data from detection results. |
 | `calculate_transport_rates` | `(self)` | Calculate transport rates for all selected samples. |
+| `_show_sample_table_menu` | `(self, position)` | Offer to remove the selected samples from the sample table's context menu. |
+| `remove_selected_samples` | `(self)` | Remove the samples selected in the sample table, after confirmation. |
+| `_project_info_for` | `(self, folder_path)` | Return where a sample is stored in the project file, or None. |
+| `attach_project_store` | `(self, project_path, index)` | Read the samples stored in a project file from now on. |
+| `export_memory_arrays` | `(self)` | Return the selected isotope signal of every loaded sample. |
+| `export_project_state` | `(self)` | Return the window state stored inside a project file. |
+| `_show_selected_element` | `(self, element)` | Show the selected element in its label and section header. |
+| `_set_sample_detection_parameters` | `(self, row, params)` | Write saved detection parameters into one row of the parameters table. |
+| `restore_project_state` | `(self, state, project_path, index, progress=None)` | Restore the window from a session stored in a project file. |
+| `_report_restore` | `(self, fraction, message)` | Report restore progress to the caller, when it asked for it. |
+| `_restore_project_state` | `(self, state, project_path, index)` | Do the work of ``restore_project_state`` with progress windows hidden. |
 | `export_results_to_csv` | `(self)` | Export detection results to CSV file. |

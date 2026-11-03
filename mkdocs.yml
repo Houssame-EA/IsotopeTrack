@@ -105,16 +105,21 @@ nav:
     - Overview: loading/index.md
     - "SIA_manager.py": loading/sia-manager.md
     - "data_thread.py": loading/data-thread.md
+    - "nu_raw_spectrum.py": loading/nu-raw-spectrum.md
+    - "nu_tuning.py": loading/nu-tuning.md
     - "sia_stats.py": loading/sia-stats.md
     - "tofwerk_loading.py": loading/tofwerk-loading.md
     - "vitesse_loading.py": loading/vitesse-loading.md
 - Project & I/O:
     - Overview: project_io/index.md
     - "autosave.py": project_io/autosave.md
+    - "calibration_store.py": project_io/calibration-store.md
     - "export_utils.py": project_io/export-utils.md
     - "fast_project_io.py": project_io/fast-project-io.md
     - "ionic_session.py": project_io/ionic-session.md
+    - "isotope_reserve.py": project_io/isotope-reserve.md
     - "project_manager.py": project_io/project-manager.md
+    - "te_store.py": project_io/te-store.md
     - "unit.py": project_io/unit.md
 - Peak Detection:
     - Overview: peak_detection/index.md
@@ -163,6 +168,7 @@ nav:
     - "figures.py": insights/figures.md
     - "panel.py": insights/panel.md
     - "replicates.py": insights/replicates.md
+    - "robustness.py": insights/robustness.md
 - Clustering:
     - Overview: cluster/index.md
     - "detail.py": cluster/detail.md
@@ -203,11 +209,13 @@ nav:
     - "calibration_info.py": widgets_ui/calibration-info.md
     - "canvas_layout.py": widgets_ui/canvas-layout.md
     - "drag_table.py": widgets_ui/drag-table.md
+    - "flow_layout.py": widgets_ui/flow-layout.md
     - "frozen_column.py": widgets_ui/frozen-column.md
     - "interference_database.py": widgets_ui/interference-database.md
     - "isobaric_correction_dialog.py": widgets_ui/isobaric-correction-dialog.md
     - "numeric_table.py": widgets_ui/numeric-table.md
     - "periodic_table_widget.py": widgets_ui/periodic-table-widget.md
+    - "results_table_view.py": widgets_ui/results-table-view.md
     - "theme_switch.py": widgets_ui/theme-switch.md
     - "help_dialogs.py": widgets_ui/help-dialogs.md
     - "tutorial.py": widgets_ui/tutorial.md
@@ -247,6 +255,7 @@ nav:
     - "undo_manager.py": tools_utilities/undo-manager.md
     - "update_checker.py": tools_utilities/update-checker.md
     - "welcome.py": tools_utilities/welcome.md
+    - "window_glass.py": tools_utilities/window-glass.md
 - Services:
     - Overview: services/index.md
     - "mass_fraction_service.py": services/mass-fraction-service.md
@@ -258,6 +267,7 @@ nav:
     - "dilution.py": utils/dilution.md
     - "file_dialog_memory.py": utils/file-dialog-memory.md
     - "isobaric_correction.py": utils/isobaric-correction.md
+    - "native_menu.py": utils/native-menu.md
     - "numba_guard.py": utils/numba-guard.md
     - "numeric_format.py": utils/numeric-format.md
     - "pyqtgraph_patches.py": utils/pyqtgraph-patches.md

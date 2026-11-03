@@ -14,7 +14,7 @@ Run the heavy project-save work off the UI thread.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, filepath, main_window)` | Store the destination path and the window whose state is saved. |
+| `__init__` | `(self, filepath, main_window, include_reserve=True)` | Store the destination path and the window whose state is saved. |
 | `run` | `(self) → None` | Write the project, emitting progress and a final success/failure signal. |
 
 ### `ProjectManager`

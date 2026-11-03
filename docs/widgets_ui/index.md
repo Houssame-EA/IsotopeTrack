@@ -24,6 +24,11 @@ Automatic layout of the Workflow Builder canvas.
 
 **1** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **9** methods
 
+### [`flow_layout.py`](flow-layout.md)
+A layout that places widgets left to right and wraps onto new lines.
+
+**1** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **12** methods
+
 ### [`frozen_column.py`](frozen-column.md)
 Keep the first columns of a table in place while it scrolls sideways.
 
@@ -48,6 +53,11 @@ Isobaric Correction dialog — calculator-style equation editor.
 
 
 **4** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **59** methods
+
+### [`results_table_view.py`](results-table-view.md)
+Fast model/view table for the Single Element and Multi-Element results.
+
+**2** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **22** methods
 
 ### [`theme_switch.py`](theme-switch.md)
 Sliding light/dark switch for window headers.
@@ -82,7 +92,7 @@ Drop-in replacement for the QTableWidget used as the parameters table in
 ### [`info_file.py`](info-file.md)
 File information display dialogs and menus for viewing method and run information.
 
-**9** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **18** methods
+**10** classes &nbsp;·&nbsp; **2** functions &nbsp;·&nbsp; **23** methods
 
 ### [`signal_selector_dialog.py`](signal-selector-dialog.md)
 

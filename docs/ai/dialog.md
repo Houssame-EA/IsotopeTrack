@@ -84,11 +84,17 @@ Chat window of the AI Assistant node.
 | `_tool` | `(self, text, icon, tip, slot)` | A toolbar button in the Figure Builder style. |
 | `_sep` | `(self)` | A thin vertical separator for the toolbar. |
 | `_build_ui` | `(self)` | Build the toolbar, conversation list, chat panel and composer. |
-| `_toggle_sidebar` | `(self)` | Show or hide the conversation list. |
+| `_toggle_sidebar` | `(self)` | Show or hide the conversation list, and remember the choice. |
+| `_save_sidebar_state` | `(self)` | Remember whether the conversation list is shown and how wide it is. |
+| `_restore_sidebar_state` | `(self)` | Apply the conversation list width and visibility chosen last time. |
+| `_on_glass_active` | `(self, inset)` | Frosted backdrop is on: the conversation list runs up under the window buttons. |
+| `_update_toolbar_inset` | `(self)` | Keep the toolbar clear of the window buttons when the list is hidden. |
+| `_fit_toolbar` | `(self)` | Hide toolbar tools from the right when they do not fit, behind a » menu. |
+| `_fill_overflow_menu` | `(self)` | List the tools that did not fit in the toolbar. |
 | `_open_settings` | `(self)` | Open the backend settings and apply the chosen model. |
 | `_open_customize` | `(self)` | Open the appearance settings. |
 | `_update_counter` | `(self, n_chars)` | Show the composer's character count and token estimate. |
-| `eventFilter` | `(self, obj, event)` | Outline the message box while the user is typing in it. |
+| `eventFilter` | `(self, obj, event)` | Outline the message box while typing; re-fit the toolbar when it resizes. |
 | `_add_conv_list_item` | `(self, conv, is_current=False)` | Create the sidebar entry for an existing Conversation. |
 | `_new_conversation` | `(self, switch_to=True)` | Create a new conversation, add it to the stack and sidebar. |
 | `_switch_conversation` | `(self, conv_id)` | Switch to the conversation with the given id. Saves the current draft |

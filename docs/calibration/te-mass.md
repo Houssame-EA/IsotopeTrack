@@ -71,22 +71,27 @@ Themed collapsible panel. Click header to expand/collapse.
 | `_on_ionic_calibration_exclusion_changed` | `(self)` | Persist ionic-calibration plot bands into the time-exclusion dicts. |
 | `_restore_ionic_calibration_exclusions` | `(self, folder_path, isotope_key)` | Reload stored ionic-calibration exclusion bands onto the plot. |
 | `on_detection_params_selection_changed` | `(self)` | Handle selection change in detection parameters table to show sample preview. |
+| `_show_raw_signal_for_new_element` | `(self)` | Show the raw signal of the newly selected element right away. |
 | `plot_raw_signal_preview` | `(self, folder_path, sample_name)` | Plot raw signal preview for a sample. |
 | `detect_particles_all_samples` | `(self)` | Detect particles for all samples using PeakDetection class. |
+| `_show_detected_sample` | `(self)` | After detection, show a sample that has results in both the plot and the table. |
 | `toggle_calibration_view` | `(self)` | Toggle between raw data view and calibration view. |
 | `show_calibration_plot_in_raw_area` | `(self)` | Show the ionic calibration curve in the visualization area. |
 | `on_calibration_point_exclusion_toggled` | `(self, index)` | Toggle exclusion of the clicked calibration point, refit and redraw. |
 | `refresh_current_raw_data_view` | `(self)` | Refresh the current raw data view for the last selected sample. |
 | `get_sample_detection_parameters` | `(self, row)` | Get detection parameters for a specific sample row. |
-| `update_results_table` | `(self)` | Update results table with all detection results. |
+| `update_results_table` | `(self)` | Fill the Detection Results table with the particles of the selected sample. |
+| `_result_rows` | `(self, folder=None)` | Build Detection Results rows for one sample, or for all samples. |
 | `highlight_selected_particle` | `(self)` | Zoom in on selected particle in plot. |
 | `highlight_particle_in_plot` | `(self, particle, results)` | Add highlighting to a specific particle in the plot. |
-| `update_sample_visualization` | `(self)` | Update visualization for selected sample. |
+| `update_sample_visualization` | `(self, refresh_table=True)` | Update visualization for selected sample. |
 | `plot_sample_results` | `(self, sample_name, signal, particles, lambda_bkgd, threshold, time_ar` | Plot results for a specific sample. |
 | `update_file_info_table` | `(self)` | Update file info table with improved average count display. |
+| `_on_file_info_edited` | `(self, item)` | Keep edited diameters and densities, so -1 (excluded) survives a re-detection. |
 | `on_folder_selected` | `(self, item)` | Handle folder selection from the list. |
 | `calculate_particle_mass` | `(self, diameter, density)` | Calculate the mass of a spherical particle in femtograms. |
 | `calculate_mass_and_regression` | `(self)` | Calculate mass and perform regression analysis. |
+| `_draw_regression` | `(self)` | Draw the mass calibration: one mean ± SD point per diameter and the fit line. |
 | `select_calibration_folders` | `(self)` | Enhanced calibration folder selection dialog matching particle folder approach. |
 | `select_calibration_nu_folders` | `(self)` | Handle NU folder selection for ionic calibration. |
 | `select_calibration_data_files` | `(self)` | Handle data file selection for ionic calibration. |
@@ -118,5 +123,17 @@ Themed collapsible panel. Click header to expand/collapse.
 | `convert_concentration_to_ppb` | `(self, value, unit)` | Convert concentration to ppb. |
 | `perform_ionic_calibration` | `(self, x, y, method, y_std=None, folders=None, sample_names=None)` | Perform the ionic calibration with the shared regression helpers. |
 | `calculate_transport_rate` | `(self)` | Calculate transport rate based on particle and ionic calibrations. |
-| `plot_multiple_diameter_distributions` | `(self, all_diameters)` | Plot histogram of particle diameters for multiple files with statistics. |
+| `plot_multiple_diameter_distributions` | `(self, all_diameters)` | Plot one histogram of particle diameters per file, in the IsotopeTrack plot style. |
+| `_show_particle_list_menu` | `(self, position)` | Offer to remove the selected particle samples from the list's context menu. |
+| `_clear_transport_results` | `(self)` | Clear the regression and transport rate results that no longer apply. |
+| `remove_selected_particle_samples` | `(self)` | Remove the particle samples selected in the list, after confirmation. |
+| `remove_selected_standards` | `(self)` | Remove every ionic standard that has a selected cell, after confirmation. |
+| `_project_info_for` | `(self, folder_path)` | Return where a particle sample is stored in the project file, or None. |
+| `attach_project_store` | `(self, project_path, index, ionic_index=None)` | Read the samples stored in a project file from now on. |
+| `_standard_element_signal` | `(self, cached, element_mass)` | Return the selected element signal of one cached ionic standard. |
+| `export_memory_arrays` | `(self)` | Return the selected element signal of every loaded sample and standard. |
+| `export_project_state` | `(self)` | Return the window state stored inside a project file. |
+| `restore_project_state` | `(self, state, project_path, index, ionic_index, progress=None)` | Restore the window from a session stored in a project file. |
+| `_report_restore` | `(self, fraction, message)` | Report restore progress to the caller, when it asked for it. |
+| `_restore_project_state` | `(self, state, project_path, index, ionic_index)` | Do the work of ``restore_project_state`` with progress windows hidden. |
 | `export_to_csv` | `(self)` | Export detection results to CSV file. |
