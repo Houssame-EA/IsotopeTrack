@@ -6159,6 +6159,46 @@ class MainWindow(QMainWindow):
         rows.append(snapshots)
         plot.set_isotope(target, regions, rows)
 
+    def show_spectrum_for(self, sample_name, label):
+        """Show the Spectrum view of one sample, zoomed onto one isotope.
+
+        Used by the Insights spectrum cards. Selects the sample and the
+        isotope as a click in the sample and parameter tables would.
+
+        Args:
+            sample_name (str): Sample to show.
+            label (str): Isotope label, e.g. ``"56Fe"``.
+
+        Returns:
+            bool: False when the sample is not loaded.
+        """
+        table = getattr(self, 'sample_table', None)
+        if not sample_name or table is None:
+            return False
+        item = next((table.item(r, 0) for r in range(table.rowCount())
+                     if table.item(r, 0) and table.item(r, 0).text() == sample_name), None)
+        if item is None:
+            return False
+        if sample_name != self.current_sample:
+            table.setCurrentCell(item.row(), 0)
+            self.on_sample_selected(item)
+        target = next(((el, iso) for el, isos in (self.selected_isotopes or {}).items()
+                       for iso in isos
+                       if self.get_formatted_label(f"{el}-{iso:.4f}") == label), None)
+        if target is not None:
+            row = next((r for r in range(self.parameters_table.rowCount())
+                        if self.parameters_table.item(r, 0) is not None
+                        and self._display_label_to_element.get(
+                            self.parameters_table.item(r, 0).text(), (None, None))[:2] == target),
+                       None)
+            if row is not None:
+                self.parameters_table.setCurrentCell(row, 0)
+                self.parameters_table_clicked(row, 0)
+            else:
+                self.current_element, self.current_isotope = target
+        self.switch_plot_view('spectrum')
+        return True
+
     def show_mass_spectrum_popup(self):
         """Open a floating window showing the mean signal intensity for every
         selected isotope in the current sample as a bar chart (mass spectrum).
@@ -6788,50 +6828,6 @@ class MainWindow(QMainWindow):
             self.plot_widget.setYRange(y_min, y_max, padding=0)
         else:
             self.plot_widget.enableAutoRange()
-
-        if element_data:
-            info_lines = [
-                f"<b>Particle #{particle_number} Composition</b>",
-                f"<b>Duration:</b> {particle_duration * 1000:.2f} ms",
-                "",
-            ]
-
-            sorted_elements = sorted(element_data.items(), key=lambda x: x[1]['counts'], reverse=True)
-
-            for label, data in sorted_elements:
-                info_lines.append(
-                    f"<span style='color: {data['color']}; font-weight: bold;'>●</span> "
-                    f"<b>{superscript_mass(label)}:</b> {data['counts']:.0f} counts"
-                )
-
-            info_text = "<br>".join(info_lines)
-
-            _tp = theme.palette
-            info_label = pg.TextItem(
-                html=f"""
-                <div style='
-                    background: {_tp.bg_secondary};
-                    color: {_tp.text_primary};
-                    padding: 12px 15px;
-                    border: 1px solid {_tp.border};
-                    border-radius: 8px;
-                    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
-                    font-family: "Segoe UI", Arial, sans-serif;
-                    font-size: 11px;
-                    line-height: 1.4;
-                '>
-                    {info_text}
-                </div>
-                """,
-                anchor=(0, 0)
-            )
-
-            info_x = view_start + 0.02 * (view_end - view_start)
-            info_y = (y_min + 0.6 * (y_max - y_min)
-                      if 'y_max' in locals() and 'y_min' in locals()
-                      else min_signal + 0.6 * (max_signal - min_signal))
-            info_label.setPos(info_x, info_y)
-            self.plot_widget.addItem(info_label)
 
         self.plot_widget.showGrid(x=False, y=False)
         self.plot_widget.setLabel('left', 'Counts')

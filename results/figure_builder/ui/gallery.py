@@ -92,7 +92,7 @@ class ChartGallery(QDialog):
         self.items: dict[str, QListWidgetItem] = {}
         order = [f'recipe:{k}' for k in RECIPES]
         order += [k for ks in GALLERY_GROUPS.values() for k in ks if k in E.PANEL_KINDS]
-        order += [k for k in E.PANEL_KINDS if k not in order and k not in ('text', 'code')]
+        order += [k for k in E.PANEL_KINDS if k not in order and k not in ('text', 'code', 'spectrum')]
         for kind in order:
             name = RECIPES[kind[7:]] if kind.startswith('recipe:') else E.PANEL_KINDS[kind]
             item = QListWidgetItem(_placeholder('drawing…'), name.split(' — ')[0])

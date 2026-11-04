@@ -59,6 +59,7 @@ PANEL_KINDS = {
     'ternary': 'Ternary',
     'text': 'Text / annotation',
     'code': 'Python code',
+    'spectrum': 'Mass spectrum (from an Insights card)',
 }
 """Panel kinds and their display names."""
 
@@ -348,6 +349,13 @@ PANEL_DEFAULTS = {
     'panel_bg': '#ffffff',
     'text': '',
     'text_size': 0,
+    'spectra': {},
+    'spec_exact': '',
+    'spec_label': '',
+    'spec_window': [],
+    'spec_marks': [],
+    'spec_units': '',
+    'spec_normalise': False,
     'caption': False,
     'code': '',
 }

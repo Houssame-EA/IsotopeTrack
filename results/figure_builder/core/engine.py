@@ -216,7 +216,7 @@ def render(fig, spec: dict, table: ParticleTable) -> RenderReport:
     return report
 
 
-NO_FACET = {'text', 'code', 'pairs'}
+NO_FACET = {'text', 'code', 'pairs', 'spectrum'}
 """Panel kinds that cannot be split into one small plot per group."""
 
 SHARED_LIMIT_KINDS = {'scatter', 'line', 'density', 'hexbin', 'contour', 'histogram', 'box', 'violin',
@@ -370,7 +370,7 @@ def _render_panel(fig, index, panel, spec, table, report, style, fw, fh, bg, Rec
     report.artists[panel['id']] = {'ax': ax}
     ptable = table.view(panel.get('data_type'))
     try:
-        if len(table) == 0 and kind not in ('text', 'code'):
+        if len(table) == 0 and kind not in ('text', 'code', 'spectrum'):
             raise ExpressionError('No particles: connect a sample or filter node')
         panel = counts_for_isotope_ratios(panel, ptable)
         panel = massbias.prepare(panel, ptable, report)

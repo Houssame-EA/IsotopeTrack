@@ -24,6 +24,7 @@ from results.figure_builder.core.limits import detection_limits
 from results.insights import discovery as _disc
 from results.insights import evidence as _evidence
 from results.insights import figures as _figures
+from results.insights import spectrum as _spectrum
 from results.insights.explain import explanation_for
 from results.insights.engine import (
     _ANALYSERS, _FONT, FOCUSED_CARD_LIMIT, MAX_SELECTOR_NODES, NODE_TYPE_META, AnalysisScope,
@@ -298,6 +299,41 @@ def isotope_markup(text: str) -> str:
     import html
     escaped = html.escape(text, quote=False)
     return _ISOTOPE_IN_TEXT.sub(r"<sup>\1</sup>\2", escaped)
+
+
+def spectrum_sources(parent_window, sample_names) -> dict:
+    """Collect, on the GUI thread, what the spectrum check needs for each sample.
+
+    Args:
+        parent_window: Main window holding the run info, folders, spectra
+            already read and the selected isotopes.
+        sample_names: Samples in scope.
+
+    Returns:
+        ``{"samples": [SpectrumSource], "isotopes": [(label, exact mass)]}``;
+        empty lists when nothing has a resolved spectrum.
+    """
+    isotopes = []
+    label_of = getattr(parent_window, "get_formatted_label", None)
+    for element, masses in (getattr(parent_window, "selected_isotopes", None) or {}).items():
+        for mass in masses:
+            try:
+                label = label_of(f"{element}-{float(mass):.4f}") if label_of else None
+            except Exception:
+                label = None
+            if label:
+                isotopes.append((label, float(mass)))
+    run_infos = getattr(parent_window, "sample_run_info", None) or {}
+    folders = getattr(parent_window, "sample_to_folder_map", None) or {}
+    spectra = getattr(parent_window, "sample_raw_spectrum", None) or {}
+    samples = []
+    for name in sample_names:
+        info = run_infos.get(name)
+        if not info or "MassCalCoefficients" not in info:
+            continue
+        samples.append(_spectrum.SpectrumSource(name, dict(info), folders.get(name),
+                                                spectra.get(name)))
+    return {"samples": samples, "isotopes": isotopes}
 
 
 def section_of(category: str) -> str:
@@ -596,15 +632,20 @@ class _Card(QFrame):
         strength.setObjectName("iMuted")
         footer.addWidget(strength)
         footer.addStretch()
-        plot_name = NODE_TYPE_META.get(self._s.node_type, "plot")
-        self._add_btn = QPushButton(f"Add {plot_name.lower()}"
-                                    + ("" if plot_name.lower().endswith(("plot", "builder",
-                                                                         "chart", "matrix"))
-                                       else " plot"))
+        if self.shows_spectrum:
+            self._add_btn = QPushButton("Show in Spectrum view")
+            self._add_btn.setToolTip("Opens the main window's Spectrum view on this sample "
+                                     "and isotope")
+        else:
+            plot_name = NODE_TYPE_META.get(self._s.node_type, "plot")
+            self._add_btn = QPushButton(f"Add {plot_name.lower()}"
+                                        + ("" if plot_name.lower().endswith(("plot", "builder",
+                                                                             "chart", "matrix"))
+                                           else " plot"))
+            self._add_btn.setToolTip("Adds the plot with a selector holding only these samples "
+                                     "and elements")
         self._add_btn.setObjectName("iAddBtn")
         self._add_btn.setCursor(Qt.PointingHandCursor)
-        self._add_btn.setToolTip("Adds the plot with a selector holding only these samples "
-                                 "and elements")
         self._add_btn.clicked.connect(self._clicked)
         footer.addWidget(self._add_btn)
         root.addLayout(footer)
@@ -630,6 +671,11 @@ class _Card(QFrame):
                 figure_row.addWidget(self._cluster_btn)
             figure_row.addWidget(self._figure_btn)
             root.addLayout(figure_row)
+
+    @property
+    def shows_spectrum(self) -> bool:
+        """Whether the card is a spectrum finding, opened in the Spectrum view."""
+        return "spectrum" in (self._s.facts or {})
 
     def _build_details(self, explanation) -> QWidget:
         """Build the hidden details section: key numbers, then the explanation."""
@@ -706,6 +752,8 @@ class _Card(QFrame):
         log_click(f"Insights: added plot for '{self._s.title}'",
                   {"category": self._s.category, "node_type": self._s.node_type})
         self._on_add(self._s)
+        if self.shows_spectrum:
+            return
         original = self._add_btn.text()
         self._add_btn.setText("Added")
         self._add_btn.setEnabled(False)
@@ -1348,7 +1396,8 @@ class SmartInsightsPanel(QWidget):
             self._fill_focus_menu(symbols)
         order = [k for k in category_keys() if k in needed]
         self._worker = _AnalysisWorker(scope, particles, sample_idx,
-                                       categories=order, dedupe=False, focus=self._focus)
+                                       categories=order, dedupe=False, focus=self._focus,
+                                       spectra=spectrum_sources(self._pw, scope.sample_names))
         self._worker.progress.connect(self._set_status)
         self._worker.partial.connect(
             lambda found, detector, key=scope.key: self._on_partial(found, detector, key))
@@ -1859,6 +1908,22 @@ class SmartInsightsPanel(QWidget):
             return
         self._add_suggestion(s, node_type="figure_builder", config=spec, narrow_elements=False)
 
+    def _show_spectrum(self, s: Suggestion):
+        """Open the main window's Spectrum view on a spectrum finding's sample and isotope.
+
+        Args:
+            s: A spectrum finding.
+        """
+        facts = s.facts["spectrum"]
+        show = getattr(self._pw, "show_spectrum_for", None)
+        if show is None or not show(facts.get("focus"), facts.get("label")):
+            self._flash_status("Could not open the Spectrum view for this sample")
+            return
+        window = self._pw.window() if hasattr(self._pw, "window") else None
+        if window is not None:
+            window.raise_()
+            window.activateWindow()
+
     def _add_clustering(self, s: Suggestion):
         """Add a Clustering node over a particle-type finding's samples and elements.
 
@@ -1889,6 +1954,9 @@ class SmartInsightsPanel(QWidget):
             config: Settings for that node instead of the suggestion's.
             narrow_elements: Keep only the finding's elements in the selector.
         """
+        if node_type is None and "spectrum" in (s.facts or {}):
+            self._show_spectrum(s)
+            return
         node_type = node_type or s.node_type
         config = s.config if config is None else config
         try:

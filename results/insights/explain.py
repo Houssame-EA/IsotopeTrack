@@ -55,6 +55,48 @@ EXPLANATIONS: dict[str, Explanation] = {
             "quantifying it."
         ),
     ),
+    "spectrum_shift": Explanation(
+        found=(
+            "The raw snapshots of the run were summed into a resolved spectrum, and the peak "
+            "nearest each isotope's exact mass was measured. Every peak of a run shares its "
+            "mass calibration error, so the median offset of the well-measured peaks (at "
+            "least 200 ions, three peaks or more) was removed first. A peak is flagged when "
+            "it still sits at least 6 mDa, and at least a fifth of its width, from the exact "
+            "mass; the closest known species on that side is named."
+        ),
+        meaning=(
+            "Two ions closer in mass than the resolution make one peak, centred between "
+            "them according to their share. A peak pulled toward a polyatomic ion, an isobar "
+            "or a doubly charged ion means part of the counts in the integration window come "
+            "from it, which raises the isotope's background and its detection threshold, and "
+            "adds signal to particles that carry the interfering element."
+        ),
+        check=(
+            "Open the Spectrum view on this sample and isotope. Compare with a blank: a "
+            "plasma-based ion (ArO⁺, ArN⁺, N₂⁺) is there without sample. Use another isotope "
+            "of the element if one is free of interference, or correct the isotope. A shift "
+            "with no known species points to the mass calibration."
+        ),
+    ),
+    "spectrum_neighbour": Explanation(
+        found=(
+            "In the resolved spectrum, every local maximum within the integration window, "
+            "widened by one peak width, was compared with the isotope's peak. A second peak "
+            "is flagged when it reaches at least 10 % of the main peak's height, sits at "
+            "least 0.6 peak widths away, is separated from it by a dip, and holds at least "
+            "30 ions; the closest known species is named."
+        ),
+        meaning=(
+            "A second, partly resolved peak inside the integration window adds its counts to "
+            "the isotope. Just outside the window it adds nothing now, but a wider window or "
+            "a small drift of the mass calibration would take it in."
+        ),
+        check=(
+            "Open the Spectrum view and see where the second peak falls against the "
+            "integration window. If it is inside, narrow the window in the Nu software or "
+            "use another isotope; if it is a plasma-based ion, a blank shows it too."
+        ),
+    ),
     "isotope": Explanation(
         found=(
             "The ratio of the two isotopes' counts was computed in every particle carrying both. "
