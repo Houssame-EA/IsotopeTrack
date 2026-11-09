@@ -27,7 +27,7 @@ from scipy import stats as _stats
 MIN_GROUP_PARTICLES = 20
 """Particles a sample needs before it counts as a replicate in a comparison."""
 
-INTERFERENCE_MIN_OVERLAP = 15
+INTERFERENCE_MIN_OVERLAP = 10
 """Particles that must carry both masses before an interference is considered."""
 
 INTERFERENCE_MIN_SHARE = 0.70

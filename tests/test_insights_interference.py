@@ -226,3 +226,23 @@ def test_interference_entry_gathers_particle_and_spectrum_cards(abund):
     assert rr.shows_in(particle, "interference") and rr.shows_in(spectrum, "interference")
     assert not rr.shows_in(other, "interference")
     assert set(rr.analysers_for({"interference"})) == {"interference", "spectrum"}
+
+
+def test_ten_shared_particles_are_enough(abund):
+    """A suspect mass seen in 10 to 14 particles with its parent is judged, not skipped."""
+    rng = np.random.default_rng(12)
+    parts = [{"elements": {"48Ti": float(t), "64Zn": float(rng.poisson(0.027 * t))}}
+             for t in rng.lognormal(7.5, 0.3, 12)]
+    parts += [{"elements": {"48Ti": float(t)}} for t in rng.lognormal(5.0, 0.8, 600)]
+    flags = {f["child"]: f for f in disc.interference_flags(context(parts))}
+    assert flags["64Zn"]["stats"]["n"] == 12
+    assert flags["64Zn"]["status"] == "interference"
+
+
+def test_nine_shared_particles_are_not_enough(abund):
+    """Below 10 particles with the parent there is no verdict."""
+    rng = np.random.default_rng(13)
+    parts = [{"elements": {"48Ti": float(t), "64Zn": float(rng.poisson(0.027 * t))}}
+             for t in rng.lognormal(7.5, 0.3, 9)]
+    parts += [{"elements": {"48Ti": float(t)}} for t in rng.lognormal(5.0, 0.8, 600)]
+    assert disc.interference_flags(context(parts)) == []
