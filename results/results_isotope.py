@@ -132,10 +132,11 @@ class InsetColorBarItem(pg.GraphicsWidget):
     BAR_HEIGHT = 14
     MIN_WIDTH = 180
 
-    def __init__(self, label_text, parent=None, vmin=None, vmax=None, log=True):
+    def __init__(self, label_text, parent=None, vmin=None, vmax=None, log=True, stops=None):
         super().__init__(parent)
         self.label_text = label_text
         self.vmin, self.vmax, self.log = vmin, vmax, log
+        self._stops = stops if stops is not None else list(zip(JET_POSITIONS, JET_COLORS))
         title = QFont()
         title.setPointSize(self.TITLE_SIZE)
         title.setBold(True)
@@ -175,8 +176,8 @@ class InsetColorBarItem(pg.GraphicsWidget):
         left, right = self.PAD, self._w - self.PAD
         top = self._title_h
         grad = QLinearGradient(left, top, right, top)
-        for pos, color in zip(JET_POSITIONS, JET_COLORS):
-            grad.setColorAt(pos, QColor(*color))
+        for pos, color in self._stops:
+            grad.setColorAt(float(pos), QColor(*[int(v) for v in color]))
         p.setBrush(QBrush(grad))
         p.setPen(pg.mkPen('k', width=1))
         p.drawRect(QRectF(left, top, right - left, self.BAR_HEIGHT))
@@ -2539,6 +2540,9 @@ class IsotopicRatioDisplayDialog(QDialog):
                      if c in ('_source_sample', '_original_sample') or str(c).startswith(COUNTS_PREFIX)]
         meta_data = element_data[meta_cols]
         numeric_data = element_data.drop(columns=meta_cols)
+        counts_cols = [c for c in meta_cols if str(c).startswith(COUNTS_PREFIX)]
+        if counts_cols:
+            numeric_data.attrs['counts'] = element_data[counts_cols]
 
         df = apply_saturation_filter(numeric_data, cfg)
         if df.empty:

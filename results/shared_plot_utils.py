@@ -1965,6 +1965,10 @@ def apply_font_to_colorbar_standalone(cbar, config: dict, label_text: str = ""):
 def apply_saturation_filter(element_data: pd.DataFrame, config: dict) -> pd.DataFrame:
     """Remove particles where *any* element exceeds the saturation threshold.
 
+    The threshold is in counts. When the table holds another quantity
+    (mass, moles, size), the particles' counts must ride along in
+    ``element_data.attrs['counts']``, row for row, and are checked instead.
+
     Args:
         element_data: DataFrame (rows = particles, cols = elements)
         config: dict with 'filter_saturated' and 'saturation_threshold'
@@ -1973,8 +1977,13 @@ def apply_saturation_filter(element_data: pd.DataFrame, config: dict) -> pd.Data
         return element_data
 
     threshold = config.get('saturation_threshold', 10000)
-    numeric_df = element_data.select_dtypes(include='number')
-    mask = (numeric_df < threshold).all(axis=1)
+    counts = element_data.attrs.get('counts')
+    if counts is not None and len(counts) == len(element_data):
+        numeric_df = counts.select_dtypes(include='number')
+        mask = (numeric_df < threshold).all(axis=1).to_numpy()
+    else:
+        numeric_df = element_data.select_dtypes(include='number')
+        mask = (numeric_df < threshold).all(axis=1)
     filtered = element_data[mask]
     _itk_log.debug(f"Saturation filter: {len(element_data)} → {len(filtered)} particles (threshold={threshold})")
     return filtered
