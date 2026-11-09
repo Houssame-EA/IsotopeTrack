@@ -102,6 +102,7 @@ def prepare(widget):
 
 
 _safe_area_filter = None
+_titlebar_filter = None
 
 
 def _install_safe_area_filter():
@@ -367,6 +368,113 @@ def _apply_windows(widget, dark):
     return result == 0
 
 
+def titlebar_action():
+    """Return what a title-bar double-click does in the user's macOS settings.
+
+    Reads ``AppleActionOnDoubleClick`` (Desktop & Dock → "Double-click a
+    window's title bar to"), falling back on the older
+    ``AppleMiniaturizeOnDoubleClick`` switch.
+
+    Returns:
+        str: ``"zoom"``, ``"minimize"`` or ``"none"``.
+    """
+    try:
+        defaults = _send(_cls("NSUserDefaults"), "standardUserDefaults")
+        value = _send(defaults, "stringForKey:", ctypes.c_void_p, (ctypes.c_void_p,),
+                      _ns_string("AppleActionOnDoubleClick"))
+        if value:
+            text = _send(value, "UTF8String", ctypes.c_char_p).decode()
+            return {"minimize": "minimize", "none": "none"}.get(text.lower(), "zoom")
+        mini = _send(defaults, "boolForKey:", ctypes.c_bool, (ctypes.c_void_p,),
+                     _ns_string("AppleMiniaturizeOnDoubleClick"))
+        return "minimize" if mini else "zoom"
+    except Exception:
+        _log.exception("Could not read the title-bar double-click setting")
+        return "zoom"
+
+
+def titlebar_double_click(widget):
+    """Do what macOS does when the title bar of *widget*'s window is double-clicked.
+
+    The merged title bar of a glass window is Qt content, so macOS never sees
+    the double-click there; this hands it back to the window.
+
+    Args:
+        widget (QWidget): A glass window.
+    """
+    if sys.platform != "darwin":
+        return
+    try:
+        window = _send(int(widget.winId()), "window")
+        if not window:
+            return
+        action = titlebar_action()
+        if action == "zoom":
+            _send(window, "performZoom:", None, (ctypes.c_void_p,), None)
+        elif action == "minimize":
+            _send(window, "performMiniaturize:", None, (ctypes.c_void_p,), None)
+    except Exception:
+        _log.exception("Could not handle the title-bar double-click")
+
+
+def in_titlebar(window, global_pos):
+    """Whether a point lies on the merged title strip of a glass window, off any control.
+
+    Args:
+        window (QWidget): The top-level window.
+        global_pos (QPoint): Screen position of the click.
+    """
+    from PySide6.QtWidgets import (
+        QAbstractButton, QAbstractSlider, QAbstractSpinBox, QComboBox, QLineEdit, QMenuBar,
+        QTabBar, QTextEdit,
+    )
+    inset = titlebar_inset(window)
+    if not inset:
+        return False
+    pos = window.mapFromGlobal(global_pos)
+    if not (0 <= pos.y() < inset and 0 <= pos.x() < window.width()):
+        return False
+    controls = (QAbstractButton, QAbstractSlider, QAbstractSpinBox, QComboBox, QLineEdit,
+                QMenuBar, QTabBar, QTextEdit)
+    child = window.childAt(pos)
+    while child is not None and child is not window:
+        if isinstance(child, controls):
+            return False
+        child = child.parentWidget()
+    return True
+
+
+def _install_titlebar_filter():
+    """Send double-clicks on the merged title strip of glass windows back to macOS."""
+    global _titlebar_filter
+    if _titlebar_filter is not None:
+        return
+    from PySide6.QtCore import QEvent, QObject
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    class _TitlebarFilter(QObject):
+        """Turns a double-click on the title strip into the system's title-bar action."""
+
+        def eventFilter(self, obj, event):
+            if (event.type() == QEvent.Type.MouseButtonDblClick
+                    and event.button() == Qt.MouseButton.LeftButton
+                    and isinstance(obj, QWidget)):
+                try:
+                    window = obj.window()
+                    if in_titlebar(window, event.globalPosition().toPoint()):
+                        titlebar_double_click(window)
+                        return True
+                except RuntimeError:
+                    pass
+            return False
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    _titlebar_filter = _TitlebarFilter(app)
+    app.installEventFilter(_titlebar_filter)
+
+
 class _ShowWatcher:
     """Runs the glass activation once a window has finished showing."""
 
@@ -398,6 +506,8 @@ class _ShowWatcher:
         if apply(w, theme.is_dark):
             w._glass_active = True
             ignore_safe_area_tree(w)
+            if titlebar_inset(w):
+                _install_titlebar_filter()
             if self.on_active is not None:
                 self.on_active(titlebar_inset(w))
             theme.themeChanged.connect(lambda *_: _refresh(w))
