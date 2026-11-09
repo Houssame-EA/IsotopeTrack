@@ -680,6 +680,12 @@ def plain(text: str) -> str:
     return re.sub(r'\$\^\{(\d+)\}\$', r'\1', text or '').replace('$', '')
 
 
+def _shown_unit(unit: str) -> str:
+    """A base unit (fg, fmol, nm) as the app's chosen unit; other units unchanged."""
+    from utils.unit import units
+    return units.relabel(unit)
+
+
 def pretty(expr: str, table: ParticleTable, style: str = 'isotope', with_unit: bool = True) -> str:
     """Turn an expression into a readable axis or legend title.
 
@@ -703,7 +709,7 @@ def pretty(expr: str, table: ParticleTable, style: str = 'isotope', with_unit: b
         if name in SPECIAL_NAMES:
             if name == 'total' and with_unit:
                 q = QUANTITY_PREFIXES[table.default_prefix]
-                return f'total {q[1]} ({q[2]})'.replace('  ', ' ')
+                return f'total {q[1]} ({_shown_unit(q[2])})'.replace('  ', ' ')
             return name.replace('_', ' ')
         if ':' in name:
             prefix, lab = name.split(':', 1)
@@ -716,6 +722,7 @@ def pretty(expr: str, table: ParticleTable, style: str = 'isotope', with_unit: b
         out = _format_label(lab, style)
         if ':' in name or with_unit:
             _, human, unit = QUANTITY_PREFIXES.get(prefix, ('', prefix, ''))
+            unit = _shown_unit(unit)
             out = (f'{out} {human}' if human else out) + (f' ({unit})' if with_unit and unit else '')
         return out
 

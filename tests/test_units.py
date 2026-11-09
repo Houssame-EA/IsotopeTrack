@@ -85,3 +85,61 @@ class TestRobustFormatting:
         assert u.fmt_diameter_or_zero(float("nan")) == "0"
         # A real positive value still formats normally.
         assert u.fmt_mass_or_zero(2.0) == "2.0000"
+
+
+class TestAppWideUnits:
+    """One choice of units for the whole app."""
+
+    def test_concentration_factors_are_relative_to_ppb(self):
+        from utils.unit import CONCENTRATION_UNITS
+        assert CONCENTRATION_UNITS["ppb"] == 1.0
+        assert CONCENTRATION_UNITS["ppt"] == 1e3
+        assert CONCENTRATION_UNITS["ng/L"] == 1e3
+        assert CONCENTRATION_UNITS["µg/L"] == 1.0
+
+    def test_convert_and_back(self):
+        import numpy as np
+        u = ExportUnits(mass_unit="pg", diameter_unit="µm", concentration_unit="ng/L")
+        assert np.allclose(u.convert(np.array([1000.0, 2500.0]), "mass"), [1.0, 2.5])
+        assert u.convert(500.0, "diameter") == 0.5
+        assert u.convert(2.0, "concentration") == 2000.0
+        assert u.to_base(u.convert(123.0, "mass"), "mass") == 123.0
+        assert u.convert(None, "mass") is None
+        assert u.convert(7.0, "counts") == 7.0
+
+    def test_relabel_changes_only_base_units(self):
+        u = ExportUnits(mass_unit="pg", moles_unit="amol", diameter_unit="µm",
+                        concentration_unit="ng/L")
+        assert u.relabel("Element Mass (fg)") == "Element Mass (pg)"
+        assert u.relabel("Particle Moles (fmol)") == "Particle Moles (amol)"
+        assert u.relabel("Element Diameter (nm)") == "Element Diameter (µm)"
+        assert u.relabel("fg/mL") == "pg/mL"
+        assert u.relabel("LOD (ppb)") == "LOD (ng/L)"
+        assert u.relabel("Counts") == "Counts"
+        assert u.relabel("nmol") == "nmol"
+
+    def test_default_units_change_nothing(self):
+        u = ExportUnits()
+        assert u.relabel("Element Mass (fg)") == "Element Mass (fg)"
+        assert u.convert(12.5, "mass") == 12.5
+
+    def test_kind_of_labels_and_keys(self):
+        from utils.unit import kind_of
+        assert kind_of("Particle Mass (fg)") == "mass"
+        assert kind_of("element_moles_fmol") == "moles"
+        assert kind_of("particle_diameter_nm") == "diameter"
+        assert kind_of("Counts") is None
+
+    def test_choice_is_shared_and_announced(self, monkeypatch):
+        import utils.unit as unit_mod
+        monkeypatch.setattr(unit_mod, "save_units", lambda u: None)
+        app_units = unit_mod.AppUnits()
+        app_units._current = ExportUnits()
+        heard = []
+        app_units.unitsChanged.connect(heard.append)
+        app_units.set(ExportUnits(mass_unit="ng"))
+        app_units.set(ExportUnits(mass_unit="ng"))
+        assert [u.mass_unit for u in heard] == ["ng"]
+        assert app_units.relabel("Mass (fg)") == "Mass (ng)"
+        assert app_units.convert_for(2e6, "element_mass_fg") == 2.0
+        assert app_units.convert_for(5.0, "Counts") == 5.0

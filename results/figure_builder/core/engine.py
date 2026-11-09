@@ -211,9 +211,25 @@ def render(fig, spec: dict, table: ParticleTable) -> RenderReport:
                     _render_facets(fig, index, panel, spec, table, report, style, fw, fh, bg, Rectangle)
                 else:
                     _render_panel(fig, index, panel, spec, table, report, style, fw, fh, bg, Rectangle)
+            _show_units(fig)
     finally:
         font_log.setLevel(previous)
     return report
+
+
+def _show_units(fig) -> None:
+    """Name the app's chosen units in every axis and colour bar title.
+
+    The particles reach the figure in those units, so a title written with a
+    base unit, such as ``Particle mass (fg)``, is shown as ``Particle mass (pg)``.
+    """
+    from utils.unit import units
+    for ax in fig.axes:
+        for get, put in ((ax.get_xlabel, ax.set_xlabel), (ax.get_ylabel, ax.set_ylabel)):
+            text = get()
+            shown = units.relabel(text)
+            if shown != text:
+                put(shown)
 
 
 NO_FACET = {'text', 'code', 'pairs', 'spectrum'}

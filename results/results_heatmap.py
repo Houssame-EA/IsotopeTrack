@@ -25,6 +25,8 @@ from results.utils_sort import (
     sort_elements_by_mass
 )
 from widget.colors import colorheatmap
+from utils.unit import units
+from widget.unit_combo import UnitComboBox
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_heatmap")
 
@@ -319,7 +321,7 @@ class HeatmapSettingsDialog(QDialog):
         if self._scope in ('all', 'quantities'):
             g = QGroupBox("Data Type")
             vl = QVBoxLayout(g)
-            self.data_type = QComboBox()
+            self.data_type = UnitComboBox()
             self.data_type.addItems(HEATMAP_DATA_TYPES)
             self.data_type.setCurrentText(
                 self._config.get('data_type_display', 'Counts'))
@@ -1949,6 +1951,7 @@ class HeatmapPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         self.input_data = input_data
         self.configuration_changed.emit()
 

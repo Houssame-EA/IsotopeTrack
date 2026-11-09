@@ -34,6 +34,7 @@ from results.insights.engine import (
     resolve_scope, shows_in, FILTER_CATEGORIES,
 )
 from tools.theme import theme as _theme
+from utils.unit import units as app_units
 
 
 def _find_source_node(scene) -> object | None:
@@ -1043,6 +1044,7 @@ class SmartInsightsPanel(QWidget):
         self._build_ui()
         self._apply_theme()
         self._theme_dc = _theme.connect_theme(lambda _: self._apply_theme())
+        app_units.unitsChanged.connect(self._on_units_changed)
 
         self._poll = QTimer(self)
         self._poll.setInterval(self.SCOPE_POLL_MS)
@@ -1523,6 +1525,11 @@ class SmartInsightsPanel(QWidget):
         """Show the findings that were held back, and log the click."""
         log_click("Insights: showed new findings")
         self._release_held()
+
+    def _on_units_changed(self, *_):
+        """Write the findings again in the newly chosen units."""
+        if self.isVisible():
+            self.scan(force=True)
 
     def refresh(self):
         """Search everything again from scratch."""
@@ -2140,6 +2147,10 @@ class SmartInsightsPanel(QWidget):
             self._theme_dc()
         except Exception:
             _itk_log.exception("[Insights] theme disconnect failed")
+        try:
+            app_units.unitsChanged.disconnect(self._on_units_changed)
+        except (RuntimeError, TypeError):
+            pass
         self._stop_worker()
 
 

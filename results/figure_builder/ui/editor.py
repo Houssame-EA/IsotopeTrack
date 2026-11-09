@@ -77,6 +77,7 @@ from results.figure_builder.charts.overlays import (
     ELLIPSES, INSET_LOCS, MARGINAL_UNITS, MARGINALS, TRENDS)
 from results.figure_builder.core import styles as S
 from results.figure_builder.core.common import BANDS, GROUP_SORTS, HATCHES, SHAPE_TYPES, TICK_FORMATS
+from utils.unit import units
 from results.figure_builder.core.expressions import (
     DATA_TYPES, QUANTITY_PREFIXES, split_list, validate)
 from results.figure_builder.ui.widgets import (
@@ -622,7 +623,7 @@ class PanelEditor(QWidget):
         if kind == 'combo':
             w = QComboBox()
             for k, label in opts.items():
-                w.addItem(label, k)
+                w.addItem(units.relabel(label) if key in ('data_type', 'heat_quantity', 'marginals_unit') else label, k)
             w.currentIndexChanged.connect(lambda _i, k=key, ww=w: self._set(k, ww.currentData()))
         elif kind in ('expr', 'mask'):
             w = ExpressionEdit()
@@ -726,7 +727,7 @@ class PanelEditor(QWidget):
         for prefix, (_key, human, unit) in QUANTITY_PREFIXES.items():
             if prefix == table.default_prefix:
                 continue
-            sub = m.addMenu(f'{(human or prefix).capitalize()} ({unit})')
+            sub = m.addMenu(f'{(human or prefix).capitalize()} ({units.relabel(unit)})')
             for name in iso_names:
                 sub.addAction(f'{prefix}:{name}', lambda n=f'{prefix}:{name}': self._insert_chip(n))
         if table.variables:

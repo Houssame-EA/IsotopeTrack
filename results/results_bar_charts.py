@@ -14,6 +14,8 @@ import pyqtgraph as pg
 import numpy as np
 from scipy import stats
 from scipy.stats import gaussian_kde
+from utils.unit import units
+from widget.unit_combo import UnitComboBox
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_bar_charts")
 
@@ -2018,7 +2020,7 @@ class HistogramSettingsDialog(QDialog):
 
         g = QGroupBox("Data Type")
         fl = QFormLayout(g)
-        self.data_type = QComboBox()
+        self.data_type = UnitComboBox()
         self.data_type.addItems(HIST_DATA_TYPES)
         self.data_type.setCurrentText(
             self._cfg.get('data_type_display', 'Counts'))
@@ -4322,6 +4324,7 @@ class HistogramPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         self.input_data = input_data
         self.configuration_changed.emit()
 
@@ -5285,7 +5288,7 @@ def _add_stats_text(plot_item, plot_data, cfg):
 
     if lines:
         ti = pg.TextItem(
-            '\n'.join(lines), anchor=(0, 1),
+            units.relabel('\n'.join(lines)), anchor=(0, 1),
             border=pg.mkPen(color='#CBD5E1', width=1),
             fill=pg.mkBrush(255, 255, 255, 220),
             color='#374151')
@@ -6992,6 +6995,7 @@ class ElementBarChartPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         self.input_data = input_data
         self.configuration_changed.emit()
 

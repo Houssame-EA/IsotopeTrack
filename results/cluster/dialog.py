@@ -33,6 +33,8 @@ import matplotlib.ticker as mticker
 import numpy as np
 import math
 import warnings
+from utils.unit import units
+from widget.unit_combo import UnitComboBox
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.cluster.dialog")
 warnings.filterwarnings('ignore')
@@ -1072,7 +1074,7 @@ class ClusteringSettingsDialog(QDialog):
 
         g = QGroupBox("Data Type")
         fl = QFormLayout(g)
-        self.data_type = QComboBox()
+        self.data_type = UnitComboBox()
         self.data_type.addItems(DATA_TYPE_OPTIONS)
         self.data_type.setCurrentText(self._cfg.get('data_type_display', 'Counts'))
         fl.addRow("Data:", self.data_type)
@@ -1787,9 +1789,9 @@ def _style_ax(ax, cfg, xlabel='', ylabel='', title=''):
         spine.set_color(th['border'])
         spine.set_linewidth(0.8)
     if xlabel:
-        ax.set_xlabel(xlabel, fontproperties=fp_lbl, color=col)
+        ax.set_xlabel(units.relabel(xlabel), fontproperties=fp_lbl, color=col)
     if ylabel:
-        ax.set_ylabel(ylabel, fontproperties=fp_lbl, color=col)
+        ax.set_ylabel(units.relabel(ylabel), fontproperties=fp_lbl, color=col)
     if title:
         ax.set_title(title, fontproperties=fp_title, color=col, pad=10)
     ax.tick_params(labelsize=fp_tick.get_size_in_points(), colors=col)
@@ -6450,5 +6452,6 @@ class ClusteringPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         self.input_data = input_data
         self.configuration_changed.emit()

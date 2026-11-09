@@ -1418,10 +1418,11 @@ def analyse_detection_limit(ctx, progress=None) -> list:
 
     found.sort(reverse=True)
     noun = rr._DATA_KEY_NOUNS.get(data_key, "value")
-    unit = rr._DATA_KEY_UNITS.get(data_key, "")
+    unit = rr.shown_unit(data_key)
     label = rr._DATA_KEY_LABELS.get(data_key, "Counts")
     out = []
     for bottom, el, low_value, n in found[:ctx.cap(2)]:
+        low_value = rr.units.convert_for(low_value, data_key)
         out.append(rr.Suggestion(
             title=f"{el} {noun} cut off at the detection limit",
             reasoning=(

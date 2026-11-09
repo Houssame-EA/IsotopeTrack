@@ -44,6 +44,7 @@ from results.insights import spectrum as _spectrum
 from results.insights.replicates import (
     ReplicateGroup, describe_grouping, resolve_groups, user_group_map,
 )
+from utils.unit import units
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.insights")
 
@@ -167,6 +168,15 @@ _DATA_KEY_UNITS: dict[str, str] = {
     "particle_diameter_nm": "nm",
 }
 """Short unit suffixes for writing measured values into card text."""
+
+
+def shown_unit(data_key: str) -> str:
+    """Unit to write after a value of *data_key* in card text: the app's chosen one.
+
+    Values are measured in the base units; convert them with
+    ``units.convert_for(value, data_key)`` before writing them next to this.
+    """
+    return units.relabel(_DATA_KEY_UNITS.get(data_key, ""))
 
 _DATA_KEY_NOUNS: dict[str, str] = {
     "elements": "intensity",
@@ -1616,14 +1626,15 @@ def _scan_bimodality(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
                 findings.append((el, split))
 
         findings.sort(key=lambda f: -(f[1]["valley_depth"] * f[1]["minor_share"]))
-        unit = _DATA_KEY_UNITS.get(data_key, "")
+        unit = shown_unit(data_key)
         label = _DATA_KEY_LABELS.get(data_key, "Counts")
 
         for el, split in findings:
             if len(out) >= ctx.cap(MAX_BIMODALITY_CARDS):
                 break
             reported.add(el)
-            low, high = split["modes"]
+            low, high = (units.convert_for(v, data_key) for v in split["modes"])
+            split = dict(split, split=units.convert_for(split["split"], data_key))
             out.append(Suggestion(
                 title=f"Two {noun} populations: {el}",
                 reasoning=(

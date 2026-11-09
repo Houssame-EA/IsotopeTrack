@@ -30,6 +30,8 @@ from results.shared_plot_utils import (
     pick_color_hex,
 )
 from widget.colors import default_colors, colorheatmap
+from utils.unit import units
+from widget.unit_combo import UnitComboBox
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_single_multiple")
 
@@ -84,7 +86,7 @@ def basis_unit(basis, per_ml=False):
         str: ``P``/``fg``/``fmol``, or their per-mL form when ``per_ml``.
     """
     plain, per_volume = QUANTITY_BASIS_UNITS[normalize_quantity_basis(basis)]
-    return per_volume if per_ml else plain
+    return units.relabel(per_volume if per_ml else plain)
 
 
 def format_quantity(value, basis):
@@ -545,7 +547,7 @@ class SingleMultipleElementHelper:
                     + [f'{pct:.1f}%', f'mNP ({ne} elem) {unit}'])
             return rows
 
-        quantity_columns = ['Particles', 'Mass (fg)', 'Moles (fmol)']
+        quantity_columns = ['Particles'] + [units.relabel(c) for c in ('Mass (fg)', 'Moles (fmol)')]
         rows = []
         if is_multi:
             for sn, sr in analysis_data.items():
@@ -767,7 +769,7 @@ class SingleMultipleSettingsDialog(QDialog):
 
             g2 = QGroupBox("Units & Dilution")
             f2 = QFormLayout(g2)
-            self.basis_combo = QComboBox(); self.basis_combo.addItems(QUANTITY_BASES)
+            self.basis_combo = UnitComboBox(); self.basis_combo.addItems(QUANTITY_BASES)
             self.basis_combo.setCurrentText(normalize_quantity_basis(
                 self._cfg.get('quantity_basis', 'Particle Count')))
             f2.addRow("Quantity Basis:", self.basis_combo)
@@ -1657,6 +1659,7 @@ class SingleMultipleElementPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         # Classifier support is NOT shipped for this node type (see
         # classifier_view.CLASSIFIER_WIP_NODE_TYPES). Undo the
         # classifier's destructive composition collapse and its

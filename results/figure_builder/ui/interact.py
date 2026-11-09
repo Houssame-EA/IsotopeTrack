@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 from results.figure_builder.core import engine as E
 from results.figure_builder.core import styles as S
 from results.figure_builder.core import textstyle as T
+from utils.unit import units
 from results.figure_builder.core.expressions import DATA_TYPES, plain
 from results.figure_builder.core.recipes import RECIPES
 from results.figure_builder.ui.widgets import ColorButton
@@ -615,10 +616,10 @@ def _panel_menu(win, menu, panel, fx, fy):
     for key, label in E.PANEL_KINDS.items():
         _add(types, label, lambda k=key: win.set_panel_kind(panel, k), checked=kind == key)
     quantity = _submenu(menu, 'Quantity (unit)')
-    _add(quantity, f'Figure default ({win.spec.get("data_type", "Counts")})',
+    _add(quantity, f'Figure default ({units.relabel(win.spec.get("data_type", "Counts"))})',
          lambda: (panel.update(data_type=''), win.after_edit(True)), checked=not panel.get('data_type'))
     for key in DATA_TYPES:
-        _add(quantity, key, lambda k=key: (panel.update(data_type=k), win.after_edit(True)),
+        _add(quantity, units.relabel(key), lambda k=key: (panel.update(data_type=k), win.after_edit(True)),
              checked=panel.get('data_type') == key)
     group = _submenu(menu, 'Group / colour by')
     for key, label in E.GROUP_MODES.items():

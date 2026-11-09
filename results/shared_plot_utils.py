@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QObject, QEvent, QTimer
 import pyqtgraph as pg
+from utils.unit import units as app_units
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.shared_plot_utils")
 
@@ -1613,6 +1614,8 @@ def apply_axis_label_style(plot_item, axis_name: str, text: str,
     kwargs = build_axis_label_style_kwargs(
         config, family=family, size=size, bold=bold, italic=italic,
         color=color)
+    text = app_units.relabel(text)
+    units = app_units.relabel(units)
     if units:
         plot_item.setLabel(axis_name, text, units=units, **kwargs)
     else:
@@ -1829,6 +1832,12 @@ def apply_font_to_matplotlib(ax, config: dict):
             label.set_fontstyle(style)
             label.set_color(fc['color'])
 
+        for get, put in ((ax.get_xlabel, ax.set_xlabel), (ax.get_ylabel, ax.set_ylabel)):
+            label = get()
+            shown = app_units.relabel(label)
+            if shown != label:
+                put(shown)
+
         if ax.get_title():
             ax.set_title(ax.get_title(),
                          fontfamily=fc['family'], fontsize=fc['size'] + 2,
@@ -1922,7 +1931,7 @@ def _apply_font_to_colorbar(cbar, fc: dict):
         label.set_fontstyle(style)
         label.set_color(fc['color'])
     if cbar.ax.get_ylabel():
-        cbar.set_label(cbar.ax.get_ylabel(),
+        cbar.set_label(app_units.relabel(cbar.ax.get_ylabel()),
                        fontfamily=fc['family'], fontsize=fc['size'],
                        fontweight=weight, fontstyle=style, color=fc['color'])
 
@@ -1945,7 +1954,7 @@ def apply_font_to_colorbar_standalone(cbar, config: dict, label_text: str = ""):
         label.set_fontstyle(style)
         label.set_color(fc['color'])
     if label_text:
-        cbar.set_label(label_text, fontfamily=fc['family'], fontsize=fc['size'],
+        cbar.set_label(app_units.relabel(label_text), fontfamily=fc['family'], fontsize=fc['size'],
                        fontweight=weight, fontstyle=style, color=fc['color'])
 
 
@@ -3015,7 +3024,7 @@ def _prepare_csv_dataframe(data, columns: dict | None = None) -> pd.DataFrame:
             for key, val in p.items():
                 if isinstance(val, dict):
                     for k2, v2 in val.items():
-                        col = f"{k2}" if key == 'elements' else f"{k2} ({key})"
+                        col = f"{k2}" if key == 'elements' else f"{k2} ({app_units.relabel(key)})"
                         row[col] = v2
                 else:
                     row[key] = val

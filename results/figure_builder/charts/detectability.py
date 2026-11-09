@@ -29,6 +29,12 @@ LINE_COLORS = ['#7c3aed', '#0891b2', '#b45309', '#be123c']
 """Colours of the detectability lines, one per minor element."""
 
 
+def _mass_unit() -> str:
+    """The app's chosen mass unit, in which the figure's masses arrive."""
+    from utils.unit import units
+    return units.unit('mass')
+
+
 def mass_label(expr: str, table) -> str | None:
     """Isotope label of an expression that is one element's mass, else ``None``.
 
@@ -185,7 +191,7 @@ def draw_on_scatter(ax, panel, table, report, x_expr, y_expr):
                             transform=ax.get_xaxis_transform(), zorder=8)
                 t._fb_cell = True
                 report.stats.append(f'{minor} is detectable at the {how} once {major_label} '
-                                    f'exceeds {need:.3g} fg')
+                                    f'exceeds {need:.3g} {_mass_unit()}')
     if panel.get('crust_line'):
         y_label = mass_label(y_expr, table)
         if major_label is None or y_label is None:

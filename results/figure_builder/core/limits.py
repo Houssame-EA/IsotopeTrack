@@ -168,10 +168,25 @@ def attach_limits(table, parent_window) -> None:
     table.sample_members = {k: sorted(v) for k, v in members.items()}
     originals = sorted({s for v in members.values() for s in v})
     try:
-        table.detection_limits = detection_limits(parent_window, originals, list(table.labels))
+        table.detection_limits = _in_display_units(
+            detection_limits(parent_window, originals, list(table.labels)))
     except Exception:
         _log.debug("Could not read detection limits for the figure")
         table.detection_limits = {}
+
+
+def _in_display_units(limits):
+    """Detection limits with the mass and size ones in the app's chosen units.
+
+    The figure's particles arrive in those units, so the limits drawn over
+    them must be too.
+    """
+    from utils.unit import units
+    kinds = {"mass": "mass", "d": "diameter"}
+    return {label: {prefix: ({s: units.convert(v, kinds[prefix]) for s, v in per.items()}
+                             if prefix in kinds else per)
+                    for prefix, per in found.items()}
+            for label, found in (limits or {}).items()}
 
 
 def group_limit(table, prefix: str, label: str, mask=None) -> float | None:

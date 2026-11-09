@@ -26,6 +26,8 @@ from results.shared_plot_utils import (
     _add_det_limit_h,
     apply_plot_title_style, apply_axis_label_style,
 )
+from utils.unit import units
+from widget.unit_combo import UnitComboBox
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_isotope")
 
@@ -798,7 +800,7 @@ class IsotopeSettingsDialog(QDialog):
 
         g = QGroupBox("Data Type")
         fl = QFormLayout(g)
-        self.data_type = QComboBox()
+        self.data_type = UnitComboBox()
         self.data_type.addItems(DATA_TYPE_OPTIONS)
         self.data_type.setCurrentText(self._cfg.get('data_type_display', 'Counts'))
         fl.addRow("Data:", self.data_type)
@@ -2930,7 +2932,7 @@ class IsotopicRatioDisplayDialog(QDialog):
         color_elem = cfg.get('color_element', '')
         dt = cfg.get('data_type_display', 'Counts')
         
-        label_text = f"log10 {color_elem} ({dt})"
+        label_text = units.relabel(f"log10 {color_elem} ({dt})")
         
         cbar = InsetColorBarItem(label_text, vmin=vmin, vmax=vmax, log=True)
         cbar.setParentItem(pi.vb)
@@ -3395,6 +3397,7 @@ class IsotopicRatioPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         # Classifier support is NOT shipped for this node type (see
         # classifier_view.CLASSIFIER_WIP_NODE_TYPES). Undo the
         # classifier's destructive composition collapse and its

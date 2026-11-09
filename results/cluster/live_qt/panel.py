@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFrame,
                                QHBoxLayout, QLabel, QPushButton, QScrollArea,
                                QSlider, QTabWidget, QVBoxLayout, QWidget)
 
+from widget.unit_combo import UnitComboBox
+
 from .legend import _glyph_pixmap
 from .state import (SHAPE_LABELS, SHAPES, THEME, cluster_tag,
                     element_label_text)
@@ -417,9 +419,9 @@ class ControlPanel(QWidget):
         lay.addWidget(self.var_info)
 
         lay.addWidget(_header('DATA'))
-        self.data_type = QComboBox()
+        self.data_type = UnitComboBox()
         self.data_type.currentTextChanged.connect(
-            lambda v: self._push({'data_type': v}))
+            lambda _v: self._push({'data_type': self.data_type.currentText()}))
         f = _Field('Data type')
         f.add(self.data_type)
         lay.addWidget(f)

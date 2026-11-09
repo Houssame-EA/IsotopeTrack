@@ -68,6 +68,8 @@ def table_from(units, pool) -> object | None:
 
     Returns:
         A Figure Builder :class:`ParticleTable`, or ``None`` without particles.
+        Its masses, moles and diameters are in the app's chosen units, as
+        the figure on the canvas will be.
     """
     from results.figure_builder.core.expressions import ParticleTable
     particles = []
@@ -82,8 +84,10 @@ def table_from(units, pool) -> object | None:
                 particles.append(q)
     if not particles:
         return None
-    return ParticleTable.from_input({"type": "multiple_sample_data", "sample_names": names,
-                                     "particle_data": particles}, "Counts")
+    from utils.unit import units as app_units
+    data = app_units.convert_input({"type": "multiple_sample_data", "sample_names": names,
+                                    "particle_data": particles})
+    return ParticleTable.from_input(data, "Counts")
 
 
 def _eval(table, expr: str) -> np.ndarray:

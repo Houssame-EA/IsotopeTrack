@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QWidget, QFrame, QStackedWidget
 import tools.dilution_utils
 import utils.dilution
 import utils.signal_stats
+from utils.unit import units
 import json
 from calibration_methods.ionic_CAL import IonicCalibrationWindow
 from tools.periodic_table_utils.periodic_table_info import PeriodicTableInfo
@@ -338,6 +339,7 @@ class MainWindow(QMainWindow):
         self.create_status_bar()
         theme.themeChanged.connect(self.apply_theme)
         self.apply_theme()
+        units.unitsChanged.connect(self._on_units_changed)
 
         self._init_ui_enhancements()
 
@@ -1117,6 +1119,10 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(dilution_action)
 
         tools_menu.addSeparator()
+        units_action = _ma('fa6s.ruler', "Units…", self.open_units_dialog,
+                           shortcut=QKeySequence(QKeySequence.StandardKey.Preferences))
+        units_action.setMenuRole(QAction.MenuRole.NoRole)
+        tools_menu.addAction(units_action)
         autosave_action = _ma('fa6s.clock', "Auto Save Settings",
                               self.open_autosave_settings, shortcut="Ctrl+Shift+S")
         tools_menu.addAction(autosave_action)
@@ -5700,6 +5706,7 @@ class MainWindow(QMainWindow):
         percentage_of_all = (
                 particle_count / total_particles_all_elements * 100) if total_particles_all_elements > 0 else 0.00000
 
+        mass_unit = units.unit('mass')
         summary_html = f"""
         <style>{html_table_css(theme.palette)}</style>
         <table>
@@ -5710,9 +5717,9 @@ class MainWindow(QMainWindow):
                 <th>Total Counts</th>
                 <th>Mean Counts</th>
                 <th>Median Counts</th>
-                <th>Total Mass (fg)</th>
-                <th>Mean Mass (fg)</th>
-                <th>Median Mass (fg)</th>
+                <th>Total Mass ({mass_unit})</th>
+                <th>Mean Mass ({mass_unit})</th>
+                <th>Median Mass ({mass_unit})</th>
                 <th>Mean Signal (counts)</th>
                 <th>Background (counts)</th>
                 <th>Threshold (counts)</th>
@@ -5725,9 +5732,9 @@ class MainWindow(QMainWindow):
                 <td>{total_counts:.5f}</td>
                 <td>{mean_counts:.5f}</td>
                 <td>{median_counts:.5f}</td>
-                <td>{total_mass_fg:.5f}</td>
-                <td>{mean_mass_fg:.5f}</td>
-                <td>{median_mass_fg:.5f}</td>
+                <td>{units.convert(total_mass_fg, 'mass'):.5f}</td>
+                <td>{units.convert(mean_mass_fg, 'mass'):.5f}</td>
+                <td>{units.convert(median_mass_fg, 'mass'):.5f}</td>
                 <td>{overall_mean_signal:.5f}</td>
                 <td>{background_signal:.5f}</td>
                 <td>{threshold_counts:.5f}</td>
@@ -7569,6 +7576,21 @@ class MainWindow(QMainWindow):
         tools.dilution_utils.open_dilution_factor_dialog(self)
         self._mark_results_changed()
 
+    def _on_units_changed(self, *_):
+        """Show the element summary again in the newly chosen units."""
+        last_args = getattr(self, '_last_summary_args', None)
+        if last_args is None:
+            return
+        try:
+            self.update_element_summary(*last_args)
+        except Exception:
+            _itk_log.exception("Could not refresh the summary in the new units")
+
+    def open_units_dialog(self):
+        """Open the Units dialog; the choice applies to every window of the app."""
+        from tools.unit import show_units_dialog
+        show_units_dialog(self)
+
     def open_autosave_settings(self):
         """Open the Auto Save Settings dialog."""
         from save_export.autosave import AutoSaveSettingsDialog
@@ -8602,6 +8624,10 @@ class MainWindow(QMainWindow):
 
         try:
             theme.themeChanged.disconnect(self.apply_theme)
+        except (RuntimeError, TypeError):
+            _itk_log.exception("Handled exception in closeEvent")
+        try:
+            units.unitsChanged.disconnect(self._on_units_changed)
         except (RuntimeError, TypeError):
             _itk_log.exception("Handled exception in closeEvent")
 

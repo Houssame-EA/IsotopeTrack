@@ -29,6 +29,8 @@ from results.shared_plot_utils import (
     get_display_name, download_matplotlib_figure,
 )
 from results.utils_sort import sort_elements_by_mass
+from utils.unit import units
+from widget.unit_combo import UnitComboBox
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_network")
 
@@ -251,11 +253,11 @@ def _node_size_amount_unit(data_type):
     if data_type == 'Counts':
         return 'counts'
     if '(fg)' in data_type:
-        return 'fg'
+        return units.unit('mass')
     if '(fmol)' in data_type:
-        return 'fmol'
+        return units.unit('moles')
     if '(nm)' in data_type:
-        return 'nm'
+        return units.unit('diameter')
     return ''
 
 
@@ -651,7 +653,7 @@ class NetworkSettingsDialog(QDialog):
         if self._scope in ('all', 'quantities'):
             g1 = QGroupBox("Data")
             f1 = QFormLayout(g1)
-            self.dtype_combo = QComboBox()
+            self.dtype_combo = UnitComboBox()
             self.dtype_combo.addItems(NET_DATA_TYPES)
             self.dtype_combo.setCurrentText(self._cfg.get('data_type_display', 'Counts'))
             f1.addRow("Data Type:", self.dtype_combo)
@@ -1495,6 +1497,7 @@ class NetworkDiagramNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         # Classifier support is NOT shipped for this node type (see
         # classifier_view.CLASSIFIER_WIP_NODE_TYPES). Undo the
         # classifier's destructive composition collapse and its

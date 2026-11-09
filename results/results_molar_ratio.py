@@ -23,6 +23,8 @@ from results.shared_plot_utils import (
     compute_bin_edges_width_geo as _mr_compute_bin_edges,
     compute_global_bin_edges_width_geo as _mr_compute_global_bin_edges,
 )
+from utils.unit import units
+from widget.unit_combo import UnitComboBox
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_molar_ratio")
 
@@ -278,7 +280,7 @@ class MolarRatioSettingsDialog(QDialog):
         if self._scope in ('all', 'quantities'):
             g2 = QGroupBox("Molar Data Type")
             f2 = QFormLayout(g2)
-            self.dtype_combo = QComboBox(); self.dtype_combo.addItems(MOLAR_DATA_TYPES)
+            self.dtype_combo = UnitComboBox(); self.dtype_combo.addItems(MOLAR_DATA_TYPES)
             self.dtype_combo.setCurrentText(self._cfg.get('data_type_display', MOLAR_DATA_TYPES[0]))
             f2.addRow("Type:", self.dtype_combo)
             lay.addWidget(g2)
@@ -1646,6 +1648,7 @@ class MolarRatioPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         # Classifier support is NOT shipped for this node type (see
         # classifier_view.CLASSIFIER_WIP_NODE_TYPES). Undo the
         # classifier's destructive composition collapse and its

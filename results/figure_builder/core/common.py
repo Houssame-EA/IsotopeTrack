@@ -158,7 +158,8 @@ def particle_amount(table) -> tuple[np.ndarray, str]:
         return np.zeros(0), 'counts'
     mass = table.view('mass').column('total')
     if np.any(mass > 0):
-        return mass, 'fg'
+        from utils.unit import units
+        return mass, units.unit('mass')
     return table.view('counts').column('total'), 'counts'
 
 

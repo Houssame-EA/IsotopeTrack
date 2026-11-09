@@ -67,6 +67,7 @@ import qtawesome as qta
 from tools.theme import theme as _app_theme
 from tools import window_glass
 from widget import canvas_layout as _layout
+from utils.unit import units
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.widget.canvas_widgets")
 
@@ -4841,6 +4842,7 @@ class EnhancedCanvasScene(QGraphicsScene):
         # When True, add_link's per-link data push is skipped; a single
         # flush_data_flow() pass replaces it (see project load).
         self._suppress_data_flow = False
+        units.unitsChanged.connect(self._on_units_changed)
 
         self.setSceneRect(self.BASE_RECT)
         self.selectionChanged.connect(self._on_selection)
@@ -5496,6 +5498,16 @@ class EnhancedCanvasScene(QGraphicsScene):
         except Exception as e:
             _itk_log.exception("Handled exception in _trigger_data_flow")
             _itk_log.error(f"Data flow error: {e}")
+
+    def _on_units_changed(self, *_):
+        """Send every node's data again so each figure redraws in the new units."""
+        try:
+            self.flush_data_flow()
+        except RuntimeError:
+            try:
+                units.unitsChanged.disconnect(self._on_units_changed)
+            except (RuntimeError, TypeError):
+                pass
 
     def flush_data_flow(self):
         """Push each node's output to its sinks exactly once, sources first.

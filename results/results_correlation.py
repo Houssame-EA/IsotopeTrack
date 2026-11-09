@@ -24,6 +24,8 @@ from results.shared_plot_utils import (
     _apply_box,
 )
 from results import trend_selection as _sel
+from utils.unit import units
+from widget.unit_combo import UnitComboBox
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_correlation")
 
@@ -382,7 +384,7 @@ class CorrelationSettingsDialog(QDialog):
 
         g = QGroupBox("Data Type")
         fl = QFormLayout(g)
-        self.data_type = QComboBox(); self.data_type.addItems(DATA_TYPE_OPTIONS)
+        self.data_type = UnitComboBox(); self.data_type.addItems(DATA_TYPE_OPTIONS)
         self.data_type.setCurrentText(self._config.get('data_type_display', 'Counts'))
         fl.addRow("Data Type:", self.data_type)
         layout.addWidget(g)
@@ -2228,6 +2230,7 @@ class CorrelationPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         # Classifier support is NOT shipped for this node type (see
         # classifier_view.CLASSIFIER_WIP_NODE_TYPES). Undo the
         # classifier's destructive composition collapse and its

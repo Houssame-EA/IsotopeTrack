@@ -29,6 +29,8 @@ from results.shared_plot_utils import (
     pick_color_hex,
 )
 from results.utils_sort import sort_elements_by_mass
+from utils.unit import units
+from widget.unit_combo import UnitComboBox
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_matrix")
 
@@ -636,7 +638,7 @@ class MatrixSettingsDialog(QDialog):
         if self._scope in ('all', 'quantities'):
             g1 = QGroupBox("Data")
             f1 = QFormLayout(g1)
-            self.dtype_combo = QComboBox()
+            self.dtype_combo = UnitComboBox()
             self.dtype_combo.addItems(MATRIX_DATA_TYPES)
             self.dtype_combo.setCurrentText(self._cfg.get('data_type_display', 'Counts'))
             f1.addRow("Data Type:", self.dtype_combo)
@@ -1358,6 +1360,7 @@ class CorrelationMatrixNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         self.input_data = input_data
         self.configuration_changed.emit()
 

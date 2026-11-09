@@ -180,7 +180,7 @@ def _marginal_data(panel, data, table, report):
         xq = np.asarray(evaluate(panel['x'], view), dtype=float)
         yq = np.asarray(evaluate(panel['y'], view), dtype=float)
     except Exception as exc:
-        report.stats.append(f'Edges in {MARGINAL_UNITS[unit].lower()}: {exc}')
+        report.stats.append(f'Edges in {_shown(MARGINAL_UNITS[unit]).lower()}: {exc}')
         return None
     points = handles(report, panel).get('points') or []
     out = []
@@ -189,10 +189,16 @@ def _marginal_data(panel, data, table, report):
         out.append((g, xq[idx], yq[idx]))
     allx = np.concatenate([x for _g, x, _y in out]) if out else np.array([])
     if not np.any(np.isfinite(allx) & (allx > 0)):
-        report.stats.append(f'Edges in {MARGINAL_UNITS[unit].lower()}: these particles have no '
+        report.stats.append(f'Edges in {_shown(MARGINAL_UNITS[unit]).lower()}: these particles have no '
                             'such values, so the edges use the axes\' quantity')
         return None
     return out
+
+
+def _shown(text):
+    """*text* with its base unit shown in the app's chosen unit."""
+    from utils.unit import units
+    return units.relabel(text)
 
 
 def _edge_values(v, log):
@@ -219,7 +225,7 @@ def _edge_titles(panel, table, style, own):
             text = pretty(expr, view, style)
         except Exception:
             text = ''
-        unit = UNIT_SUFFIX[panel['marginals_unit']]
+        unit = _shown(UNIT_SUFFIX[panel['marginals_unit']])
         auto.append(text if text.endswith(unit.split(' ')[-1]) else f'{text} {unit}'.strip())
     return [t or a for t, a in zip(typed, auto)]
 

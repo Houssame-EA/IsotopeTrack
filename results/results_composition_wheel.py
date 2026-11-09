@@ -47,6 +47,7 @@ from results.shared_plot_utils import (
     DownloadConfigDialog, make_font_properties,
 )
 from results.utils_sort import sort_elements_by_mass
+from utils.unit import units
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_composition_wheel")
 
@@ -697,6 +698,7 @@ class CompositionWheelPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         self.input_data = input_data
         self.configuration_changed.emit()
 
