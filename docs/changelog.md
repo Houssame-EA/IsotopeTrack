@@ -5,6 +5,22 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
+## v1.13.0 - 2026-11-09
+
+### What’s Changed
+
+- ### v1.13.0 ([#46](https://github.com/Houssame-EA/IsotopeTrack/pull/46)) [@Houssame-EA](https://github.com/Houssame-EA)
+  
+- version to 1.13.0 ([#45](https://github.com/Houssame-EA/IsotopeTrack/pull/45)) [@Houssame-EA](https://github.com/Houssame-EA)
+- improvementV6: app-wide units, interference checks, canvas figure fixes ([#44](https://github.com/Houssame-EA/IsotopeTrack/pull/44)) [@Houssame-EA](https://github.com/Houssame-EA)
+- improvementV5: Insights checks, Figure Builder mass-bias, isotope ratios from counts, macOS system menus ([#43](https://github.com/Houssame-EA/IsotopeTrack/pull/43)) [@Houssame-EA](https://github.com/Houssame-EA)
+
+### Contributors
+
+@Houssame-EA and [@github-actions[bot]](https://github.com/apps/github-actions)
+
+**Full Changelog**: [v1.12.0...v1.13.0](https://github.com/Houssame-EA/IsotopeTrack/compare/v1.12.0...v1.13.0)
+
 ## v1.12.0 - 2026-10-30
 
 ### What’s Changed
