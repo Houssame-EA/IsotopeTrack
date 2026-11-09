@@ -55,3 +55,20 @@ def test_windows_without_a_merged_title_strip_are_untouched():
     QApplication.instance() or QApplication([])
     win = QWidget()
     assert not window_glass.in_titlebar(win, win.mapToGlobal(QPoint(10, 5)))
+
+
+def test_the_main_window_path_also_watches_the_title_strip(monkeypatch):
+    """Applying the glass directly, as the main window does, installs the double-click handling."""
+    QApplication.instance() or QApplication([])
+    monkeypatch.setattr(window_glass, "_titlebar_filter", None)
+    monkeypatch.setattr(window_glass.sys, "platform", "darwin")
+
+    def fake_apply_mac(widget):
+        widget._glass_unified = True
+        return True
+
+    monkeypatch.setattr(window_glass, "_apply_mac", fake_apply_mac)
+    win = QWidget()
+    win._glass_prepared = True
+    assert window_glass.apply(win, False)
+    assert window_glass._titlebar_filter is not None

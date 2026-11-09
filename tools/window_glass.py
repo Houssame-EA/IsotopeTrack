@@ -169,6 +169,7 @@ def apply(widget, dark):
     """Install the frosted backdrop behind a prepared, shown top-level widget.
 
     Safe to call more than once; later calls only refresh the appearance.
+    On macOS it also makes double-clicks on the merged title strip work.
 
     Args:
         widget (QWidget): The top-level window passed to :func:`prepare`.
@@ -181,7 +182,10 @@ def apply(widget, dark):
         return False
     try:
         if sys.platform == "darwin":
-            return _apply_mac(widget)
+            active = _apply_mac(widget)
+            if active and titlebar_inset(widget):
+                _install_titlebar_filter()
+            return active
         if sys.platform == "win32":
             return _apply_windows(widget, dark)
     except Exception:
@@ -506,8 +510,6 @@ class _ShowWatcher:
         if apply(w, theme.is_dark):
             w._glass_active = True
             ignore_safe_area_tree(w)
-            if titlebar_inset(w):
-                _install_titlebar_filter()
             if self.on_active is not None:
                 self.on_active(titlebar_inset(w))
             theme.themeChanged.connect(lambda *_: _refresh(w))
