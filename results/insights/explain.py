@@ -35,23 +35,36 @@ class Explanation:
 EXPLANATIONS: dict[str, Explanation] = {
     "interference": Explanation(
         found=(
-            "For each measured mass m, the masses m+16 (oxide, MO⁺), m+17 (hydroxide, MOH⁺) "
-            "and m/2 (doubly charged, M²⁺) were checked. A mass is flagged when at least 70 % "
-            "of its detections arrive in particles that also carry the parent, the "
-            "suspect-to-parent signal ratio is below 20 % with a robust spread under a factor "
-            "of 2, and on log axes the two scale with a slope between 0.6 and 1.4."
+            "For each measured mass m, the masses m+16 (oxide, MO⁺), m+17 (hydroxide, MOH⁺), "
+            "m±1 (hydride MH⁺ or the tail of the m peak) and m/2 (doubly charged, M²⁺) were "
+            "checked, including masses read from the run that were not selected. A mass is "
+            "flagged when its detections arrive in particles that also carry the parent (70 % "
+            "or more for the whole mass, 20 % or more for a partial flag), the suspect-to-parent "
+            "ratio is below 20 % (2 % one mass away) with a robust spread under a factor of 2, "
+            "and on log axes the two scale with a slope between 0.6 and 1.6 (up to 2 for a peak "
+            "tail). The slope uses only particles where the suspect sits well above its "
+            "detection threshold; when the parent saturates, it is checked on a less abundant "
+            "isotope of the same element. A mass that is itself an interference is never taken "
+            "as a parent, and the parent element must also show on its main isotope."
         ),
         meaning=(
-            "Oxide, hydroxide and doubly charged ions form in the plasma from the parent "
-            "element itself, so their signal is a small, nearly fixed fraction of the parent's, "
-            "particle by particle. A genuine second element at the same mass would vary on its "
-            "own and would also appear in particles without the parent."
+            "Oxide, hydroxide, hydride and doubly charged ions form in the plasma from the "
+            "parent element itself, and a very large peak spills a little signal onto the next "
+            "mass, so the suspect signal is a small fraction of the parent's, particle by "
+            "particle. It only passes the detection threshold in large parent particles, which "
+            "makes false particles of the suspect element. A real element is told apart two "
+            "ways: one element makes MO⁺ at one rate on all its isotopes, so a ratio well above "
+            "that rate holds a real element as well; and a real element also shows on its "
+            "isotopes the parent cannot reach. When every isotope of the suspect element can be "
+            "reached, the card says it may also be real."
         ),
         check=(
-            "Compare the ratio with the oxide or doubly charged ratio measured during tuning; "
-            "it depends on nebuliser gas flow, RF power and sample loading. A real element at "
-            "the same mass can sit on top of the interference, so look at particles that carry "
-            "the suspect mass without the parent. Correct or exclude the mass before "
+            "The check is more reliable when the signal is higher: larger particles, and a "
+            "higher dissolved (ionic) level of the parent, make more interference counts, so "
+            "the ratio is measured better. With small particles or a low ionic level there are "
+            "too few false detections to judge, and no card is shown. Compare the ratio with "
+            "the oxide or doubly charged ratio measured during tuning; it depends on nebuliser "
+            "gas flow, RF power and sample loading. Correct or exclude the mass before "
             "quantifying it."
         ),
     ),
@@ -95,6 +108,29 @@ EXPLANATIONS: dict[str, Explanation] = {
             "Open the Spectrum view and see where the second peak falls against the "
             "integration window. If it is inside, narrow the window in the Nu software or "
             "use another isotope; if it is a plasma-based ion, a blank shows it too."
+        ),
+    ),
+    "spectrum_share": Explanation(
+        found=(
+            "The resolved spectrum of the run was summed in every integration window and "
+            "explained as a sum of element patterns: natural isotopes, oxides MO⁺ at +16 and "
+            "doubly charged ions at half mass, with rates measured on single-element standards. "
+            "An element was kept only when it stands at least five times above its counting "
+            "noise, and above the closest blank when one is loaded. The signal at the "
+            "isotope's mass was then split between the species of the elements found. This is "
+            "the same identification the Spectrum view shows."
+        ),
+        meaning=(
+            "The percentages are the predicted share of the counts in the isotope's integration "
+            "window. An isobar of another element or an oxide of a lighter element adds counts "
+            "that look exactly like the isotope, so concentrations, particle masses and "
+            "detection thresholds of that isotope are biased by the same share."
+        ),
+        check=(
+            "Open the Spectrum view on this sample and isotope: the peak position tells whether "
+            "the peak sits on the isotope or on the interfering ion. Use another isotope of the "
+            "element if one is free, correct the isotope, or measure a blank and a "
+            "single-element standard of the interfering element to confirm the oxide level."
         ),
     ),
     "isotope": Explanation(

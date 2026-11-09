@@ -31,7 +31,7 @@ from results.insights.engine import (
     Suggestion, checked_samples, find_selector, numbered_selectors,
     _AnalysisWorker, _dedupe_suggestions, _find_batch_node, _itk_log, analysers_for,
     category_keys, gather_scope_data, invalidate_context_cache, keep_elements, node_type_keys,
-    resolve_scope,
+    resolve_scope, shows_in, FILTER_CATEGORIES,
 )
 from tools.theme import theme as _theme
 
@@ -310,8 +310,9 @@ def spectrum_sources(parent_window, sample_names) -> dict:
         sample_names: Samples in scope.
 
     Returns:
-        ``{"samples": [SpectrumSource], "isotopes": [(label, exact mass)]}``;
-        empty lists when nothing has a resolved spectrum.
+        ``{"samples": [SpectrumSource], "isotopes": [(label, exact mass)],
+        "blanks": [SpectrumSource]}``, the blanks being loaded blank runs
+        outside the scope; empty lists when nothing has a resolved spectrum.
     """
     isotopes = []
     label_of = getattr(parent_window, "get_formatted_label", None)
@@ -326,14 +327,21 @@ def spectrum_sources(parent_window, sample_names) -> dict:
     run_infos = getattr(parent_window, "sample_run_info", None) or {}
     folders = getattr(parent_window, "sample_to_folder_map", None) or {}
     spectra = getattr(parent_window, "sample_raw_spectrum", None) or {}
-    samples = []
-    for name in sample_names:
+    identified = getattr(parent_window, "_interference_by_sample", None) or {}
+
+    def source(name):
         info = run_infos.get(name)
         if not info or "MassCalCoefficients" not in info:
-            continue
-        samples.append(_spectrum.SpectrumSource(name, dict(info), folders.get(name),
-                                                spectra.get(name)))
-    return {"samples": samples, "isotopes": isotopes}
+            return None
+        return _spectrum.SpectrumSource(name, dict(info), folders.get(name), spectra.get(name),
+                                        identified.get(name))
+
+    samples = [s for s in (source(name) for name in sample_names) if s is not None]
+    in_scope = set(sample_names)
+    blanks = [s for s in (source(name) for name in folders
+                          if name not in in_scope and _spectrum.idet.is_blank_name(name))
+              if s is not None]
+    return {"samples": samples, "isotopes": isotopes, "blanks": blanks}
 
 
 def section_of(category: str) -> str:
@@ -1517,7 +1525,8 @@ class SmartInsightsPanel(QWidget):
         analyser = _ANALYSERS.get(key)
         if analyser is None:
             return
-        self._set_filter(next(iter(sorted(analyser.node_types)), None))
+        own = [k for k, cats in FILTER_CATEGORIES.items() if key in cats]
+        self._set_filter(own[0] if own else next(iter(sorted(analyser.node_types)), None))
         self.scan(force=force)
 
     def _check_scope(self):
@@ -1654,7 +1663,7 @@ class SmartInsightsPanel(QWidget):
         if self._filter is None:
             return _dedupe_suggestions(self._found,
                                        FOCUSED_CARD_LIMIT if self._focus else None)
-        wanted = [s for s in self._found if s.node_type == self._filter]
+        wanted = [s for s in self._found if shows_in(s, self._filter)]
         return _dedupe_suggestions(wanted, FOCUSED_CARD_LIMIT)
 
     def _update_chip_counts(self):
@@ -1674,7 +1683,7 @@ class SmartInsightsPanel(QWidget):
                 action.setEnabled(True)
                 continue
             count = len(_dedupe_suggestions(
-                [s for s in self._found if s.node_type == key], FOCUSED_CARD_LIMIT))
+                [s for s in self._found if shows_in(s, key)], FOCUSED_CARD_LIMIT))
             action.setText(f"{label}  ({count})" if count else f"{label}  (none)")
             action.setEnabled(bool(count) or not finished or key == self._filter)
 

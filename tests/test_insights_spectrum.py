@@ -106,7 +106,7 @@ def test_peak_pulled_toward_arO_is_flagged_on_56Fe():
     assert len(shift) == 1
     s = shift[0]
     assert s.category == "interference" and s.elements == ("56Fe",)
-    assert s.node_type == "spectrum_view"
+    assert s.node_type == "interference"
     assert s.samples == ("S1",)
     assert "⁴⁰Ar¹⁶O⁺" in s.title and "above" in s.title
     assert "1 of 2 samples" in s.reasoning
@@ -218,4 +218,76 @@ def test_spectrum_cards_are_not_crowded_out_by_figure_builder_cards():
     others = [rr.Suggestion(f"figure {i}", "r", "time", 0.99, "figure_builder",
                             elements=("56Fe",), samples=("S1",)) for i in range(6)]
     kept = rr._dedupe_suggestions(found + others)
-    assert sum(s.node_type == "spectrum_view" for s in kept) == len(found) == 2
+    assert sum(s.node_type == "interference" for s in kept) == len(found) == 2
+
+
+LA = 138.9064
+GD155 = 154.9226
+LA_O = LA + 15.99491
+
+
+HEAVY_DELAY = flight_time(125.0)
+"""Trigger delay that starts the heavy synthetic runs at m/z 125."""
+
+
+def heavy_spectrum(peaks) -> dict:
+    """A summed spectrum from m/z 125 with Gaussian peaks ``(m/z, ions)``."""
+    t = HEAVY_DELAY + np.arange(N_POINTS) / RATE
+    mz = (A + B * t) ** 2
+    y = np.zeros(N_POINTS)
+    for centre, ions in peaks:
+        sigma = centre / RESOLUTION / 2.3548
+        step = 2 * math.sqrt(centre) * B / RATE
+        y += ions * AREA * step / (sigma * math.sqrt(2 * math.pi)) * np.exp(
+            -0.5 * ((mz - centre) / sigma) ** 2)
+    return {"spectrum": y.astype(np.float32), "n_snapshots": 60}
+
+
+def la_run(name, la_ions=400000, oxide=0.04):
+    """A run holding only La and its oxide, with a window on every mass 130–160."""
+    info = run_info([float(m) for m in range(130, 161)])
+    info["SegmentInfo"] = [{"AcquisitionTriggerDelayNs": HEAVY_DELAY}]
+    peaks = [(LA, la_ions), (LA_O, la_ions * oxide)] if la_ions else []
+    return SP.SpectrumSource(name, info, entry=heavy_spectrum(peaks))
+
+
+def test_isotope_made_of_an_oxide_gets_a_share_card():
+    """155Gd in a La solution is LaO⁺, and the card says how much."""
+    isotopes = [("139La", LA), ("155Gd", GD155)]
+    ctx = Ctx([la_run("S1")])
+    ctx.cache[SP.SOURCES_KEY]["isotopes"] = isotopes
+    ctx.matrix = {"139La": np.ones(3), "155Gd": np.ones(3)}
+    found = SP.analyse(ctx)
+    share = [s for s in found if s.explain_key == "spectrum_share"]
+    assert len(share) == 1
+    s = share[0]
+    assert s.elements == ("155Gd",) and "¹³⁹La¹⁶O⁺" in s.title and "mostly" in s.title
+    assert not any(f.explain_key == "spectrum_shift" and f.elements == ("155Gd",) for f in found)
+    assert s.facts["spectrum"]["marks"][0]["label"].startswith("¹³⁹La¹⁶O⁺")
+
+
+def test_insights_and_spectrum_view_share_one_identification():
+    """The card reuses the Spectrum view's identification instead of making its own."""
+    from utils import interference_detection as idet
+    run = la_run("S1")
+    ident = idet.identify_run(run.entry, run.run_info)
+    assert set(ident.amounts) == {"La"}
+    run.identification = (ident, None)
+    assert SP.identify(run, {}) is run.identification
+
+
+def test_closest_blank_is_used():
+    """A loaded blank run is compared with, and named on the card."""
+    run = la_run("S1")
+    blank = la_run("Blank", la_ions=0)
+    ident, name = SP.identify(run, {"Blank": blank})
+    assert name == "Blank" and ident.blank_used
+
+
+def test_known_species_follow_the_elements_present():
+    """Oxides are listed only for elements found in the sample."""
+    everyone = {n for n, _m, _k in SP.known_species("155Gd", GD155)}
+    with_la = {n for n, _m, _k in SP.known_species("155Gd", GD155, ["La"])}
+    without = {n for n, _m, _k in SP.known_species("155Gd", GD155, ["Ce"])}
+    assert "¹³⁹La¹⁶O⁺" in everyone and "¹³⁹La¹⁶O⁺" in with_la
+    assert "¹³⁹La¹⁶O⁺" not in without

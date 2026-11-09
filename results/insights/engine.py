@@ -94,18 +94,36 @@ NODE_TYPE_META: dict[str, str] = {
     "triangle_plot": "Ternary",
     "single_multiple_element_plot": "Single vs multiple",
     "figure_builder": "Figure Builder",
-    "spectrum_view": "Spectrum view",
+    "interference": "Interference",
 }
 """Plot nodes Insights can propose, in the order the panel lists them.
 
-``spectrum_view`` is not a node: spectrum cards open the main window's
-Spectrum view, and their explained figure is a Figure Builder node.
+``interference`` is not a node: it gathers every interference finding, from
+the particles (whose cards add a correlation plot) and from the resolved
+spectrum (whose cards open the main window's Spectrum view); see
+:data:`FILTER_CATEGORIES`.
 
 The Clustering node is not proposed. Particle types are found inside Insights
 with strict checks (see :func:`results.insights.discovery.find_particle_types`)
 and shown in a Figure Builder figure; exploring them further is the
 Clustering node's job.
 """
+
+FILTER_CATEGORIES: dict[str, frozenset] = {
+    "interference": frozenset({"interference", "spectrum"}),
+}
+"""List entries that gather cards by kind of finding as well as by plot node."""
+
+
+def shows_in(s, key: str) -> bool:
+    """Whether a card belongs under the list entry *key*.
+
+    Args:
+        s: The card's :class:`Suggestion`.
+        key: A key of :data:`NODE_TYPE_META`.
+    """
+    return s.node_type == key or s.category in FILTER_CATEGORIES.get(key, ())
+
 
 MIN_CORR_OVERLAP = 25
 """Co-detected particles a pair needs before its correlation is reported."""
@@ -2311,8 +2329,8 @@ def _analyse_anomaly(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
 
 
 _REGISTRY = (
-    ("interference", _disc.analyse_interference, "within", {"correlation_plot"}),
-    ("spectrum", _spectrum.analyse, "across", {"spectrum_view"}),
+    ("interference", _disc.analyse_interference, "within", {"interference", "correlation_plot"}),
+    ("spectrum", _spectrum.analyse, "across", {"interference"}),
     ("isotope", _analyse_isotope, "within", {"isotopic_ratio_plot"}),
     ("isotope_groups", _disc.analyse_isotope_groups, "across", {"isotopic_ratio_plot"}),
     ("comparison", _analyse_comparison, "across", {"concentration_comparison"}),
@@ -2383,7 +2401,7 @@ _NODE_TYPE_CARD_LIMITS: dict[str, int] = {
     "heatmap_plot": 3,
     "concentration_comparison": 4,
     "figure_builder": 4,
-    "spectrum_view": 6,
+    "interference": 6,
     "isotopic_ratio_plot": 3,
     "molar_ratio_plot": 3,
     "box_plot": 2,
@@ -2578,8 +2596,7 @@ def analyse(ctx: AnalysisContext, categories=None, progress=None,
     if should_stop is not None and should_stop():
         return []
     if node_types is not None:
-        wanted = set(node_types)
-        found = [s for s in found if s.node_type in wanted]
+        found = [s for s in found if any(shows_in(s, k) for k in node_types)]
     return _dedupe_suggestions(found, per_type_limit) if dedupe else found
 
 

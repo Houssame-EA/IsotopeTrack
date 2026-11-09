@@ -251,6 +251,78 @@ def test_interference_ignores_an_independent_element():
     assert disc.analyse_interference(context({"S": cerium(1500, False)})) == []
 
 
+def thresholded(n, parent, child, ratio, power=1.0, threshold=10.6, seed=5):
+    """Parent particles whose child mass is only kept once it passes a count threshold.
+
+    Args:
+        n: How many particles.
+        parent: Parent isotope label.
+        child: Child isotope label.
+        ratio: Child-to-parent signal ratio at 100 parent counts.
+        power: How the ratio scales with the parent, 1 for an oxide.
+        threshold: Count threshold every mass is detected against.
+        seed: Random seed.
+
+    Returns:
+        Particle dicts.
+    """
+    rng = np.random.default_rng(seed)
+    out = []
+    for p in rng.lognormal(5.5, 1.0, n):
+        elements = {parent: float(p)}
+        c = float(rng.poisson(ratio * 100 * (p / 100) ** power))
+        if c > threshold:
+            elements[child] = c
+        out.append({"elements": elements})
+    return out
+
+
+def test_interference_flags_an_oxide_near_the_threshold():
+    """A 2.6 % TiO⁺ seen only above the count threshold is still flagged, with its trigger size."""
+    cards = disc.analyse_interference(context({"S": thresholded(3000, "47Ti", "63Cu", 0.026)}))
+    assert len(cards) == 1
+    card = cards[0]
+    assert card.title == "63Cu particles may be TiO⁺ from 47Ti"
+    assert "may be interferences" in card.reasoning
+    assert "none of them on their own" in card.reasoning
+    trigger = dict(card.details)["47Ti counts that give a false 63Cu"]
+    assert 300 <= float(trigger.strip("≈ ").replace(",", "")) <= 700
+
+
+def test_interference_flags_a_peak_tail():
+    """A mass one above a large peak that grows faster than the peak is flagged as its tail."""
+    cards = disc.analyse_interference(
+        context({"S": thresholded(4000, "140Ce", "141Pr", 0.002, power=1.4)}))
+    assert len(cards) == 1
+    assert cards[0].title == "141Pr particles may be CeH⁺ or the Ce peak tail from 140Ce"
+
+
+def test_masses_of_one_false_element_share_a_card():
+    """CeO⁺ on 156 and 158 makes one Gd flag naming both masses."""
+    rng = np.random.default_rng(3)
+    pool = []
+    for ce in rng.lognormal(5.5, 1.0, 3000):
+        elements = {"140Ce": float(ce), "142Ce": float(ce * 0.126)}
+        for label, parent in (("156Gd", ce), ("158Gd", ce * 0.126)):
+            c = float(rng.poisson(0.045 * parent))
+            if c > 10.6:
+                elements[label] = c
+        pool.append({"elements": elements})
+    cards = disc.analyse_interference(context({"S": pool}))
+    assert len(cards) == 1
+    assert cards[0].title == "156Gd and 158Gd particles may be Ce interferences"
+    assert cards[0].elements == ("140Ce", "156Gd", "142Ce", "158Gd")
+    assert cards[0].config["x_element"] == "140Ce" and cards[0].config["y_element"] == "156Gd"
+
+
+def test_a_real_neighbour_element_is_not_flagged():
+    """Brass carries 63Cu and 64Zn together at a high ratio, which is no peak tail."""
+    rng = np.random.default_rng(7)
+    pool = [{"elements": {"63Cu": float(cu), "64Zn": float(cu * 0.6 * rng.lognormal(0, 0.05))}}
+            for cu in rng.lognormal(5.0, 0.8, 1500)]
+    assert disc.analyse_interference(context({"S": pool})) == []
+
+
 def ilmenite(n, fixed, seed=2):
     """Fe and Ti particles, at a fixed 1:1 molar ratio or independent."""
     rng = random.Random(seed)

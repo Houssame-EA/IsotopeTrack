@@ -1,0 +1,116 @@
+{
+  "_about": "Molecular and doubly charged ion rates measured on the Nu Vitesse from single-element 10 ppb standards in 1% HNO3 (Test-B session). Values are fractions of the M+ signal. MO varies with run conditions; the detector rescales it per sample. Ti and Zr have no single-element standard; their MO rates are estimated from Solution 1 (TiO/Ti and ZrO/Zr at m/z 64 and 106, divided by the fitted oxide level 0.6).",
+  "default": {
+    "MO": 0.02,
+    "M2+": 0.0
+  },
+  "elements": {
+    "Y": {
+      "MO": 0.060842,
+      "MOH": 0.002745,
+      "MH": 2.3e-05
+    },
+    "La": {
+      "MO": 0.0749,
+      "MOH": 0.005853,
+      "MH": 0.002377
+    },
+    "Ce": {
+      "MO": 0.076304,
+      "MOH": 0.002257,
+      "M2+": 1e-05,
+      "MH": 0.002334
+    },
+    "Pr": {
+      "MO": 0.056853,
+      "MOH": 0.0004,
+      "MH": 0.00295
+    },
+    "Nd": {
+      "MO": 0.043078,
+      "MOH": 0.000153,
+      "M2+": 0.003661,
+      "MH": 0.000926
+    },
+    "Eu": {
+      "MO": 9e-05,
+      "MOH": 2.6e-05,
+      "MH": 0.001068
+    },
+    "Yb": {
+      "MO": 5.1e-05,
+      "MOH": 1.3e-05,
+      "M2+": 0.000647,
+      "MH": 0.001075
+    },
+    "Ho": {
+      "MO": 0.025747,
+      "MOH": 4.8e-05,
+      "MH": 0.002946
+    },
+    "Sm": {
+      "MO": 0.025638,
+      "MOH": 5.7e-05,
+      "M2+": 0.003055,
+      "MH": 0.000683
+    },
+    "Er": {
+      "MO": 0.021266,
+      "MOH": 8.4e-05,
+      "M2+": 0.001934,
+      "MH": 0.000848
+    },
+    "Hf": {
+      "MO": 0.063073,
+      "MOH": 0.000971,
+      "MH": 0.000922
+    },
+    "Nb": {
+      "MO": 0.043739,
+      "MOH": 2.9e-05,
+      "MH": 0.000287
+    },
+    "Tb": {
+      "MO": 0.050757,
+      "MOH": 0.000197,
+      "MH": 0.00376
+    },
+    "Lu": {
+      "MO": 0.012581
+    },
+    "Th": {
+      "M2+": 1e-06,
+      "MH": 0.000252
+    },
+    "Dy": {
+      "MO": 0.022297,
+      "MOH": 6.2e-05,
+      "MH": 0.000758
+    },
+    "Ta": {
+      "MO": 0.066255,
+      "MOH": 0.001352,
+      "MH": 0.001809
+    },
+    "Gd": {
+      "MO": 0.050363,
+      "MOH": 0.00066,
+      "M2+": 0.001963,
+      "MH": 0.000895
+    },
+    "Tm": {
+      "MO": 0.000536,
+      "MOH": 2.4e-05,
+      "MH": 0.003153
+    },
+    "U": {
+      "M2+": 3.8e-05
+    },
+    "Zr": {
+      "MO": 0.07
+    },
+    "Ti": {
+      "MO": 0.04
+    }
+  }
+}

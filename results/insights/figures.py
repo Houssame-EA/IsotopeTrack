@@ -1559,21 +1559,25 @@ def _spectrum(s, ctx):
     zoom = facts.get("zoom") or []
     if len(zoom) == 2:
         base.update(x_min=f"{zoom[0]:g}", x_max=f"{zoom[1]:g}")
-    shift = facts.get("kind") == "shift"
+    kind = facts.get("kind")
+    sentence = {
+        "shift": f"The peak centre sits off the exact mass, toward {named}.",
+        "neighbour": f"A second peak stands next to the {label} peak, near {named}.",
+        "share": (f"The percentages are the share of the signal at this mass that, from the "
+                  f"elements found in the sample, comes from each ion rather than from {label}."),
+    }.get(kind, "")
+    lines = "dashed lines" if len(marks) > 1 else "dashed line"
     story = [(_panel("spectrum", f"{label} in {focus}", spectra={focus: traces[focus]}, **base),
               f"Resolved spectrum of {focus} around {label}, summed from the run's raw "
               "snapshots, with the m/z corrected for the run's mass calibration offset. The "
               "shaded band is the integration window, the solid line the exact mass of "
-              f"{label} and the dashed line {named}. "
-              + (f"The peak centre sits off the exact mass, toward {named}."
-                 if shift else
-                 f"A second peak stands next to the {label} peak, near {named}."))]
+              f"{label} and the {lines} {named}. " + sentence)]
     if len(traces) > 1:
         story.append((_panel("spectrum", f"{label} in every sample", spectra=traces,
                              spec_normalise=True, **base),
                       f"The same region in the {len(traces)} samples where it is seen, each "
                       "scaled to its highest point so they compare by shape: the same "
-                      + ("shift" if shift else "second peak")
+                      + {"shift": "shift", "neighbour": "second peak"}.get(kind, "interference")
                       + " in every sample points to the plasma or the matrix rather than one "
                         "sample."))
     return story
@@ -1583,6 +1587,7 @@ DESIGNS = {
     "interference": _interference,
     "spectrum_shift": _spectrum,
     "spectrum_neighbour": _spectrum,
+    "spectrum_share": _spectrum,
     "isotope": _isotope_pair,
     "isotope_abundance": _isotope_pair,
     "isotope_two": _isotope_pair,

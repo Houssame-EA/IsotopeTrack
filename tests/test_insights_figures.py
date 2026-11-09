@@ -117,7 +117,7 @@ ELEMENTS = {
 TYPE_KEYS = ("types_overview", "particle_type")
 """Stories drawn from a type card's own definition, tested in test_insights_types."""
 
-SPECTRUM_KEYS = ("spectrum_shift", "spectrum_neighbour")
+SPECTRUM_KEYS = ("spectrum_shift", "spectrum_neighbour", "spectrum_share")
 """Stories drawn from the spectra a card stores, tested in test_insights_spectrum."""
 
 
@@ -373,7 +373,7 @@ def test_filter_shows_exactly_the_picked_type(app):
         assert panel.current_filter() == node_type
     panel._all_action.trigger()
     assert len(panel._suggestions) == everything
-    assert all(a.isEnabled() == bool(len([s for s in panel._found if s.node_type == k]))
+    assert all(a.isEnabled() == bool(len([s for s in panel._found if rr.shows_in(s, k)]))
                for k, a in panel._type_actions.items())
     panel._teardown()
 

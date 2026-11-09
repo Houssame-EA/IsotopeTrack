@@ -31,13 +31,47 @@ INTERFERENCE_MIN_OVERLAP = 15
 """Particles that must carry both masses before an interference is considered."""
 
 INTERFERENCE_MIN_SHARE = 0.70
-"""Share of the suspect mass's detections that must arrive with its parent."""
+"""Share of the suspect mass's detections that must arrive with its parent for the
+whole mass to be called an interference."""
+
+INTERFERENCE_MIN_SHARE_PARTIAL = 0.20
+"""Smallest share still reported, as a partial interference: the particles with the
+parent are flagged and the others are left as a possibly real element."""
 
 INTERFERENCE_MAX_RATIO = 0.20
 """Largest suspect-to-parent signal ratio still typical of an oxide or M²⁺."""
 
 INTERFERENCE_MAX_SPREAD = 0.30
 """Largest robust spread of the log10 ratio for a ratio to count as constant."""
+
+INTERFERENCE_MAX_RATIO_NEIGHBOUR = 0.02
+"""Largest suspect-to-parent ratio for a hydride or the tail of a peak one mass away."""
+
+INTERFERENCE_MAX_SLOPE_NEIGHBOUR = 2.0
+"""Steepest log-log slope for a peak tail, which grows faster than the peak itself."""
+
+INTERFERENCE_CLEAR_FACTOR = 3.0
+"""How far above the suspect's smallest detections the predicted signal must sit for a
+particle to be used in the slope test, so the detection threshold does not flatten it."""
+
+INTERFERENCE_MIN_CLEAR = 15
+"""Particles clear of the threshold needed before the slope test is applied."""
+
+INTERFERENCE_MAX_SLOPE = 1.6
+"""Steepest log-log slope for an oxide, hydroxide or M²⁺; a little above one allows
+for the parent's detector saturating in the largest particles."""
+
+INTERFERENCE_EXCESS_FACTOR = 2.0
+"""How far above the parent element's own oxide rate a ratio must be before the
+suspect mass is said to hold a real element as well."""
+
+INTERFERENCE_SIBLING_REAL = 0.3
+"""Share of the expected signal that must show on another isotope of the suspect
+element, one the parent cannot reach, for the suspect element to be called real."""
+
+INTERFERENCE_MIN_PLAUSIBLE = 0.3
+"""Share of the expected signal that must show on a parent element's main isotope
+for that element to be accepted as the parent."""
 
 STOICHIOMETRY_MIN_OVERLAP = 30
 """Particles carrying both elements before their ratio is judged."""
@@ -237,81 +271,523 @@ def _simple_ratio(value: float, max_term: int = 4, tolerance: float = 0.08) -> s
     return f"{frac.numerator}:{frac.denominator}"
 
 
-def analyse_interference(ctx, progress=None) -> list:
-    """Find masses that behave like an oxide, hydroxide or doubly charged ion.
+def _interference_targets(mass: int, symbol: str) -> list[tuple[int, str, str, bool]]:
+    """List the masses an ion of *symbol* at *mass* can appear on.
 
-    For each measured mass *m*, the masses *m + 16*, *m + 17* and *m / 2* are
-    checked. A suspect mass is flagged when almost all of its detections
-    arrive in the same particles as the parent, at a small and nearly constant
-    ratio that scales one-to-one with the parent. A genuine second element
-    would vary independently and would also turn up without the parent.
+    Returns:
+        ``(target mass, kind, species, neighbour)`` tuples. *neighbour* marks the
+        masses one unit away, where a hydride or the tail of the parent peak sits.
+    """
+    targets = [(mass + 16, "oxide", f"{symbol}O{_SUPERSCRIPT_PLUS}", False),
+               (mass + 17, "hydroxide", f"{symbol}OH{_SUPERSCRIPT_PLUS}", False),
+               (mass + 1, "hydride or peak tail", f"{symbol}H{_SUPERSCRIPT_PLUS} or the {symbol} peak tail", True),
+               (mass - 1, "peak tail", f"the {symbol} peak tail", True)]
+    if mass % 2 == 0:
+        targets.append((mass // 2, "doubly charged ion", f"{symbol}{_SUPERSCRIPT_TWO_PLUS}", False))
+    return targets
+
+
+_ABUNDANCES: dict | None = None
+
+
+def isotope_abundances() -> dict[str, dict[int, float]]:
+    """Natural isotope abundances of every element, ``{symbol: {mass number: fraction}}``.
+
+    Read once from the app's periodic table; empty when it cannot be read, in
+    which case the checks that need abundances are skipped.
+    """
+    global _ABUNDANCES
+    if _ABUNDANCES is None:
+        try:
+            from utils import interference_detection as idet
+            table = idet.isotope_table(idet.default_elements())
+            _ABUNDANCES = {s: {n: f for n, _m, f in iso if f > 0} for s, iso in table.items()}
+        except Exception:
+            _ABUNDANCES = {}
+    return _ABUNDANCES
+
+
+def _run_masses(ctx) -> dict[int, np.ndarray]:
+    """Signal per particle at masses that were not selected but read from the run.
+
+    Particles may carry ``run_masses``: ``{mass or label: counts}`` summed over
+    the particle's time span. Particles without an entry count as zero.
+    """
+    cached = ctx.cache.get("interference_run_masses")
+    if cached is not None:
+        return cached
+    out: dict[int, np.ndarray] = {}
+    for i, p in enumerate(ctx.particles):
+        for key, v in (p.get("run_masses") or {}).items():
+            m = key if isinstance(key, int) else (int(key) if str(key).isdigit() else mass_symbol(key)[0])
+            if m:
+                out.setdefault(m, np.zeros(ctx.n))[i] = float(v or 0.0)
+    ctx.cache["interference_run_masses"] = out
+    return out
+
+
+def _signal_by_mass(ctx, run: dict) -> dict[int, tuple[np.ndarray, np.ndarray]]:
+    """Every mass on hand as ``{mass: (values, known)}``.
+
+    A selected mass is only known in the particles where it was detected; a
+    mass read from the run is known in every particle.
+    """
+    out = {m: (v, np.ones(ctx.n, dtype=bool)) for m, v in run.items()}
+    for label in ctx.matrix:
+        m = mass_symbol(label)[0]
+        if m and m not in out:
+            out[m] = (ctx.matrix[label], ctx.det_mask[label])
+    return out
+
+
+def _plausibility(symbol: str, mass: int, values, detected, masses) -> float:
+    """How well an element's main isotope backs it as the parent at *mass*.
+
+    Returns:
+        About 1 when the main isotope carries the signal its abundance predicts,
+        near 0 when it is missing, and 0.5 when it cannot be judged.
+    """
+    iso = isotope_abundances().get(symbol, {})
+    others = sorted(((a, m) for m, a in iso.items() if m != mass), reverse=True)
+    if not others or mass not in iso or others[0][1] not in masses:
+        return 0.5
+    a_main, m_main = others[0]
+    main, known = masses[m_main]
+    use = detected & known
+    if use.sum() < INTERFERENCE_MIN_OVERLAP:
+        return 0.5
+    expected = float(values[use].sum()) * a_main / iso[mass]
+    if expected < 50.0 * float(use.sum()) ** 0.5:
+        return 0.5
+    return min(float(main[use].sum()) / expected, 2.0)
+
+
+def _pair_stats(ctx, values, detected, child: str, neighbour: bool, slope_values=None,
+                min_share: float = INTERFERENCE_MIN_SHARE_PARTIAL) -> dict | None:
+    """Measure how much *child* behaves like an interference from a parent signal.
+
+    The slope is fitted only on particles where the predicted suspect signal
+    sits well above its smallest detections: near the detection threshold only
+    the high side of the suspect's noise is detected, which flattens the slope
+    of a genuine interference.
+
+    Args:
+        ctx: Analysis context.
+        values: Parent signal per particle.
+        detected: Where the parent is present.
+        child: The suspect isotope label.
+        neighbour: Whether *child* is one mass away from the parent, where a
+            hydride or the parent's peak tail sits. Those are held to a smaller
+            ratio and allowed a steeper slope.
+        slope_values: Another isotope of the parent element to fit the slope
+            against, used when the parent itself saturates.
+        min_share: Smallest share of the suspect's detections that must arrive
+            with the parent.
+
+    Returns:
+        A dict with ``n``, ``share``, ``alone``, ``ratio``, ``spread``,
+        ``slope``, ``trigger`` and ``score``, or ``None`` when the pair fails
+        any of the tests. ``trigger`` is the parent signal above which the
+        suspect passes its own detection threshold.
+    """
+    det_c = ctx.det_mask[child]
+    co = detected & det_c & (values > 0)
+    n_co = int(co.sum())
+    n_child = int(det_c.sum())
+    if n_co < INTERFERENCE_MIN_OVERLAP or n_child == 0:
+        return None
+    share = n_co / n_child
+    if share < min_share:
+        return None
+
+    p_val = values[co]
+    c_val = ctx.matrix[child][co]
+    a = np.log10(p_val)
+    b = np.log10(c_val)
+    lr = b - a
+    c_floor = float(np.percentile(c_val, 5))
+    clear = p_val * 10 ** float(np.median(lr)) >= INTERFERENCE_CLEAR_FACTOR * c_floor
+    n_clear = int(clear.sum())
+    use = clear if n_clear >= INTERFERENCE_MIN_CLEAR else np.ones_like(clear)
+    ratio = 10 ** float(np.median(lr[use]))
+    spread = _robust_sd(lr[use])
+    max_ratio = INTERFERENCE_MAX_RATIO_NEIGHBOUR if neighbour else INTERFERENCE_MAX_RATIO
+    if ratio > max_ratio or spread > INTERFERENCE_MAX_SPREAD:
+        return None
+
+    if slope_values is not None:
+        sv = slope_values[co]
+        keep = clear & (sv > 0)
+        if keep.sum() < INTERFERENCE_MIN_CLEAR:
+            return None
+        a, b, clear = np.log10(sv[keep]), b[keep], np.ones(int(keep.sum()), dtype=bool)
+    slope = None
+    if n_clear >= INTERFERENCE_MIN_CLEAR and a[clear].std() >= 0.1:
+        slope = float(np.polyfit(a[clear], b[clear], 1)[0])
+        max_slope = INTERFERENCE_MAX_SLOPE_NEIGHBOUR if neighbour else INTERFERENCE_MAX_SLOPE
+        if not (0.6 <= slope <= max_slope):
+            return None
+        rho = _stats.spearmanr(a[clear], b[clear])[0]
+        if not np.isfinite(rho) or rho < 0.5:
+            return None
+
+    score = 0.55 + 0.35 * share * (1.0 - 0.5 * min(spread / INTERFERENCE_MAX_SPREAD, 1.0))
+    return {"n": n_co, "share": share, "alone": n_child - n_co, "ratio": ratio,
+            "spread": spread, "slope": slope, "trigger": c_floor / ratio, "score": score}
+
+
+def _interference_stats(ctx, parent: str, child: str, neighbour: bool = False) -> dict | None:
+    """Measure how much *child* behaves like an interference from a selected *parent*.
+
+    Only pairs where most of the suspect's detections arrive with the parent
+    pass; see :func:`_pair_stats` for the tests.
+    """
+    return _pair_stats(ctx, ctx.matrix[parent], ctx.det_mask[parent], child, neighbour,
+                       min_share=INTERFERENCE_MIN_SHARE)
+
+
+def interference_flags(ctx) -> list[dict]:
+    """Decide, for every suspect mass, whether it is an interference and from what.
+
+    Every selected mass is tested as the suspect of every selected mass, and
+    of every mass read from the run, that could make it as MO⁺ (+16), MOH⁺
+    (+17), MH⁺ or a peak tail (±1), or M²⁺ (m/2). The best explanation of each
+    suspect is kept, then checked three ways:
+
+    * a mass that is itself an interference is never the parent of another;
+    * one element makes MO⁺ (or MOH⁺, M²⁺) at one rate on all its isotopes, so
+      a ratio well above the element's own rate means a real element as well;
+    * a real element also shows on its isotopes the parent cannot reach.
+
+    Args:
+        ctx: Analysis context for one replicate group.
+
+    Returns:
+        One dict per suspect: ``parent``, ``child``, ``kind``, ``species``,
+        ``stats``, ``from_run``, ``saturated`` (the isotope the slope was
+        checked on when the parent saturates, or ``None``), ``sibling`` (the
+        free isotope checked, or ``None`` when there is none), and ``status``:
+        ``"interference"``, ``"partial"``, ``"excess"`` or ``"real"``.
+    """
+    floor = max(10, int(0.002 * ctx.n))
+    labels = [el for el in ctx.elements_by_abundance() if ctx.det_counts[el] >= floor]
+    parsed = {el: mass_symbol(el) for el in labels}
+    run = _run_masses(ctx)
+    masses = _signal_by_mass(ctx, run)
+    by_mass: dict[int, list[str]] = {}
+    for el, (mass, _sym) in parsed.items():
+        if mass:
+            by_mass.setdefault(mass, []).append(el)
+
+    parents: dict[str, tuple] = {el: (ctx.matrix[el], ctx.det_mask[el], False) for el in labels}
+    selected = {m for m, _s in parsed.values() if m}
+    for m, vals in run.items():
+        if m in selected:
+            continue
+        for sym, iso in isotope_abundances().items():
+            if m in iso:
+                parents.setdefault(f"{m}{sym}", (vals, vals > 0, True))
+    plausible = {p: _plausibility(mass_symbol(p)[1], mass_symbol(p)[0], v, d, masses)
+                 for p, (v, d, _r) in parents.items()}
+
+    found = []
+    for parent, (vals, det, from_run) in parents.items():
+        mass, symbol = mass_symbol(parent)
+        if not mass or plausible[parent] < INTERFERENCE_MIN_PLAUSIBLE:
+            continue
+        for target, kind, species, neighbour in _interference_targets(mass, symbol):
+            for child in by_mass.get(target, []):
+                if child == parent or parsed[child][1] == symbol or not ctx.involves(parent, child):
+                    continue
+                st = _pair_stats(ctx, vals, det, child, neighbour)
+                saturated = None
+                if st is None and not neighbour:
+                    for sib, (svals, sdet, _r) in parents.items():
+                        if (mass_symbol(sib)[1] != symbol or sib == parent
+                                or np.median(svals[sdet]) >= np.median(vals[det])):
+                            continue
+                        st = _pair_stats(ctx, vals, det, child, neighbour, slope_values=svals)
+                        if st is not None:
+                            saturated = sib
+                            break
+                if st is not None:
+                    found.append(dict(parent=parent, child=child, kind=kind, species=species,
+                                      stats=st, from_run=from_run, saturated=saturated,
+                                      plausible=plausible[parent]))
+
+    whole = {f["child"] for f in found if f["stats"]["share"] >= INTERFERENCE_MIN_SHARE}
+    found = [f for f in found if f["parent"] not in whole]
+    best: dict[str, tuple] = {}
+    for f in found:
+        key = (_INTERFERENCE_KIND_RANK.get(f["kind"], 9), -round(min(f["plausible"], 1.0), 1),
+               f["from_run"], -f["stats"]["score"])
+        if f["child"] not in best or key < best[f["child"]][0]:
+            best[f["child"]] = (key, f)
+    flags = [f for _k, f in best.values()]
+
+    rates: dict[tuple[str, str], list[float]] = {}
+    for f in flags:
+        if f["kind"] in _RATE_KINDS and f["stats"]["n"] >= 30:
+            rates.setdefault((mass_symbol(f["parent"])[1], f["kind"]), []).append(f["stats"]["ratio"])
+    oxide_rate = {sym: min(v) for (sym, kind), v in rates.items() if kind == "oxide"}
+    for f in flags:
+        f["status"] = "interference" if f["stats"]["share"] >= INTERFERENCE_MIN_SHARE else "partial"
+        psym = mass_symbol(f["parent"])[1]
+        own = rates.get((psym, f["kind"]), [])
+        if f["kind"] in _RATE_KINDS and len(own) >= 2 \
+                and f["stats"]["ratio"] > INTERFERENCE_EXCESS_FACTOR * min(own):
+            f["status"], f["element_rate"] = "excess", min(own)
+        elif psym in oxide_rate and f["kind"] != "oxide":
+            _excess_over_oxide(ctx, parents, f, psym, oxide_rate[psym])
+        _sibling_check(ctx, masses, parents, f)
+    return flags
+
+
+_RATE_KINDS = ("oxide", "hydroxide", "doubly charged ion")
+"""Interferences an element makes at one rate on all its isotopes."""
+
+
+def _excess_over_oxide(ctx, parents, f: dict, symbol: str, rate: float) -> None:
+    """Mark a suspect as holding a real element when even an oxide could not explain it.
+
+    A mass blamed on MOH⁺ or a tail can also be reached as MO⁺ from the
+    element's next isotope; if its ratio to that isotope is far above the
+    element's oxide rate, the signal is too large for any interference.
+    """
+    alt = f"{mass_symbol(f['child'])[0] - 16}{symbol}"
+    if alt not in parents:
+        return
+    vals, det, _r = parents[alt]
+    co = det & ctx.det_mask[f["child"]] & (vals > 0)
+    if co.sum() < INTERFERENCE_MIN_OVERLAP:
+        return
+    r = float(np.median(ctx.matrix[f["child"]][co] / vals[co]))
+    if r > INTERFERENCE_EXCESS_FACTOR * rate and r > INTERFERENCE_MAX_RATIO:
+        f["status"], f["element_rate"] = "excess", rate
+
+
+def _sibling_check(ctx, masses, parents, f: dict) -> None:
+    """Look for the suspect element on one of its isotopes the parent cannot reach.
+
+    A real element shows on all its isotopes in their natural proportions; an
+    interference only on the masses its parent element reaches by any route.
+    The median particle decides, so a few real particles that happen to
+    arrive with the parent do not turn the whole mass real. Sets ``sibling`` (``None`` when every isotope can be reached), and marks
+    the suspect ``"real"`` when the free isotope carries the element.
+    """
+    cmass, csym = mass_symbol(f["child"])
+    psym = mass_symbol(f["parent"])[1]
+    abundances = isotope_abundances()
+    iso = abundances.get(csym, {})
+    reach = set()
+    for m in abundances.get(psym, {}):
+        reach.add(m)
+        reach.update(t for t, _k, _s, _n in _interference_targets(m, psym))
+    free = sorted(((a, m) for m, a in iso.items() if m != cmass and m not in reach), reverse=True)
+    f["sibling"] = f"{free[0][1]}{csym}" if free else None
+    if not free or cmass not in iso or free[0][1] not in masses:
+        return
+    a_sib, m_sib = free[0]
+    svals, known = masses[m_sib]
+    co = parents[f["parent"]][1] & ctx.det_mask[f["child"]] & known
+    if co.sum() < INTERFERENCE_MIN_OVERLAP:
+        return
+    expected = ctx.matrix[f["child"]][co] * a_sib / iso[cmass]
+    if float(np.median(expected)) < 1.0:
+        f["sibling"] = None
+        return
+    f["sibling_share"] = float(np.median(svals[co] / np.maximum(expected, 1e-9)))
+    if f["sibling_share"] >= INTERFERENCE_SIBLING_REAL:
+        f["status"] = "real"
+
+
+def analyse_interference(ctx, progress=None) -> list:
+    """Flag masses whose particles may be an interference from another element.
+
+    See :func:`interference_flags` for the tests. Suspects of one element
+    explained by one parent element share a card. Partial interferences say
+    how many of the suspect's particles arrive with the parent; masses that
+    hold a real element on top of the interference get their own card; masses
+    found to be a real element get none.
 
     Args:
         ctx: Analysis context for one replicate group.
         progress: Optional callable receiving status strings.
 
     Returns:
-        Up to three correlation-plot suggestions, parent on x and suspect on y.
+        Up to four correlation-plot suggestions, parent on x and suspect on y.
     """
     rr = _rr()
-    rr._say(progress, "Checking for oxide and doubly charged interferences…")
-    floor = max(10, int(0.002 * ctx.n))
-    labels = [el for el in ctx.elements_by_abundance() if ctx.det_counts[el] >= floor]
-    parsed = {el: mass_symbol(el) for el in labels}
-    by_mass: dict[int, list[str]] = {}
-    for el, (mass, _sym) in parsed.items():
-        if mass:
-            by_mass.setdefault(mass, []).append(el)
-
-    found = []
-    for parent in labels:
-        mass, symbol = parsed[parent]
-        if not mass:
-            continue
-        targets = [(mass + 16, "oxide", f"{symbol}O{_SUPERSCRIPT_PLUS}"),
-                   (mass + 17, "hydroxide", f"{symbol}OH{_SUPERSCRIPT_PLUS}")]
-        if mass % 2 == 0:
-            targets.append((mass // 2, "doubly charged ion", f"{symbol}{_SUPERSCRIPT_TWO_PLUS}"))
-        for target_mass, kind, species in targets:
-            for child in by_mass.get(target_mass, []):
-                if child == parent or parsed[child][1] == symbol or not ctx.involves(parent, child):
-                    continue
-                stats = _interference_stats(ctx, parent, child)
-                if stats is not None:
-                    found.append((parent, child, kind, species, stats))
-
+    rr._say(progress, "Checking for oxide, hydride, peak tail and doubly charged interferences…")
+    flags = [f for f in interference_flags(ctx) if f["status"] != "real"]
+    groups: dict[tuple, list[dict]] = {}
+    for f in sorted(flags, key=lambda f: -f["stats"]["score"]):
+        kind = "excess" if f["status"] == "excess" else "flag"
+        groups.setdefault((mass_symbol(f["parent"])[1], mass_symbol(f["child"])[1], kind), []).append(f)
     out = []
-    found.sort(key=lambda f: -f[4]["score"])
-    seen_children: set[str] = set()
-    for parent, child, kind, species, st in found:
-        if child in seen_children or len(out) >= ctx.cap(3):
-            continue
-        seen_children.add(child)
-        slope = f", slope {st['slope']:.2f} on log axes" if st["slope"] is not None else ""
-        out.append(rr.Suggestion(
-            title=f"{child} looks like {species} from {parent}",
-            reasoning=(
-                f"{st['share']:.0%} of {child} detections ({st['n']:,} particles) arrive with "
-                f"{parent}, at a near-constant {child}/{parent} of {st['ratio'] * 100:.2g}% "
-                f"(spread ×{10 ** st['spread']:.2f}{slope}). That is the pattern of "
-                f"{'an' if kind[0] in 'aeiou' else 'a'} {kind} "
-                f"interference rather than a second element, so {child} in these particles "
-                "should be treated with caution."
-            ),
-            category="interference",
-            confidence=min(st["score"], 0.95),
-            explain_key="interference",
-            details=[("Suspect mass", child), ("Parent", parent), ("Likely species", species),
-                     ("Particles with both", f"{st['n']:,}"),
-                     ("Share of suspect detections with parent", f"{st['share']:.0%}"),
-                     ("Median suspect/parent", f"{st['ratio'] * 100:.3g} %"),
-                     ("Spread of the ratio", f"×{10 ** st['spread']:.2f}"),
-                     ("Slope on log axes", "n/a" if st["slope"] is None else f"{st['slope']:.2f}")],
-            node_type="correlation_plot",
-            config={"x_element": parent, "y_element": child, "log_x": True, "log_y": True},
-            elements=(parent, child),
-        ))
+    for (parent_symbol, child_symbol, kind), items in groups.items():
+        if len(out) >= ctx.cap(4):
+            break
+        if kind == "excess":
+            out.append(_excess_card(rr, child_symbol, items))
+        else:
+            out.append(_interference_card(rr, parent_symbol, child_symbol, items))
     return out
+
+
+_INTERFERENCE_KIND_RANK = {"oxide": 0, "doubly charged ion": 0, "hydroxide": 1,
+                           "hydride or peak tail": 2, "peak tail": 2}
+"""Which explanation wins when a mass could come from two parents, most common first."""
+
+
+def _join(items: list[str]) -> str:
+    """Join words as ``"a"``, ``"a and b"`` or ``"a, b and c"``."""
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _flag_notes(f: dict, said: set) -> str:
+    """Sentences about how one flag was reached, each said once per card.
+
+    Covers a parent read from the run, a saturating parent, and whether a real
+    suspect element could be ruled out on an isotope the parent cannot reach.
+
+    Args:
+        f: One flag from :func:`interference_flags`.
+        said: Sentences already on the card; updated in place.
+    """
+    parent, child = f["parent"], f["child"]
+    psym, csym = mass_symbol(parent)[1], mass_symbol(child)[1]
+    notes = []
+    if f.get("from_run"):
+        notes.append(f"{parent} was not selected: it was read from the run for this check.")
+    if f.get("saturated"):
+        notes.append(f"{parent} is under-counted in the largest particles (detector saturation), "
+                     f"so the trend was checked on {f['saturated']} instead.")
+    if f["status"] in ("interference", "partial"):
+        if f.get("sibling", 0) is None:
+            single = len(isotope_abundances().get(csym, {})) <= 1
+            notes.append((f"{csym} has a single isotope" if single else
+                          f"Every {csym} isotope can also be reached by {psym}")
+                         + f", so real {csym} cannot be ruled out: it may also be real.")
+        elif "sibling_share" not in f:
+            notes.append(f"{f['sibling']} was not measured, so real {csym} was not checked; "
+                         f"select {f['sibling']} to check it.")
+        else:
+            notes.append(("In the shared particles no" if f["status"] == "partial" else "No")
+                         + f" real {csym} shows on {f['sibling']}, which {psym} cannot reach.")
+    out = [n for n in notes if n not in said]
+    said.update(out)
+    return "".join(" " + n for n in out)
+
+
+def _interference_card(rr, parent_symbol: str, child_symbol: str, flags: list[dict]):
+    """Build one card for every mass of *child_symbol* explained by *parent_symbol*.
+
+    Args:
+        rr: The engine module.
+        parent_symbol: Element making the interference, such as ``"Ce"``.
+        child_symbol: Element it is mistaken for, such as ``"Gd"``.
+        flags: Flags from :func:`interference_flags`, strongest first. The first
+            one is plotted.
+
+    Returns:
+        The suggestion.
+    """
+    f0 = flags[0]
+    parent, child, kind, species, st = f0["parent"], f0["child"], f0["kind"], f0["species"], f0["stats"]
+    children = [f["child"] for f in flags]
+    partial = f0["status"] == "partial"
+    slope = f", slope {st['slope']:.2f} on log axes" if st["slope"] is not None else ""
+    said: set = set()
+    if len(flags) == 1:
+        title = (f"{st['n']:,} of the {child} particles may be {species} from {parent}" if partial
+                 else f"{child} particles may be {species} from {parent}")
+    else:
+        title = f"{_join(children)} particles may be {parent_symbol} interferences"
+    if partial:
+        lead = (f"{st['n']:,} of {st['n'] + st['alone']:,} {child} detections arrive inside "
+                f"{parent} particles; the other {st['alone']:,} arrive on their own and look like "
+                f"real {child_symbol}. In the shared particles {child}/{parent} stays near ")
+    else:
+        alone = st["alone"]
+        without = "none of them on their own" if alone == 0 else f"only {alone:,} without it"
+        lead = (f"{st['share']:.0%} of {child} detections ({st['n']:,} particles) arrive inside "
+                f"{parent} particles, {without}, at a near-constant {child}/{parent} of ")
+    reasoning = (
+        lead + f"{st['ratio'] * 100:.2g}% (spread ×{10 ** st['spread']:.2f}{slope}). That is the "
+        f"pattern of {'an' if kind[0] in 'aeiou' else 'a'} {kind} rather than {child_symbol}: "
+        f"any {parent} particle above about {st['trigger']:,.0f} counts makes enough "
+        f"{species} to pass the {child} threshold." + _flag_notes(f0, said)
+    )
+    for f in flags[1:]:
+        s2 = f["stats"]
+        reasoning += (f" {f['child']}: {f['species']} from {f['parent']} ({s2['ratio'] * 100:.2g}%, "
+                      f"false above about {s2['trigger']:,.0f} counts)."
+                      + (" Partly: some arrive on their own." if f["status"] == "partial" else "")
+                      + _flag_notes(f, said))
+    reasoning += (f" These {_join(children)} particles may be interferences, not {child_symbol}."
+                  if not partial or len(flags) > 1 else
+                  f" Those {st['n']:,} particles may be interferences, not {child_symbol}.")
+    details = [("Suspect mass", child), ("Parent", parent), ("Likely species", species),
+               ("Particles with both", f"{st['n']:,}"),
+               ("Share of suspect detections with parent", f"{st['share']:.0%}"),
+               ("Suspect detections without parent", f"{st['alone']:,}"),
+               ("Median suspect/parent", f"{st['ratio'] * 100:.3g} %"),
+               ("Spread of the ratio", f"×{10 ** st['spread']:.2f}"),
+               ("Slope on log axes", "n/a" if st["slope"] is None else f"{st['slope']:.2f}"),
+               (f"{parent} counts that give a false {child}", f"≈ {st['trigger']:,.0f}")]
+    if f0.get("sibling"):
+        details.append(("Free isotope checked", f0["sibling"]))
+    for f in flags[1:]:
+        s2 = f["stats"]
+        details.append((f"{f['child']} as {f['species']}",
+                        f"{s2['n']:,} particles, {s2['ratio'] * 100:.3g} %, "
+                        f"false above ≈ {s2['trigger']:,.0f} {f['parent']} counts"))
+    return rr.Suggestion(
+        title=title,
+        reasoning=reasoning,
+        category="interference",
+        confidence=min(max(f["stats"]["score"] for f in flags), 0.95),
+        explain_key="interference",
+        details=details,
+        node_type="correlation_plot",
+        config={"x_element": parent, "y_element": child, "log_x": True, "log_y": True},
+        elements=tuple(dict.fromkeys(lab for f in flags for lab in (f["parent"], f["child"]))),
+    )
+
+
+def _excess_card(rr, child_symbol: str, flags: list[dict]):
+    """Card for suspect masses that carry an interference and a real element as well."""
+    f0 = flags[0]
+    parent, child, species, st = f0["parent"], f0["child"], f0["species"], f0["stats"]
+    psym = mass_symbol(parent)[1]
+    rate = f0.get("element_rate") or st["ratio"]
+    children = [f["child"] for f in flags]
+    reasoning = (
+        f"{child} arrives inside {parent} particles at {st['ratio'] * 100:.2g}% of {parent}, "
+        f"{st['ratio'] / rate:.1f}× the {species.split(' ')[0]} rate {psym} shows on its other "
+        f"isotopes ({rate * 100:.2g}%). {species} explains only part of the {child} signal; the "
+        f"rest is real {child_symbol} in the same particles. Subtract about "
+        f"{rate * 100:.2g}% of {parent} from {child} before quantifying {child_symbol}."
+    )
+    for f in flags[1:]:
+        reasoning += f" {f['child']} shows the same excess over {f['species']}."
+    return rr.Suggestion(
+        title=f"{_join(children)} particles hold real {child_symbol} as well as {species}",
+        reasoning=reasoning,
+        category="interference",
+        confidence=min(st["score"] * 0.9, 0.9),
+        explain_key="interference",
+        details=[("Suspect mass", child), ("Parent", parent), ("Likely species", species),
+                 ("Particles with both", f"{st['n']:,}"),
+                 ("Median suspect/parent", f"{st['ratio'] * 100:.3g} %"),
+                 (f"{psym} rate on its other isotopes", f"{rate * 100:.3g} %"),
+                 ("Spread of the ratio", f"×{10 ** st['spread']:.2f}"),
+                 ("Slope on log axes", "n/a" if st["slope"] is None else f"{st['slope']:.2f}")],
+        node_type="correlation_plot",
+        config={"x_element": parent, "y_element": child, "log_x": True, "log_y": True},
+        elements=tuple(dict.fromkeys(lab for f in flags for lab in (f["parent"], f["child"]))),
+    )
 
 
 def interference_pair(ctx, a: str, b: str) -> bool:
@@ -323,57 +799,18 @@ def interference_pair(ctx, a: str, b: str) -> bool:
         b: The other.
 
     Returns:
-        True when the heavier mass sits at +16 or +17, or the lighter at half
-        the mass, and passes every test in :func:`analyse_interference`.
+        True when one mass sits where an oxide, hydroxide, hydride, peak tail or
+        M²⁺ of the other would, and passes every test in
+        :func:`analyse_interference`.
     """
-    ma, mb = mass_symbol(a)[0], mass_symbol(b)[0]
-    if not ma or not mb or not mass_related(a, b):
+    (ma, sa), (mb, sb) = mass_symbol(a), mass_symbol(b)
+    if not ma or not mb or sa == sb:
         return False
-    if mb - ma in (16, 17) or ma == 2 * mb:
-        parent, child = a, b
-    else:
-        parent, child = b, a
-    return _interference_stats(ctx, parent, child) is not None
-
-
-def _interference_stats(ctx, parent: str, child: str) -> dict | None:
-    """Measure how much *child* behaves like an interference from *parent*.
-
-    Returns:
-        A dict with ``n``, ``share``, ``ratio``, ``spread``, ``slope`` and
-        ``score``, or ``None`` when the pair fails any of the tests.
-    """
-    det_p, det_c = ctx.det_mask[parent], ctx.det_mask[child]
-    co = det_p & det_c
-    n_co = int(co.sum())
-    n_child = int(det_c.sum())
-    if n_co < INTERFERENCE_MIN_OVERLAP or n_child == 0:
-        return None
-    share = n_co / n_child
-    if share < INTERFERENCE_MIN_SHARE:
-        return None
-
-    a = np.log10(ctx.matrix[parent][co])
-    b = np.log10(ctx.matrix[child][co])
-    lr = b - a
-    med = float(np.median(lr))
-    ratio = 10 ** med
-    spread = _robust_sd(lr)
-    if ratio > INTERFERENCE_MAX_RATIO or spread > INTERFERENCE_MAX_SPREAD:
-        return None
-
-    slope = None
-    if a.std() >= 0.1:
-        slope = float(np.polyfit(a, b, 1)[0])
-        if not (0.6 <= slope <= 1.4):
-            return None
-        rho = _stats.spearmanr(a, b)[0]
-        if not np.isfinite(rho) or rho < 0.5:
-            return None
-
-    score = 0.55 + 0.35 * share * (1.0 - 0.5 * min(spread / INTERFERENCE_MAX_SPREAD, 1.0))
-    return {"n": n_co, "share": share, "ratio": ratio, "spread": spread,
-            "slope": slope, "score": score}
+    for parent, child, mp, sp, mc in ((a, b, ma, sa, mb), (b, a, mb, sb, ma)):
+        for target, _kind, _species, neighbour in _interference_targets(mp, sp):
+            if target == mc and _interference_stats(ctx, parent, child, neighbour) is not None:
+                return True
+    return False
 
 
 def analyse_stoichiometry(ctx, progress=None) -> list:

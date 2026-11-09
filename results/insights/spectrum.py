@@ -12,20 +12,25 @@ than the isotope adds counts to its integration window:
 * a second, partly resolved peak sits inside or right next to the
   integration window.
 
-Candidate species come from the interference database
-(:mod:`widget.interference_database`), plus isobars and doubly charged ions
-built from the isotope table.
+A third check says how much of each isotope's signal other species make.
+The elements of the sample are identified from the spectrum itself, against
+the closest blank when one is loaded, with
+:func:`utils.interference_detection.identify_run`, the same identification the
+Spectrum view shows, so both always agree. Candidate species (isobars, oxides
+and doubly charged ions of the elements found, and polyatomic ions of the
+interference database) come from
+:func:`utils.interference_detection.candidate_species`.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
 from dataclasses import dataclass, field
 
 import numpy as np
 
+import utils.interference_detection as idet
 from loading.nu_raw_spectrum import (
     integration_window, peak_check, read_nu_raw_spectrum, spectrum_masses)
 
@@ -70,6 +75,12 @@ FIGURE_ZOOM_WIDTHS = 4.0
 OFFSET_NOTE_DA = 0.0005
 """Smallest run offset worth mentioning on the card."""
 
+SHARE_CLEAN = 0.95
+"""Share of the isotope itself above which its signal counts as clean."""
+
+SHARE_MAJOR = 0.5
+"""Share of the isotope itself below which the peak is mostly another species."""
+
 _SUPERSCRIPT = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
 
 
@@ -83,12 +94,15 @@ class SpectrumSource:
         folder: Nu run folder holding the ``.raw`` snapshots.
         entry: Spectrum already read by the main window, ``{'spectrum',
             'n_snapshots'}``; read from *folder* when ``None``.
+        identification: ``(Identification, blank name)`` already made by
+            the Spectrum view, or ``None`` to make it here.
     """
 
     sample: str
     run_info: dict
     folder: str | None = None
     entry: dict | None = None
+    identification: tuple | None = None
 
 
 @dataclass
@@ -156,77 +170,81 @@ def load(source: SpectrumSource) -> dict | None:
     return entry
 
 
-_ISOTOPES: list | None = None
-
-
-def isotope_table() -> list[dict]:
-    """Return every natural isotope as ``{'element', 'number', 'mass'}``."""
-    global _ISOTOPES
-    if _ISOTOPES is None:
-        try:
-            from utils.isobaric_correction import _find_table_path
-            with open(_find_table_path(), encoding="utf-8") as fp:
-                rows = json.load(fp)
-        except Exception:
-            _itk_log.exception("Could not read the isotope table")
-            rows = []
-        out = []
-        for row in rows:
-            try:
-                number = int(str(row["isotope_label"]).split()[-1])
-                out.append({"element": row["element"], "number": number,
-                            "mass": float(row["mass"]),
-                            "abundance": float(row.get("abundance") or 0)})
-            except (KeyError, ValueError, TypeError):
-                continue
-        _ISOTOPES = out
-    return _ISOTOPES
-
-
 def isotope_name(number: int, element: str, charge: str = "⁺") -> str:
     """Write an ion as ``⁵⁶Fe⁺``."""
     return f"{str(number).translate(_SUPERSCRIPT)}{element}{charge}"
 
 
-def known_species(label: str, exact: float) -> list[tuple[str, float, str]]:
-    """Known species that land within one nominal mass of an isotope.
+_KINDS = {"atom": "isobaric", "doubly charged": "doubly_charged"}
+
+
+def known_species(label: str, exact: float, present=None) -> list[tuple[str, float, str]]:
+    """Known species that land at an isotope's nominal mass.
 
     Args:
         label: Isotope label, e.g. ``"56Fe"``.
         exact: Exact mass of the isotope.
+        present: Elements found in the sample; oxides, doubly charged ions
+            and element-based polyatomic ions are limited to them. ``None``
+            lists those of every element.
 
     Returns:
-        ``(species, m/z, kind)`` for every polyatomic ion, isobar and doubly
-        charged ion at the isotope's nominal mass, other than the isotope
-        itself.
+        ``(species, m/z, kind)`` for every polyatomic ion, isobar, oxide and
+        doubly charged ion at the isotope's nominal mass, other than the
+        isotope's own element.
     """
     from results.insights.discovery import mass_symbol
-    from widget.interference_database import get_interferences_for_mass
     nominal, symbol = mass_symbol(label)
     if nominal is None:
         nominal = int(round(exact))
+    table = idet.isotope_table(idet.default_elements())
     out = []
-    for entry in get_interferences_for_mass(nominal):
-        mz = entry.get("exact_mass")
-        if mz is None:
+    for name, mz, element, kind in idet.candidate_species(nominal, table, present):
+        if element == symbol and kind == "atom":
             continue
-        if entry.get("type") == "doubly_charged":
-            continue
-        out.append((entry["species"], float(mz), entry.get("type", "polyatomic")))
-    for iso in isotope_table():
-        if iso["abundance"] <= 0 or iso["element"] == symbol:
-            continue
-        if iso["number"] == nominal:
-            out.append((isotope_name(iso["number"], iso["element"]), iso["mass"], "isobaric"))
-        elif iso["number"] == 2 * nominal:
-            out.append((isotope_name(iso["number"], iso["element"], "²⁺"), iso["mass"] / 2.0,
-                        "doubly_charged"))
-    seen, unique = set(), []
-    for species, mz, kind in out:
-        if species not in seen:
-            seen.add(species)
-            unique.append((species, mz, kind))
-    return unique
+        out.append((name, float(mz), _KINDS.get(kind, kind)))
+    return out
+
+
+_IDENTIFIED: dict = {}
+_IDENTIFIED_LOCK = threading.Lock()
+
+
+def identify(source: SpectrumSource, blanks: dict) -> tuple:
+    """Identify the elements of one sample, against the closest blank.
+
+    Args:
+        source: The sample's spectrum source.
+        blanks: ``{name: SpectrumSource}`` of every run that can serve as blank.
+
+    Returns:
+        ``(Identification | None, blank name | None)``. Results are kept per
+        run folder, so a run is identified once per session.
+    """
+    if source.identification is not None:
+        return source.identification
+    infos = {n: b.run_info for n, b in blanks.items() if b.run_info}
+    infos[source.sample] = source.run_info
+    blank_name = idet.pick_blank(source.sample, infos)
+    blank = blanks.get(blank_name) if blank_name else None
+    key = None
+    if source.folder and (blank is None or blank.folder):
+        key = (str(source.folder), str(blank.folder) if blank else "")
+        with _IDENTIFIED_LOCK:
+            if key in _IDENTIFIED:
+                return _IDENTIFIED[key]
+    blank_entry = load(blank) if blank else None
+    try:
+        ident = idet.identify_run(load(source), source.run_info, None, None, blank_entry,
+                                  blank.run_info if blank_entry else None)
+    except Exception:
+        _itk_log.exception("Could not identify the elements of %s", source.sample)
+        ident = None
+    result = (ident, blank_name if blank_entry else None)
+    if key is not None:
+        with _IDENTIFIED_LOCK:
+            _IDENTIFIED[key] = result
+    return result
 
 
 def measure(source: SpectrumSource, isotopes) -> list[Peak]:
@@ -274,6 +292,24 @@ def run_offset(peaks: list[Peak]) -> float:
     if len(shifts) < MIN_PEAKS_FOR_OFFSET:
         return 0.0
     return float(np.median(shifts))
+
+
+def whole_run_offset(source: SpectrumSource, ident) -> float | None:
+    """The run's mass calibration offset measured on every clean peak of the run.
+
+    Uses the same peaks as the Spectrum view (isotopes of the elements found
+    that make at least 95 % of their mass), so the offset does not depend on
+    which isotopes are selected.
+    """
+    entry = load(source)
+    run_info = source.run_info or {}
+    if not entry or "MassCalCoefficients" not in run_info:
+        return None
+    spectrum = np.asarray(entry["spectrum"], dtype=np.float64)
+    masses = spectrum_masses(run_info, len(spectrum))
+    area = run_info.get("AverageSingleIonArea")
+    return idet.mass_offset(masses, spectrum, ident, idet.isotope_table(idet.default_elements()),
+                            float(area) if area else None)
 
 
 def nearest_species(species, target: float, exact: float, width: float, side: float = 0.0):
@@ -365,25 +401,62 @@ def thin(mz: np.ndarray, y: np.ndarray, n: int = FIGURE_POINTS) -> tuple[list, l
     return ([round(float(mz[i]), 5) for i in idx], [round(float(y[i]), 4) for i in idx])
 
 
-def check_sample(source: SpectrumSource, isotopes) -> list[dict]:
-    """Run both spectrum checks on every isotope of one sample.
+def share_finding(peak: Peak, ident, blank) -> dict | None:
+    """How much of an isotope's signal other species make, from the elements found.
+
+    Args:
+        peak: The isotope's measured peak.
+        ident: Identification of the sample.
+        blank: Name of the blank it was compared with, or ``None``.
+
+    Returns:
+        ``{'own', 'parts', 'ident', 'blank'}`` when less than
+        :data:`SHARE_CLEAN` of the signal is the isotope, else ``None``.
+    """
+    from results.insights.discovery import mass_symbol
+    if ident is None or not ident.amounts:
+        return None
+    nominal, symbol = mass_symbol(peak.label)
+    if nominal is None:
+        return None
+    parts = idet.contributions(ident, nominal)
+    own = sum(sh for el, _l, kind, sh in parts if el == symbol and kind == "atom")
+    others = sorted(((lab, sh) for el, lab, kind, sh in parts
+                     if not (el == symbol and kind == "atom") and lab != "unexplained"),
+                    key=lambda t: -t[1])
+    if own >= SHARE_CLEAN or not others or others[0][1] < 1.0 - SHARE_CLEAN:
+        return None
+    return {"own": own, "parts": others, "ident": ident, "blank": blank}
+
+
+def check_sample(source: SpectrumSource, isotopes, identification=None) -> list[dict]:
+    """Run the spectrum checks on every isotope of one sample.
 
     Args:
         source: The sample's spectrum source.
         isotopes: ``(label, exact mass)`` pairs.
+        identification: ``(Identification, blank name)`` of the sample, or
+            ``None``; without it candidate species are not limited to the
+            elements present and the share check is skipped.
 
     Returns:
-        One dict per problem found, with ``kind`` set to ``"shift"`` or
-        ``"neighbour"``, the :class:`Peak`, the run ``offset`` and the
-        likely ``species`` (or ``None``).
+        One dict per problem found, with ``kind`` set to ``"shift"``,
+        ``"neighbour"`` or ``"share"``, the :class:`Peak`, the run ``offset``
+        and the likely ``species`` (or ``None``).
     """
+    ident, blank = identification if identification else (None, None)
+    present = list(ident.amounts) if ident is not None else None
     peaks = measure(source, isotopes)
     offset = run_offset(peaks)
+    if ident is not None and ident.amounts:
+        whole = whole_run_offset(source, ident)
+        if whole is not None:
+            offset = whole
     found = []
     for p in peaks:
         if not p.trusted:
             continue
-        species = known_species(p.label, p.exact)
+        species = known_species(p.label, p.exact, present)
         shift = p.centre - offset - p.exact
         if abs(shift) >= max(SHIFT_MIN_DA, SHIFT_MIN_WIDTHS * p.width):
             likely = nearest_species(species, p.centre - offset, p.exact, p.width, side=shift)
@@ -395,6 +468,15 @@ def check_sample(source: SpectrumSource, isotopes) -> list[dict]:
             inside = bool(p.window and p.window[0] <= neighbour["centre"] + offset <= p.window[1])
             found.append({"kind": "neighbour", "peak": p, "offset": offset,
                           "neighbour": neighbour, "inside": inside, "species": likely})
+        share = share_finding(p, ident, blank)
+        if share is not None:
+            marks = []
+            for lab, sh in share["parts"][:3]:
+                hit = next((sp for sp in species if sp[0] == lab + "⁺"), None)
+                if hit is not None:
+                    marks.append((f"{hit[0]} {sh:.0%}", hit[1], hit[2]))
+            found.append({"kind": "share", "peak": p, "offset": offset, "species": None,
+                          "marks": marks, **share})
     return found
 
 
@@ -464,7 +546,7 @@ def _shift_card(rr, label: str, items: list[dict], n_samples: int, units: str):
         details.insert(5, ("Ions in window", f"{p.ions:,.0f}"))
     s = rr.Suggestion(
         title=title, reasoning=reasoning, category="interference",
-        confidence=min(score, 0.92), node_type="spectrum_view", config={},
+        confidence=min(score, 0.92), node_type="interference", config={},
         elements=(label,), samples=tuple(samples), explain_key="spectrum_shift",
         details=details,
         facts={"spectrum": _figure_facts("shift", items,
@@ -507,10 +589,55 @@ def _neighbour_card(rr, label: str, items: list[dict], n_samples: int, units: st
     marks = [species] if species else [(f"m/z {nb['centre']:.3f}", nb["centre"], "")]
     s = rr.Suggestion(
         title=title, reasoning=reasoning, category="interference",
-        confidence=min(score, 0.92), node_type="spectrum_view", config={},
+        confidence=min(score, 0.92), node_type="interference", config={},
         elements=(label,), samples=tuple(samples), explain_key="spectrum_neighbour",
         details=details, facts={"spectrum": _figure_facts("neighbour", items, marks, units)})
     s.evidence = Evidence(effect=f"{nb['height']:.0%} height")
+    return s
+
+
+def _share_card(rr, label: str, items: list[dict], n_samples: int, units: str,
+                shifts: list[dict] | None = None):
+    """Card for an isotope whose signal is partly or mostly another species."""
+    from results.insights.robustness import Evidence
+    items.sort(key=lambda f: f["own"])
+    top = items[0]
+    p, own, parts, ident = top["peak"], top["own"], top["parts"], top["ident"]
+    first, first_share = parts[0]
+    if own < SHARE_MAJOR:
+        title = f"{label} peak is mostly {first}⁺ ({first_share:.0%})"
+    else:
+        title = f"{label}: {1.0 - own:.0%} of the signal from other species"
+    found_in = ", ".join(sorted(ident.amounts, key=lambda e: -ident.amounts[e])[:8])
+    against = f", compared with {top['blank']}" if top["blank"] else ""
+    shown = [(lab, sh) for lab, sh in parts[:3] if sh >= 0.005] or parts[:1]
+    listed = ", ".join(f"{lab}⁺ {sh:.0%}" for lab, sh in shown)
+    reasoning = (f"The elements found in the resolved spectrum of {p.sample}{against} "
+                 f"({found_in}) predict that at m/z {round(p.exact)} the signal is {listed}, "
+                 f"and {label} itself {own:.0%}.")
+    shift = next((f for f in shifts or [] if f["peak"].sample == p.sample), None)
+    if shift is not None:
+        where = "above" if shift["shift"] > 0 else "below"
+        reasoning += (f" The peak centre also sits {abs(shift['shift']) * 1000:.0f} mDa {where} "
+                      f"the exact mass of {label}")
+        reasoning += (f", on {shift['species'][0]}." if shift.get("species") else ".")
+    samples = [f["peak"].sample for f in items]
+    if n_samples > 1:
+        reasoning += f" Seen in {len(samples)} of {n_samples} samples with a spectrum."
+    score = 0.5 + 0.4 * min((1.0 - own) / 0.5, 1.0)
+    details = [("Isotope", label), (f"Share of {label}", f"{own:.0%}")]
+    details += [(f"From {lab}⁺", f"{sh:.0%}") for lab, sh in parts[:4] if sh >= 0.005]
+    details += [("Elements found", found_in or "none"),
+                ("Compared with blank", top["blank"] or "no blank loaded"),
+                ("Samples", ", ".join(samples))]
+    if shift is not None:
+        details.insert(2 + min(len(parts), 4), ("Peak shift", _mda(shift["shift"])))
+    s = rr.Suggestion(
+        title=title, reasoning=reasoning, category="interference",
+        confidence=min(score, 0.92), node_type="interference", config={},
+        elements=(label,), samples=tuple(samples), explain_key="spectrum_share",
+        details=details, facts={"spectrum": _figure_facts("share", items, top["marks"], units)})
+    s.evidence = Evidence(effect=f"{own:.0%} {label}")
     return s
 
 
@@ -538,13 +665,15 @@ def analyse(ctx, progress=None) -> list:
     samples = [s for s in sources.get("samples", ()) if s.sample in wanted]
     if not isotopes or not samples:
         return []
+    blanks = {b.sample: b for b in list(sources.get("blanks", ())) + list(sources.get("samples", ()))
+              if idet.is_blank_name(b.sample)}
     rr._say(progress, "Checking the resolved spectra for interferences…")
     groups: dict = {}
     measured = 0
     units = "a.u."
     for source in samples:
         try:
-            found = check_sample(source, isotopes)
+            found = check_sample(source, isotopes, identify(source, blanks))
         except Exception:
             _itk_log.exception("Spectrum check failed for %s", source.sample)
             continue
@@ -556,7 +685,14 @@ def analyse(ctx, progress=None) -> list:
             groups.setdefault((f["kind"], f["peak"].label), []).append(f)
     out = []
     for (kind, label), items in groups.items():
-        make = _shift_card if kind == "shift" else _neighbour_card
-        out.append(make(rr, label, items, measured, units))
+        if kind == "shift" and ("share", label) in groups:
+            continue
+        if kind == "share":
+            out.append(_share_card(rr, label, items, measured, units,
+                                   groups.get(("shift", label))))
+        elif kind == "shift":
+            out.append(_shift_card(rr, label, items, measured, units))
+        else:
+            out.append(_neighbour_card(rr, label, items, measured, units))
     out.sort(key=lambda s: -s.confidence)
     return out[:ctx.cap(6)]
