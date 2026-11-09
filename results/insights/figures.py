@@ -100,6 +100,26 @@ LIMIT_NAMES = {"counts": "LOD", "mass": "MDL", "d": "SDL"}
 
 LIMIT_UNITS = {"counts": "net counts", "mass": "fg", "d": "nm"}
 
+KINDS = {"mass": "mass", "d": "diameter"}
+"""Unit kind of each quantity prefix that has one."""
+
+
+def _qname(prefix: str) -> str:
+    """Readable name of quantity *prefix*, in the app's chosen units."""
+    from utils.unit import units
+    return units.relabel(QUANTITY_NAMES[prefix])
+
+
+def _shown(prefix: str, value):
+    """*value* of quantity *prefix*, measured in the base unit, in the app's chosen unit.
+
+    Figures made from a card draw the canvas's particles, which arrive in the
+    chosen units, so their limit lines must be in those units too.
+    """
+    from utils.unit import units
+    kind = KINDS.get(prefix)
+    return units.convert(value, kind) if kind and value is not None else value
+
 LIMIT_SPREAD = 1.10
 """Largest ratio between samples' limits that still reads as one shared value."""
 
@@ -113,7 +133,7 @@ def _limit(ctx: FigureContext, prefix: str, label: str) -> dict:
     Without a calibrated limit, mass and size axes fall back to the
     smallest particle detected.
     """
-    values = list((ctx.limits.get((prefix, label)) or {}).values())
+    values = [_shown(prefix, v) for v in (ctx.limits.get((prefix, label)) or {}).values()]
     if values:
         ctx.used.add((prefix, label))
         lo, hi = min(values), max(values)
@@ -121,7 +141,7 @@ def _limit(ctx: FigureContext, prefix: str, label: str) -> dict:
         if hi <= lo * LIMIT_SPREAD:
             return {"dl_value": f"{sum(values) / len(values):.4g}", "dl_label": name}
         return {"dl_value": f"{hi:.4g}", "dl_label": f"{name} (highest sample)"}
-    value = ctx.smallest.get((prefix, label))
+    value = _shown(prefix, ctx.smallest.get((prefix, label)))
     if value:
         ctx.used.add((prefix, label))
         return {"dl_value": f"{value:.4g}", "dl_label": "Smallest detected"}
@@ -140,12 +160,13 @@ def limits_sentence(ctx: FigureContext) -> str:
         for p, label in sorted(ctx.used):
             if p != prefix:
                 continue
-            values = list((ctx.limits.get((prefix, label)) or {}).values())
+            values = [_shown(prefix, v) for v in (ctx.limits.get((prefix, label)) or {}).values()]
             if not values:
                 fallback = True
                 continue
             lo, hi = min(values), max(values)
-            unit = LIMIT_UNITS[prefix]
+            from utils.unit import units
+            unit = units.relabel(LIMIT_UNITS[prefix])
             amount = (f"{_fmt(sum(values) / len(values))} {unit}" if hi <= lo * LIMIT_SPREAD
                       else f"{_fmt(lo)}–{_fmt(hi)} {unit} across samples, line at the highest")
             by_label.setdefault(label, []).append(f"{LIMIT_NAMES[prefix]} {amount}")
@@ -172,7 +193,7 @@ def _histogram(ctx: FigureContext, prefix: str, label: str, title: str = "", **e
 
     All particles are pooled; pass ``group_by`` in *extra* to split them.
     """
-    name = QUANTITY_NAMES[prefix]
+    name = _qname(prefix)
     return _panel("histogram", title or f"{label} {name}", value=_expr(prefix, label),
                   log_x=True, bins=40, x_label=f"{label} {name}",
                   **_limit(ctx, prefix, label), **extra)
@@ -190,7 +211,7 @@ def _amount(ctx: FigureContext, label: str) -> str:
 
 def _amount_name(ctx: FigureContext, label: str) -> str:
     """Axis name for *label* in the figure's amount unit, e.g. ``"Pb mass (fg)"``."""
-    return f"{label} {QUANTITY_NAMES[_unit(ctx)]}"
+    return f"{label} {_qname(_unit(ctx))}"
 
 
 def _with_without(label: str, other: str) -> dict:
@@ -301,7 +322,7 @@ def _strip(ctx: FigureContext, el: str, title: str, by: str = "sample") -> dict:
     return _panel("strip", title, value=_expr(prefix, el), group_by=by, log_y=True,
                   strip_horizontal=True, strip_color="combination", strip_size="n_elements",
                   strip_summary="median_iqr", top_n=5, marker_size=10, alpha=0.6,
-                  x_label=f"{el} {QUANTITY_NAMES[prefix]}")
+                  x_label=f"{el} {_qname(prefix)}")
 
 
 def _strip_caption(el: str) -> str:
@@ -633,7 +654,7 @@ def _isotope_track(s, ctx, natural=None):
            "inside one shared band, the trend comes from particle size and counting statistics "
            f"rather than from {other}."),
         (_histogram(ctx, _unit(ctx), other,
-                    f"{other} {QUANTITY_NAMES[_unit(ctx)]} and detection limit"),
+                    f"{other} {_qname(_unit(ctx))} and detection limit"),
          f"Particles whose {other} is below its detection limit (dashed line) are counted "
          "as without it, so the two groups overlap a little."),
     ]
@@ -805,7 +826,7 @@ def _comparison(s, ctx):
     fold = _detail(s, "Fold difference in median")
     tests = _test(ctx.groups)
     unit = _unit(ctx)
-    name = QUANTITY_NAMES[unit]
+    name = _qname(unit)
     value = _amount(ctx, el)
     measured = ""
     if ctx.table is not None:
@@ -868,7 +889,7 @@ def _replicates(s, ctx):
              "nebuliser slowly clogging."),
         ]
     unit = _unit(ctx)
-    name = QUANTITY_NAMES[unit]
+    name = _qname(unit)
     measured = ""
     if ctx.table is not None:
         groups = [(smp, v) for smp, v in ev.by_sample(ctx.table, _amount(ctx, el)) if v.size >= 5]
@@ -929,7 +950,7 @@ def _signature(s, ctx):
                                         "detection limit"
                                         + ("" if share < 0.5 else ", so a sample with smaller "
                                            f"{el} particles may simply detect fewer"))
-    story.append((_histogram(ctx, unit, el, f"{el} {QUANTITY_NAMES[unit]} and detection limit"),
+    story.append((_histogram(ctx, unit, el, f"{el} {_qname(unit)} and detection limit"),
                   f"{el} particles against the detection limit (dashed line); if most "
                   "sit close to it, the sample with fewer may simply have smaller "
                   f"{el} particles that fall below it." + near))
@@ -1000,12 +1021,108 @@ def _stoichiometry(s, ctx):
     return story
 
 
+def _ratio_split(s, ctx):
+    from results.insights.discovery import (
+        RATIO_SPLIT_MIN_FOLD, ratio_split_panel, ratio_split_rules,
+    )
+    a, b, c = s.elements[0], s.elements[1], s.elements[2]
+    ratio = f"{a} / {b}"
+    both = f"{a} > 0 and {b} > 0"
+    with_c, without_c = f"{both} and {c} > 0", f"{both} and {c} == 0"
+    split = ratio_split_rules(c)
+    first = shape = meaning = size = ""
+    if ctx.table is not None:
+        rw, rwo = ev.values(ctx.table, ratio, with_c), ev.values(ctx.table, ratio, without_c)
+        if rw.size >= 5 and rwo.size >= 5:
+            mw, mwo = float(np.median(rw)), float(np.median(rwo))
+            fold = max(mw, mwo) / max(min(mw, mwo), 1e-12)
+            pooled = float(np.mean(np.concatenate([rw, rwo])))
+            nb_w, nb_wo = ev.values(ctx.table, b, with_c), ev.values(ctx.table, b, without_c)
+            inside = []
+            for r, nb, centre in ((rwo, nb_wo, mwo), (rw, nb_w, mw)):
+                n = min(r.size, nb.size)
+                sigma = np.sqrt(centre * (1 + centre) / np.maximum(nb[:n], 1.0))
+                inside.append(float(np.mean(np.abs(r[:n] - centre) <= 2 * sigma)))
+            first = (f" Measured: {ev.pct(inside[0])} of particles without {c} and "
+                     f"{ev.pct(inside[1])} of those with it fall inside their own envelope; a "
+                     f"single mean over all particles ({pooled:.3g}) sits between the two.")
+            try:
+                from scipy import stats as _st
+                p = float(_st.mannwhitneyu(rw, rwo).pvalue)
+            except ValueError:
+                p = float("nan")
+            shape = (f" Measured: median {a}/{b} {mwo:.3g} without {c} ({rwo.size:,} particles) "
+                     f"against {mw:.3g} with it ({rw.size:,}), {fold:.2f}× apart, "
+                     f"Mann–Whitney {ev.p_text(p)}.")
+            ctx.checks.add(fold >= RATIO_SPLIT_MIN_FOLD,
+                           f"the two populations' ratios differ {fold:.2f}×")
+            rows = []
+            for name, vals in ev.by_sample(ctx.table, ratio, with_c):
+                other = dict(ev.by_sample(ctx.table, ratio, without_c)).get(name)
+                if vals.size >= 5 and other is not None and other.size >= 5:
+                    rows.append((name, float(np.median(other)), float(np.median(vals))))
+            if len(rows) >= 2:
+                same = all((r_wo > r_w) == (mwo > mw)
+                           and max(r_w, r_wo) / max(min(r_w, r_wo), 1e-12) >= RATIO_SPLIT_MIN_FOLD
+                           for _n, r_wo, r_w in rows)
+                ctx.checks.add(same, "every sample shows the same two ratios ("
+                               + "; ".join(f"{n}: {r_wo:.3g} and {r_w:.3g}" for n, r_wo, r_w in rows)
+                               + ")")
+            cw = ev.values(ctx.table, c, with_c)
+            if cw.size >= 10 and cw.size == rw.size:
+                rho, _pp, k = ev.spearman(cw, rw)
+                if k >= 10 and np.isfinite(rho):
+                    meaning = f" Measured: ρ = {rho:+.2f} over {k:,} particles."
+            if nb_w.size >= 5 and nb_wo.size >= 5:
+                bw, bwo = float(np.median(nb_w)), float(np.median(nb_wo))
+                small = bw < 0.5 * bwo
+                ctx.checks.add(not small, f"particles with {c} are not much smaller in {b} "
+                               f"(median {bw:.3g} against {bwo:.3g} counts)")
+                size = (f" Measured: median {b} {bw:.3g} counts with {c} against {bwo:.3g} "
+                        "without it.")
+    shares = ""
+    if ctx.table is not None:
+        rows = [r for r in ev.detected_share_by_size(ctx.table, c, both) if r[2] >= 10]
+        if rows:
+            shares = (" Measured: " + "; ".join(f"{n} {ev.pct(v)}" for n, v, _k in rows) + ".")
+    return [
+        (_panel(**{**ratio_split_panel(a, b, c), "title": f"{a}/{b} against {b}, coloured by {c}"}),
+         f"Each particle's {a}/{b} against its {b} signal. Grey particles carry no {c}; the "
+         f"others are coloured by their {c} signal. Dashed lines are each population's ±2σ "
+         f"counting-statistics envelope, σ = √(R(1 + R)/N), the spread counting alone gives "
+         f"around its ratio; two populations in separate envelopes are not counting noise."
+         + first),
+        (_panel("histogram", f"{a}/{b} with and without {c}", value=ratio, log_x=True, bins=50,
+                filter=both, x_label=f"{a}/{b} (counts)", **split),
+         f"The ratio of the particles with and without {c}. Two separate peaks point to two "
+         "phases; one broad peak shifting with the third element would point to one phase of "
+         "variable composition." + shape),
+        (_panel("scatter", f"{a}/{b} against {c}", x=c, y=ratio, log_x=True, filter=with_c,
+                show_fit=True, x_label=f"{c} (counts)", y_label=f"{a}/{b}",
+                color=split["rules"][0]["color"], marker_size=12),
+         f"Within the particles carrying {c}, {a}/{b} against the {c} signal. A ratio that "
+         f"moves with {c} points to {c} substituting in one structure; a flat ratio points to "
+         f"a separate {c}-bearing phase." + meaning),
+        (_panel("bar", f"Particles carrying {c}, by size", value=c, agg="detect_pct",
+                group_by="size", filter=both, y_label=f"With {c} (%)", error="none",
+                xtick_rotation=15),
+         _size_caption(f"How often particles carrying {a} and {b} also carry {c}") + shares),
+        (_panel("histogram", f"{b} signal with and without {c}", value=b, log_x=True, bins=40,
+                filter=both, x_label=f"{b} (counts)", **split),
+         f"The {b} signal of the two populations. If the particles with {c} sit much lower, "
+         f"{c} may go undetected in small particles of the same phase, which would mix them "
+         f"into the grey population." + size
+         + " Ratios are in counts; calibrate both elements to moles before comparing them with "
+           "a formula."),
+    ]
+
+
 def _correlation(s, ctx):
     a, b = s.elements[0], s.elements[1]
     rho = _detail(s, "Rank correlation (ρ)")
     rho_p = _detail(s, "Proportionality (ρp)")
     xa, xb = _amount(ctx, a), _amount(ctx, b)
-    name = QUANTITY_NAMES[_unit(ctx)]
+    name = _qname(_unit(ctx))
     both = f"{a} > 0 and {b} > 0"
     holds = ""
     if ctx.table is not None:
@@ -1070,14 +1187,14 @@ def _cooccurrence(s, ctx):
         (_panel("histogram", f"{rare} with and without {common}", value=_amount(ctx, rare),
                 log_x=True, bins=40, x_label=_amount_name(ctx, rare),
                 **_with_without(rare, common)),
-         f"{rare} particles with and without {common}, by {QUANTITY_NAMES[_unit(ctx)]}."),
+         f"{rare} particles with and without {common}, by {_qname(_unit(ctx))}."),
         (_panel("bar", f"{rare} particles carrying {common}, by size", value=common,
                 agg="detect_pct", group_by="size", filter=f"{rare} > 0",
                 y_label=f"With {common} (%)", error="none"),
          _size_caption(f"How often {rare} particles carry {common}")
          + _share_size_sentence(ctx, common, f"{rare} > 0")),
         (_histogram(ctx, _unit(ctx), rare,
-                    f"{rare} {QUANTITY_NAMES[_unit(ctx)]} and detection limit"),
+                    f"{rare} {_qname(_unit(ctx))} and detection limit"),
          f"If {rare} is only detectable in large particles, it will seem to avoid elements "
          "found in small ones; the dashed line shows how close it sits to its threshold."),
     ]
@@ -1148,7 +1265,7 @@ def _distribution(s, ctx):
         if v.size >= 10:
             q1, med, q3 = np.percentile(v, [25, 50, 75])
             lead += (f" Measured: median {med:.3g}, interquartile range {q1:.3g}–{q3:.3g} "
-                     f"{QUANTITY_NAMES[unit].split(' ')[-1].strip('()')}, {v.size:,} particles.")
+                     f"{_qname(unit).split(' ')[-1].strip('()')}, {v.size:,} particles.")
             share = ev.near_limit(v, limit)
             if share is not None:
                 ctx.checks.add(share < 0.25, f"{share:.0%} of particles sit within twice the "
@@ -1162,7 +1279,7 @@ def _distribution(s, ctx):
                   "detection limit; a curve that starts steeply at the threshold means "
                   "the population continues below it."))
     if ctx.multi_sample:
-        story.append((_histogram(ctx, unit, el, f"{el} {QUANTITY_NAMES[unit]} by sample",
+        story.append((_histogram(ctx, unit, el, f"{el} {_qname(unit)} by sample",
                                  group_by="sample"),
                       "Each sample on its own, to see whether they share the same shape."))
     return story
@@ -1447,8 +1564,51 @@ def _particle_type(s, ctx):
     return story
 
 
+def _spectrum(s, ctx):
+    """Spectrum finding: the zoomed spectrum of the worst sample, then every sample."""
+    facts = (s.facts or {}).get("spectrum") or {}
+    traces = facts.get("traces") or {}
+    focus = facts.get("focus") if facts.get("focus") in traces else next(iter(traces), None)
+    if focus is None:
+        return []
+    label = facts.get("label", "")
+    marks = facts.get("marks") or []
+    named = " and ".join(m["label"] for m in marks) or "a second species"
+    base = {"spec_exact": facts.get("exact", ""), "spec_label": label,
+            "spec_window": facts.get("window") or [], "spec_marks": marks,
+            "spec_units": facts.get("units", "")}
+    zoom = facts.get("zoom") or []
+    if len(zoom) == 2:
+        base.update(x_min=f"{zoom[0]:g}", x_max=f"{zoom[1]:g}")
+    kind = facts.get("kind")
+    sentence = {
+        "shift": f"The peak centre sits off the exact mass, toward {named}.",
+        "neighbour": f"A second peak stands next to the {label} peak, near {named}.",
+        "share": (f"The percentages are the share of the signal at this mass that, from the "
+                  f"elements found in the sample, comes from each ion rather than from {label}."),
+    }.get(kind, "")
+    lines = "dashed lines" if len(marks) > 1 else "dashed line"
+    story = [(_panel("spectrum", f"{label} in {focus}", spectra={focus: traces[focus]}, **base),
+              f"Resolved spectrum of {focus} around {label}, summed from the run's raw "
+              "snapshots, with the m/z corrected for the run's mass calibration offset. The "
+              "shaded band is the integration window, the solid line the exact mass of "
+              f"{label} and the {lines} {named}. " + sentence)]
+    if len(traces) > 1:
+        story.append((_panel("spectrum", f"{label} in every sample", spectra=traces,
+                             spec_normalise=True, **base),
+                      f"The same region in the {len(traces)} samples where it is seen, each "
+                      "scaled to its highest point so they compare by shape: the same "
+                      + {"shift": "shift", "neighbour": "second peak"}.get(kind, "interference")
+                      + " in every sample points to the plasma or the matrix rather than one "
+                        "sample."))
+    return story
+
+
 DESIGNS = {
     "interference": _interference,
+    "spectrum_shift": _spectrum,
+    "spectrum_neighbour": _spectrum,
+    "spectrum_share": _spectrum,
     "isotope": _isotope_pair,
     "isotope_abundance": _isotope_pair,
     "isotope_two": _isotope_pair,
@@ -1459,6 +1619,7 @@ DESIGNS = {
     "replicate_agree": _replicates,
     "signature": _signature,
     "stoichiometry": _stoichiometry,
+    "ratio_split": _ratio_split,
     "correlation": _correlation,
     "cooccurrence_with": _cooccurrence,
     "cooccurrence_avoid": _cooccurrence,
@@ -1494,6 +1655,8 @@ MAX_PANELS = 6
 def story_layout(n: int, caption: str = "") -> tuple[list[list[float]], list[float], float, float]:
     """Place *n* panels above a caption sized to its text.
 
+    A last row holding fewer panels than the others is centred under them.
+
     Args:
         n: Number of panels, at most :data:`MAX_PANELS`.
         caption: The legend text, used to size the caption area.
@@ -1511,8 +1674,12 @@ def story_layout(n: int, caption: str = "") -> tuple[list[list[float]], list[flo
     caption_height = 0.35 + 0.19 * lines
     height = plot_height + caption_height
     top = plot_height / height
-    rects = [[(i % cols) / cols, (i // cols) * top / rows, 1.0 / cols, top / rows]
-             for i in range(n)]
+    rects = []
+    for i in range(n):
+        row = i // cols
+        in_row = min(cols, n - row * cols)
+        offset = (cols - in_row) / (2 * cols)
+        rects.append([offset + (i % cols) / cols, row * top / rows, 1.0 / cols, top / rows])
     return rects, [0.0, top, 1.0, 1.0 - top], width, height
 
 
@@ -1886,7 +2053,8 @@ def figure_for(s, ctx: FigureContext) -> dict | None:
     story = [(panel, caption) for panel, caption in story if panel][:MAX_PANELS]
     if not story:
         return None
-    names = group_names(ctx) if design not in (_types_overview, _particle_type) else []
+    names = (group_names(ctx) if design not in (_types_overview, _particle_type, _spectrum)
+             else [])
     if names:
         rows = by_groups(story, names, ctx)
         views = [r for r in rows if r[2] == "split"][:GROUP_ROW_VIEWS]
@@ -1899,7 +2067,7 @@ def figure_for(s, ctx: FigureContext) -> dict | None:
     else:
         legend = caption_text(s.title, [c for _p, c in story])
         flat = [panel for panel, _c in story]
-    note = limits_sentence(ctx)
+    note = limits_sentence(ctx) if design is not _spectrum else ""
     if note:
         legend = f"{legend} {note}"
     verdict = ctx.checks.line()

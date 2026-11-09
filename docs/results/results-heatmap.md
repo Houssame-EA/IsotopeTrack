@@ -73,6 +73,30 @@ Full-figure heatmap dialog with right-click context menu.
 | `_ensure_underline_margin` | `(self)` | Widen the figure's left margin when COLORS-role underline |
 | `_bucket_legend_entries` | `(self)` | ``[(label, color), ...]`` for the COLORS-role "what color is what |
 
+### `_CellTextGroup`
+
+The numbers written in one heatmap's cells, sized together to fit the cells.
+
+The size is worked out when the figure is drawn, once the cells' size
+on screen is known: the chosen font size is kept when every number fits
+its cell, and otherwise all numbers shrink by the same amount, so none
+runs into the next cell and they stay alike.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, ax, size)` |  |
+| `add` | `(self, text)` | Register one cell's text. |
+| `fit` | `(self, renderer)` | Size every cell text for the cells as they are about to be drawn. |
+
+### `_CellText` *(extends `Text`)*
+
+A heatmap cell's text that fits itself and its neighbours to the cells before drawing.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, group, *args, **kwargs)` |  |
+| `draw` | `(self, renderer)` |  |
+
 ### `HeatmapPlotNode` *(extends `QObject`)*
 
 Heatmap plot node with multiple sample support.
@@ -107,6 +131,10 @@ Heatmap plot node with multiple sample support.
 | `_mode_estimate` | `(arr)` | Estimate the mode of continuous values from the densest histogram bin. |
 | `_cell_center` | `(vals, stat)` | Central value for one heatmap cell: Mean, Median, Mode, or Geo. Mean. |
 | `_cell_spread_value` | `(vals, spread)` | Secondary value shown after a cell centre. |
+| `_log_norm` | `(values, vmin=None, vmax=None)` | Logarithmic colour scale over the positive *values*, or ``None`` when there are none. |
+| `_label_log_colorbar` | `(cbar)` | Label a log colour bar in the figure's own font. |
+| `_log_tick` | `(value, _pos=None)` | A log colour-bar tick: plain for everyday numbers, otherwise a × 10ⁿ. |
+| `_text_color_on` | `(im, value)` | Black or white, whichever reads better on the cell colour of *value*. |
 | `_fmt_cell_number` | `(v)` | Format one numeric cell value with the heatmap's standard precision. |
 | `_per_particle_percentages` | `(total_values)` | Convert a combination's raw per-element values into per-particle %. |
 | `_bulk_percentages` | `(total_values)` | Bulk composition %: each element's summed signal over the grand total. |

@@ -37,7 +37,7 @@ The particle data the assistant works on, as one pandas table.
 ### [`dialog.py`](dialog.md)
 The AI Data Assistant chat window.
 
-**1** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **93** methods
+**1** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **99** methods
 
 ### [`exploration.py`](exploration.md)
 State of an agentic exploration: the plan, the findings and the steps.
@@ -112,4 +112,4 @@ Training data for fine-tuning the assistant's model on IsotopeTrack work.
 ### [`widgets.py`](widgets.md)
 Chat window building blocks: message bubbles, tables, figures and inputs.
 
-**16** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **91** methods
+**15** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **90** methods

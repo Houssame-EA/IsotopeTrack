@@ -553,12 +553,12 @@ def draw_heatmap(fig, ax, panel, table, report, style):
              'count': 'Particles detected', 'gmean': 'Geometric mean', 'mode': 'Mode'}.get(agg, agg)
     if (percent or norm_mode == 'particle') and agg not in ('detect', 'count'):
         if percent:
-            short = HEAT_LABELS.get(quantity, HEAT_QUANTITIES[quantity])
+            short = _shown(HEAT_LABELS.get(quantity, HEAT_QUANTITIES[quantity]))
             label = short if agg == 'mean' else f'{label} ({short})'
         else:
             label += ' (% of particle)'
     elif quantity and agg not in ('detect', 'count'):
-        label += f' ({HEAT_QUANTITIES[quantity]})'
+        label += f' ({_shown(HEAT_QUANTITIES[quantity])})'
     if rows_mode == 'particles':
         label = unit
     if norm_mode == 'row':
@@ -622,6 +622,12 @@ def draw_heatmap(fig, ax, panel, table, report, style):
                         _cell_text(ax, j, i, txt, shade, lo, hi, cmap, size)
     _colorbar(fig, ax, img, panel, report, label)
     report.counts[panel['id']] = int(base.sum())
+
+
+def _shown(text):
+    """*text* with its base unit shown in the app's chosen unit."""
+    from utils.unit import units
+    return units.relabel(text)
 
 
 HEAT_QUANTITIES = {

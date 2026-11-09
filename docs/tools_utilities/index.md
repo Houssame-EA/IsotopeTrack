@@ -148,3 +148,8 @@ tools/update_checker.py
 Welcome / Home screen for IsotopeTrack.
 
 **2** classes &nbsp;·&nbsp; **6** functions &nbsp;·&nbsp; **9** methods
+
+### [`window_glass.py`](window-glass.md)
+Frosted-glass window backdrops for macOS and Windows 11.
+
+**3** classes &nbsp;·&nbsp; **21** functions &nbsp;·&nbsp; **2** methods

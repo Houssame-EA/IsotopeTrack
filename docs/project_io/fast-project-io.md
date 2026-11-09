@@ -18,7 +18,8 @@
 | `_particles_to_columnar` | `(particles)` | Convert a list of particle dicts to a columnar dict of numpy arrays. |
 | `_columnar_to_particles` | `(col_data)` | Reconstruct list of particle dicts from columnar representation. |
 | `build_metadata` | `(mw: MainWindow)` | Build the light (non-array) project metadata dict for the v2 format. |
-| `save_project_v2` | `(filepath, mw: MainWindow, progress_callback=None)` | Save project in optimized v2 format. |
+| `_read_spectrum` | `(folder_path)` | Read a sample's resolved spectrum from its run folder, or None when out of reach. |
+| `save_project_v2` | `(filepath, mw: MainWindow, progress_callback=None, include_reserve=Tru` | Save project in optimized v2 format. |
 | `load_project_v2` | `(filepath, mw: MainWindow, progress_callback=None)` | Load project from v2 format. |
 | `_restore_metadata` | `(mw: MainWindow, metadata)` | Restore metadata dict to MainWindow attributes. |
 | `load_project_v1` | `(filepath, mw: MainWindow, progress_callback=None)` | Load project from old v1 gzip+pickle format. |

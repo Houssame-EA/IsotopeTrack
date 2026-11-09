@@ -12,6 +12,7 @@
 | `JET_POSITIONS` | `np.array([0.0, 0.11, 0.34, 0.65, 0.89, 1.0])` |
 | `JET_COLORS` | `np.array([[0, 0, 143, 255], [0, 0, 255, 255], [0, 255, 25…` |
 | `MODE_SAMPLE` | `5000` |
+| `COUNTS_PREFIX` | `'_counts_'` |
 
 ## Classes
 
@@ -19,10 +20,27 @@
 
 Draws an inset legend-style colorbar inside the plot.
 
+The box is as wide as its title, so a long title such as
+``log10 27Al (Element Moles (fmol))`` is never cut, and the values at
+both ends of the colour scale are written under the bar.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, label_text, parent=None)` |  |
+| `__init__` | `(self, label_text, parent=None, vmin=None, vmax=None, log=True, stops=` |  |
+| `_has_values` | `(self)` |  |
+| `_value_text` | `(self, v)` |  |
+| `boxWidth` | `(self)` | Width of the colour bar box, in pixels. |
+| `boundingRect` | `(self)` |  |
 | `paint` | `(self, p, opt, widget)` |  |
+
+### `PreparedSample` *(extends `tuple`)*
+
+What :meth:`IsotopicRatioDisplayDialog._prepare_sample` returns, plus the band data.
+
+Unpacks as ``(x, ratios, n_total, color_values, corrected_linear,
+mean_raw)``. ``band`` holds what the counting-statistics band needs:
+``x`` in linear units, each particle's denominator ``counts`` and its
+mass-bias ``factor``, aligned with the plotted points.
 
 ### `SampleCorrectionDialog` *(extends `QDialog`)*
 
@@ -107,7 +125,7 @@ Draws an inset legend-style colorbar inside the plot.
 | `_build_labels` | `(self, cfg, sample_name=None)` |  |
 | `_add_scatter` | `(self, pi, x, y, cfg, color, color_values=None, sample_key=None, is_si` |  |
 | `_add_inset_colorbar` | `(self, pi, cfg, vmin, vmax)` |  |
-| `_add_poisson_ci` | `(self, pi, cfg, mean_ratio, color, x_data=None, sample_name=None)` |  |
+| `_add_poisson_ci` | `(self, pi, cfg, mean_ratio, color, x_data=None, sample_name=None, band` | Draw the ±2σ counting-statistics band of the isotope ratio. |
 | `_make_legend_proxy` | `(self, color, style='solid', width=2)` |  |
 | `_add_reference_lines` | `(self, pi, cfg, ratios_linear, legend_items, sample_name=None)` |  |
 | `_apply_labels_and_font` | `(self, pi, cfg, plot_key, x_label=None, y_label=None, sample_name=None` | Apply effective labels, fonts, and axis state to one ratio plot. |
@@ -148,5 +166,7 @@ Draws an inset legend-style colorbar inside the plot.
 | `_default_sample_correction` | `() → dict` |  |
 | `get_sample_correction_config` | `(cfg: dict, sample_name: str=None) → dict` |  |
 | `ratio_mode` | `(ratios, log: bool=False) → float \| None` | The most common ratio: the peak of a smooth density curve fitted to the ratios. |
+| `with_counts` | `(df: pd.DataFrame, particles: list, data_key: str) → pd.DataFrame` | Add each isotope's counts to a particle table built in another quantity. |
+| `counts_of` | `(df: pd.DataFrame, label: str) → pd.Series` | An isotope's counts in a particle table: its ``_counts_`` column, or the column itself. |
 | `poisson_ratio_sigma` | `(R: float, lambda_B: np.ndarray) → np.ndarray` |  |
 | `poisson_ci_curves` | `(R: float, x_range: np.ndarray, k: float=2.0)` |  |

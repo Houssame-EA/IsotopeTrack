@@ -29,9 +29,10 @@ def app():
 
 
 def emitted_explain_keys() -> set[str]:
-    """Every literal explain key written by a detector in the engine and discovery modules."""
+    """Every literal explain key written by a detector in the engine, discovery and spectrum modules."""
     keys = set()
-    for path in ("results/insights/engine.py", "results/insights/discovery.py"):
+    for path in ("results/insights/engine.py", "results/insights/discovery.py",
+                 "results/insights/spectrum.py"):
         tree = ast.parse((ROOT / path).read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.keyword) and node.arg == "explain_key":
@@ -104,6 +105,7 @@ ELEMENTS = {
     "isotope_track": ("206Pb", "207Pb", "56Fe"), "isotope_groups": ("206Pb", "207Pb"),
     "comparison": ("56Fe",), "replicate_flag": ("56Fe", "48Ti"), "replicate_agree": ("56Fe",),
     "signature": ("140Ce",), "stoichiometry": ("56Fe", "48Ti"),
+    "ratio_split": ("56Fe", "48Ti", "140Ce"),
     "correlation": ("56Fe", "140Ce"), "cooccurrence_with": ("156Gd", "140Ce"),
     "cooccurrence_avoid": ("56Fe", "140Ce"), "rare": ("156Gd", "140Ce"), "quality": ("56Fe",),
     "distribution_two": ("56Fe",), "distribution_spread": ("56Fe",), "size": (),
@@ -115,8 +117,12 @@ ELEMENTS = {
 TYPE_KEYS = ("types_overview", "particle_type")
 """Stories drawn from a type card's own definition, tested in test_insights_types."""
 
+SPECTRUM_KEYS = ("spectrum_shift", "spectrum_neighbour", "spectrum_share")
+"""Stories drawn from the spectra a card stores, tested in test_insights_spectrum."""
 
-@pytest.mark.parametrize("key", sorted(k for k in F.DESIGNS if k not in TYPE_KEYS))
+
+@pytest.mark.parametrize("key", sorted(k for k in F.DESIGNS
+                                       if k not in TYPE_KEYS + SPECTRUM_KEYS))
 def test_every_design_draws(app, stream, key):
     """Each story draws without a panel error and ends with its legend."""
     from results.insights.discovery import _figure_spec
@@ -367,7 +373,7 @@ def test_filter_shows_exactly_the_picked_type(app):
         assert panel.current_filter() == node_type
     panel._all_action.trigger()
     assert len(panel._suggestions) == everything
-    assert all(a.isEnabled() == bool(len([s for s in panel._found if s.node_type == k]))
+    assert all(a.isEnabled() == bool(len([s for s in panel._found if rr.shows_in(s, k)]))
                for k, a in panel._type_actions.items())
     panel._teardown()
 
@@ -485,13 +491,14 @@ def test_new_panels_join_the_stories_when_the_data_allows(app, stream):
     assert render_problems(spec, table) == []
 
 
-def test_counting_band_only_on_ratio_against_its_denominator():
-    """The ±2σ band needs Y = isotope ratio in counts and X = the denominator's counts."""
+def test_counting_band_needs_an_isotope_ratio_of_counts_on_y():
+    """The ±2σ band needs Y = isotope ratio in counts; X can be anything."""
     from results.figure_builder.charts.overlays import counting_band_fits
     assert counting_band_fits({"x": "206Pb", "y": "207Pb / 206Pb"})
     assert counting_band_fits({"x": "counts:206Pb", "y": "counts:207Pb/counts:206Pb"})
+    assert counting_band_fits({"x": "56Fe", "y": "207Pb / 206Pb"})
+    assert counting_band_fits({"x": "mass:206Pb", "y": "207Pb / 206Pb"})
     assert not counting_band_fits({"x": "206Pb", "y": "207Pb"})
-    assert not counting_band_fits({"x": "56Fe", "y": "207Pb / 206Pb"})
     assert not counting_band_fits({"x": "206Pb", "y": "mass:207Pb / mass:206Pb"})
 
 

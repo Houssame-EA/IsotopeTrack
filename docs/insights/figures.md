@@ -35,8 +35,9 @@ Figure Builder node fed by a selector holding the finding's samples.
 | `WITHOUT_COLOR` | `'#64748b'` |
 | `LIMIT_NAMES` | `{'counts': 'LOD', 'mass': 'MDL', 'd': 'SDL'}` |
 | `LIMIT_UNITS` | `{'counts': 'net counts', 'mass': 'fg', 'd': 'nm'}` |
+| `KINDS` | `{'mass': 'mass', 'd': 'diameter'}` |
 | `LIMIT_SPREAD` | `1.1` |
-| `DESIGNS` | `{'interference': _interference, 'isotope': _isotope_pair,…` |
+| `DESIGNS` | `{'interference': _interference, 'spectrum_shift': _spectr…` |
 | `ISOTOPE_DESIGNS` | `{_isotope_pair, _isotope_track, _isotope_groups}` |
 | `BETWEEN_DESIGNS` | `frozenset({_comparison, _replicates, _signature, _isotope…` |
 | `MAX_PANELS` | `6` |
@@ -78,6 +79,8 @@ Attributes:
 |----------|-----------|-------------|
 | `_panel` | `(kind: str, title: str, **settings) → dict` | One panel's settings, before it is given a place on the page. |
 | `_expr` | `(prefix: str, label: str) → str` | Expression reading *label* in quantity *prefix*. |
+| `_qname` | `(prefix: str) → str` | Readable name of quantity *prefix*, in the app's chosen units. |
+| `_shown` | `(prefix: str, value)` | *value* of quantity *prefix*, measured in the base unit, in the app's chosen unit. |
 | `_limit` | `(ctx: FigureContext, prefix: str, label: str) → dict` | Detection-limit line settings for a panel showing *label* in *prefix*. |
 | `limits_sentence` | `(ctx: FigureContext) → str` | Legend sentence quoting the detection limits drawn in the figure. |
 | `_fmt` | `(value: float) → str` | Short number for a legend. |
@@ -126,6 +129,7 @@ Attributes:
 | `_signature` | `(s, ctx)` |  |
 | `_share_size_sentence` | `(ctx: FigureContext, el: str, rule: str='') → str` | Measured detected share by size class, adding a check on its trend. |
 | `_stoichiometry` | `(s, ctx)` |  |
+| `_ratio_split` | `(s, ctx)` |  |
 | `_correlation` | `(s, ctx)` |  |
 | `_cooccurrence` | `(s, ctx)` |  |
 | `_rare` | `(s, ctx)` |  |
@@ -139,6 +143,7 @@ Attributes:
 | `_type_panels` | `(s, definition, title)` | The card's own PCA panel, retitled for the story. |
 | `_types_overview` | `(s, ctx)` |  |
 | `_particle_type` | `(s, ctx)` |  |
+| `_spectrum` | `(s, ctx)` | Spectrum finding: the zoomed spectrum of the worst sample, then every sample. |
 | `story_layout` | `(n: int, caption: str='') → tuple[list[list[float]], list[float], floa` | Place *n* panels above a caption sized to its text. |
 | `caption_text` | `(title: str, captions: list[str]) → str` | Write the figure legend: the title, then one sentence per panel letter. |
 | `group_names` | `(ctx: FigureContext) → list[str]` | The groups the figure compares: the samples of its table, when there are two or more. |

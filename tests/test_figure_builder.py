@@ -964,7 +964,8 @@ def test_gallery_renders_thumbnails(dialog):
     from results.figure_builder.ui.gallery import ChartGallery
     g = ChartGallery(dialog.spec, dialog.table, render_to_pixmap, dialog._kind_defaults, True, dialog)
     from results.figure_builder.core.recipes import RECIPES
-    assert set(g.items) == (set(E.PANEL_KINDS) - {'text', 'code'}) | {f'recipe:{k}' for k in RECIPES}
+    assert set(g.items) == ((set(E.PANEL_KINDS) - {'text', 'code', 'spectrum'})
+                            | {f'recipe:{k}' for k in RECIPES})
     for kind in ('lollipop', 'treemap', 'ecdf'):
         _pix, report, _fig = render_to_pixmap(g.thumbnail_spec(kind), dialog.table, 40)
         assert report.errors == {}, kind

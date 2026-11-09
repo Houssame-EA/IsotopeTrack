@@ -8,6 +8,8 @@
 |------|-------|
 | `TREND_LINE_CHOICES` | `{'1': 'One line', 'auto': 'Find how many (1 to 3)', '2': …` |
 | `TREND_LINE_COLORS` | `['#1D4ED8', '#047857', '#B45309']` |
+| `STATS_MAX_LINES` | `6` |
+| `QUANTITY_NAMES` | `{'Counts': 'counts', 'Element Mass (fg)': 'mass (fg)', 'P…` |
 
 ## Classes
 
@@ -123,11 +125,13 @@ rendering modes, and the correlation-specific auto-detect action.
 | `_extract_xy_color` | `(self, df, cfg)` | Extract (x, y, color_or_None) arrays from a DataFrame and config. |
 | `_prepare_data` | `(self, df, cfg)` | Filter + log-transform + outlier removal. Returns (x, y, color) ready for plotting. |
 | `_plot_scatter` | `(self, pi, x, y, c, cfg, color, correlation_label: str \| None=None, co` | Add scatter + overlays to a PlotItem using already-prepared sample data. |
-| `_apply_labels` | `(self, pi, cfg)` |  |
+| `_apply_labels` | `(self, pi, cfg)` | Name both axes like the Figure Builder: element, quantity and unit. |
 | `_draw_single` | `(self, pi, plot_data, cfg)` |  |
 | `_draw_subplots` | `(self, plot_data, cfg)` | Draw one subplot per sample and register subplot-export context. |
 | `_draw_side_by_side` | `(self, plot_data, cfg)` | Draw one panel per sample in one row and register export context. |
 | `_draw_combined` | `(self, pi, plot_data, cfg)` | Draw all samples overlaid in one panel with capped per-sample r labels. |
+| `_add_color_bar` | `(self, pi, cfg, c)` | Colour scale of the colouring element, in the top-right corner of the plot. |
+| `_draw_stats_boxes` | `(self, cfg)` | Write each plot's fitted line, r and particle count in a box, top left. |
 | `_add_no_valid_data_message` | `(self, pi, text: str='No valid paired data after filtering.')` | Show a centered non-modal empty-data message in the given PlotItem. |
 
 ### `CorrelationGraphicsLayoutWidget` *(extends `EnhancedGraphicsLayoutWidget`)*
@@ -159,5 +163,12 @@ Correlation plot node with multiple sample support and auto-detection.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `_log_user_action` | `(description: str, context: dict \| None=None)` | Record a click in the user-action log, if logging is running. |
+| `quantity_name` | `(data_type: str) → str` | Quantity and unit written after an element, e.g. ``mass (fg)`` for Element Mass (fg). |
+| `_num` | `(value: float) → str` | A fitted coefficient with three significant figures, large or small ones as a × 10ⁿ. |
+| `line_equation_html` | `(slope: float, intercept: float, log_x: bool, log_y: bool) → str` | The fitted line written in the data's own terms, as the Figure Builder writes it. |
+| `_stats_line` | `(x, y, cfg) → str` | Fitted line, Pearson r and particle count of one series, for the statistics box. |
+| `_tidy_axes` | `(pi)` | Plain tick numbers on both axes and room for the y title. |
+| `_with_label_room` | `(axis, update_width)` | Widen a left axis so its title never sits on top of the tick numbers. |
+| `_matrix_with_counts` | `(particles, data_key)` | Particles × elements table of *data_key*, carrying the counts for the saturation check. |
 | `_fit_trend_lines` | `(x, y, cfg)` | Fit the configured number of lines to already-prepared plot data. |
 | `_draw_trend_lines` | `(pi, x, y, trends, cfg, color, series=None)` | Draw each fitted line over its own particles, with its r and ratio. |

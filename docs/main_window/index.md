@@ -7,4 +7,4 @@ The central application window.
 ### [`mainwindow.py`](mainwindow.md)
 
 
-**4** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **201** methods
+**5** classes &nbsp;·&nbsp; **2** functions &nbsp;·&nbsp; **225** methods

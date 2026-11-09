@@ -21,10 +21,19 @@ that two replicates of one material are never reported as different samples.
 | Name | Value |
 |------|-------|
 | `MIN_GROUP_PARTICLES` | `20` |
-| `INTERFERENCE_MIN_OVERLAP` | `15` |
+| `INTERFERENCE_MIN_OVERLAP` | `10` |
 | `INTERFERENCE_MIN_SHARE` | `0.7` |
+| `INTERFERENCE_MIN_SHARE_PARTIAL` | `0.2` |
 | `INTERFERENCE_MAX_RATIO` | `0.2` |
 | `INTERFERENCE_MAX_SPREAD` | `0.3` |
+| `INTERFERENCE_MAX_RATIO_NEIGHBOUR` | `0.02` |
+| `INTERFERENCE_MAX_SLOPE_NEIGHBOUR` | `2.0` |
+| `INTERFERENCE_CLEAR_FACTOR` | `3.0` |
+| `INTERFERENCE_MIN_CLEAR` | `15` |
+| `INTERFERENCE_MAX_SLOPE` | `1.6` |
+| `INTERFERENCE_EXCESS_FACTOR` | `2.0` |
+| `INTERFERENCE_SIBLING_REAL` | `0.3` |
+| `INTERFERENCE_MIN_PLAUSIBLE` | `0.3` |
 | `STOICHIOMETRY_MIN_OVERLAP` | `30` |
 | `STOICHIOMETRY_MAX_SPREAD` | `0.2` |
 | `STOICHIOMETRY_MAX_COUPLING` | `0.4` |
@@ -40,8 +49,15 @@ that two replicates of one material are never reported as different samples.
 | `REPLICATE_FOLD` | `1.5` |
 | `REPLICATE_RATE_GAP` | `0.15` |
 | `REPLICATE_MARGIN` | `2.0` |
+| `RATIO_SPLIT_MIN_PARTICLES` | `30` |
+| `RATIO_SPLIT_MIN_FOLD` | `1.5` |
+| `RATIO_SPLIT_MAX_ELEMENTS` | `12` |
+| `RATIO_SPLIT_WITH_COLOR` | `'#c2410c'` |
+| `RATIO_SPLIT_WITHOUT_COLOR` | `'#64748b'` |
 | `_SUPERSCRIPT_PLUS` | `'⁺'` |
 | `_SUPERSCRIPT_TWO_PLUS` | `'²⁺'` |
+| `_RATE_KINDS` | `('oxide', 'hydroxide', 'doubly charged ion')` |
+| `_INTERFERENCE_KIND_RANK` | `{'oxide': 0, 'doubly charged ion': 0, 'hydroxide': 1, 'hy…` |
 | `ISOTOPE_MIN_PARTICLES` | `20` |
 | `ISOTOPE_ABUNDANCE_GAP` | `0.25` |
 | `ISOTOPE_GROUP_MIN_GAP` | `0.02` |
@@ -71,10 +87,26 @@ that two replicates of one material are never reported as different samples.
 | `_times` | `(ctx) → np.ndarray` | Particle start times in seconds, ``nan`` where missing, cached on the context. |
 | `_figure_spec` | `(data_type: str, **panel) → dict` | Build a one-panel Figure Builder design. |
 | `_simple_ratio` | `(value: float, max_term: int=4, tolerance: float=0.08) → str \| None` | Name the small whole-number ratio closest to *value*, if one is close. |
-| `analyse_interference` | `(ctx, progress=None) → list` | Find masses that behave like an oxide, hydroxide or doubly charged ion. |
+| `_interference_targets` | `(mass: int, symbol: str) → list[tuple[int, str, str, bool]]` | List the masses an ion of *symbol* at *mass* can appear on. |
+| `isotope_abundances` | `() → dict[str, dict[int, float]]` | Natural isotope abundances of every element, ``{symbol: {mass number: fraction}}``. |
+| `_run_masses` | `(ctx) → dict[int, np.ndarray]` | Signal per particle at masses that were not selected but read from the run. |
+| `_signal_by_mass` | `(ctx, run: dict) → dict[int, tuple[np.ndarray, np.ndarray]]` | Every mass on hand as ``{mass: (values, known)}``. |
+| `_plausibility` | `(symbol: str, mass: int, values, detected, masses) → float` | How well an element's main isotope backs it as the parent at *mass*. |
+| `_pair_stats` | `(ctx, values, detected, child: str, neighbour: bool, slope_values=None` | Measure how much *child* behaves like an interference from a parent signal. |
+| `_interference_stats` | `(ctx, parent: str, child: str, neighbour: bool=False) → dict \| None` | Measure how much *child* behaves like an interference from a selected *parent*. |
+| `interference_flags` | `(ctx) → list[dict]` | Decide, for every suspect mass, whether it is an interference and from what. |
+| `_excess_over_oxide` | `(ctx, parents, f: dict, symbol: str, rate: float) → None` | Mark a suspect as holding a real element when even an oxide could not explain it. |
+| `_sibling_check` | `(ctx, masses, parents, f: dict) → None` | Look for the suspect element on one of its isotopes the parent cannot reach. |
+| `analyse_interference` | `(ctx, progress=None) → list` | Flag masses whose particles may be an interference from another element. |
+| `_join` | `(items: list[str]) → str` | Join words as ``"a"``, ``"a and b"`` or ``"a, b and c"``. |
+| `_flag_notes` | `(f: dict, said: set) → str` | Sentences about how one flag was reached, each said once per card. |
+| `_interference_card` | `(rr, parent_symbol: str, child_symbol: str, flags: list[dict])` | Build one card for every mass of *child_symbol* explained by *parent_symbol*. |
+| `_excess_card` | `(rr, child_symbol: str, flags: list[dict])` | Card for suspect masses that carry an interference and a real element as well. |
 | `interference_pair` | `(ctx, a: str, b: str) → bool` | Return whether one of two masses behaves like an interference from the other. |
-| `_interference_stats` | `(ctx, parent: str, child: str) → dict \| None` | Measure how much *child* behaves like an interference from *parent*. |
 | `analyse_stoichiometry` | `(ctx, progress=None) → list` | Find element pairs held at a fixed ratio, the mark of one defined phase. |
+| `ratio_split_rules` | `(c: str) → dict` | Grouping rules splitting particles by whether they carry *c*. |
+| `ratio_split_panel` | `(a: str, b: str, c: str) → dict` | The scatter that shows a ratio split: a/b against b, coloured by c, grey without c. |
+| `analyse_ratio_split` | `(ctx, progress=None) → list` | Find element ratios that take two values depending on whether a third element is present. |
 | `analyse_cooccurrence` | `(ctx, progress=None) → list` | Find elements that turn up together, or avoid each other, more than chance allows. |
 | `analyse_rare` | `(ctx, progress=None) → list` | Point out elements found in only a handful of particles. |
 | `analyse_network` | `(ctx, progress=None) → list` | Find a connected group of four or more mutually correlated elements. |

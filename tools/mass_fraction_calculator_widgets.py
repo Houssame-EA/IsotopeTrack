@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import QLocale, QPoint, Qt, Signal
+from PySide6.QtCore import QLocale, QPoint, QRect, Qt, Signal
 from PySide6.QtGui import QDesktopServices, QDoubleValidator
 from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCheckBox, QGroupBox, QHBoxLayout,
@@ -161,6 +161,9 @@ class _DensityDelegate(QStyledItemDelegate):
 
 class _StructureDelegate(QStyledItemDelegate):
     def paint(self, painter, option: QStyleOptionViewItem, index):
+        if not isinstance(option.rect, QRect):
+            super().paint(painter, option, index)
+            return
         button = QPushButton("Open", parent=option.widget)
         button.setEnabled(bool(index.data(Qt.ItemDataRole.UserRole).mp_url))
         button.resize(option.rect.size())
@@ -170,7 +173,8 @@ class _StructureDelegate(QStyledItemDelegate):
         painter.restore()
 
     def editorEvent(self, event, model, option, index):
-        if event.type() == event.Type.MouseButtonRelease and option.rect.contains(event.position().toPoint()):
+        if (event.type() == event.Type.MouseButtonRelease and isinstance(option.rect, QRect)
+                and option.rect.contains(event.position().toPoint())):
             compound: Optional[Compound] = index.data(Qt.ItemDataRole.UserRole)
             if compound and compound.mp_url:
                 QDesktopServices.openUrl(compound.mp_url)

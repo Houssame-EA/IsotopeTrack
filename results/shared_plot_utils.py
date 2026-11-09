@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QObject, QEvent, QTimer
 import pyqtgraph as pg
+from utils.unit import units as app_units
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.shared_plot_utils")
 
@@ -1613,6 +1614,8 @@ def apply_axis_label_style(plot_item, axis_name: str, text: str,
     kwargs = build_axis_label_style_kwargs(
         config, family=family, size=size, bold=bold, italic=italic,
         color=color)
+    text = app_units.relabel(text)
+    units = app_units.relabel(units)
     if units:
         plot_item.setLabel(axis_name, text, units=units, **kwargs)
     else:
@@ -1829,6 +1832,12 @@ def apply_font_to_matplotlib(ax, config: dict):
             label.set_fontstyle(style)
             label.set_color(fc['color'])
 
+        for get, put in ((ax.get_xlabel, ax.set_xlabel), (ax.get_ylabel, ax.set_ylabel)):
+            label = get()
+            shown = app_units.relabel(label)
+            if shown != label:
+                put(shown)
+
         if ax.get_title():
             ax.set_title(ax.get_title(),
                          fontfamily=fc['family'], fontsize=fc['size'] + 2,
@@ -1922,7 +1931,7 @@ def _apply_font_to_colorbar(cbar, fc: dict):
         label.set_fontstyle(style)
         label.set_color(fc['color'])
     if cbar.ax.get_ylabel():
-        cbar.set_label(cbar.ax.get_ylabel(),
+        cbar.set_label(app_units.relabel(cbar.ax.get_ylabel()),
                        fontfamily=fc['family'], fontsize=fc['size'],
                        fontweight=weight, fontstyle=style, color=fc['color'])
 
@@ -1945,7 +1954,7 @@ def apply_font_to_colorbar_standalone(cbar, config: dict, label_text: str = ""):
         label.set_fontstyle(style)
         label.set_color(fc['color'])
     if label_text:
-        cbar.set_label(label_text, fontfamily=fc['family'], fontsize=fc['size'],
+        cbar.set_label(app_units.relabel(label_text), fontfamily=fc['family'], fontsize=fc['size'],
                        fontweight=weight, fontstyle=style, color=fc['color'])
 
 
@@ -1956,6 +1965,10 @@ def apply_font_to_colorbar_standalone(cbar, config: dict, label_text: str = ""):
 def apply_saturation_filter(element_data: pd.DataFrame, config: dict) -> pd.DataFrame:
     """Remove particles where *any* element exceeds the saturation threshold.
 
+    The threshold is in counts. When the table holds another quantity
+    (mass, moles, size), the particles' counts must ride along in
+    ``element_data.attrs['counts']``, row for row, and are checked instead.
+
     Args:
         element_data: DataFrame (rows = particles, cols = elements)
         config: dict with 'filter_saturated' and 'saturation_threshold'
@@ -1964,8 +1977,13 @@ def apply_saturation_filter(element_data: pd.DataFrame, config: dict) -> pd.Data
         return element_data
 
     threshold = config.get('saturation_threshold', 10000)
-    numeric_df = element_data.select_dtypes(include='number')
-    mask = (numeric_df < threshold).all(axis=1)
+    counts = element_data.attrs.get('counts')
+    if counts is not None and len(counts) == len(element_data):
+        numeric_df = counts.select_dtypes(include='number')
+        mask = (numeric_df < threshold).all(axis=1).to_numpy()
+    else:
+        numeric_df = element_data.select_dtypes(include='number')
+        mask = (numeric_df < threshold).all(axis=1)
     filtered = element_data[mask]
     _itk_log.debug(f"Saturation filter: {len(element_data)} → {len(filtered)} particles (threshold={threshold})")
     return filtered
@@ -2131,6 +2149,133 @@ def get_display_name(original_name: str, config: dict) -> str:
         config (dict): Configuration dictionary.
     """
     return config.get('sample_name_mappings', {}).get(original_name, original_name)
+
+
+def declutter_pie_labels(ax, annotations, pad=0.03):
+    """Keep pie labels apart so none overlaps another, measured as drawn.
+
+    Each label keeps its side of the pie; on each side, labels are pushed
+    down one after another until their drawn boxes no longer touch, which
+    is what small slices bunched together need, and moved out beside the
+    pie so they never sit on a slice. When the labels of one side are taller
+    together than the plot, their font is made smaller until they fit. The
+    labels are placed again whenever the figure is resized, since their
+    size on screen does not change with it.
+
+    Args:
+        ax: The pie's axes.
+        annotations: The labels' annotations; labels the user placed by hand
+            should be left out.
+        pad: Smallest gap kept between two labels, in pie radii.
+    """
+    anns = [a for a in annotations if a is not None]
+    if not anns:
+        return
+    for a in anns:
+        a._itk_home = tuple(a.xyann)
+        a._itk_size = a.get_fontsize()
+    ax._itk_pie_lims = (ax.get_xlim(), ax.get_ylim())
+    ax._itk_pie_labels = anns
+    ax._itk_pie_pad = pad
+    _place_pie_labels(ax)
+    fig = ax.figure
+    if getattr(fig, '_itk_pie_resize', None) is None:
+        try:
+            fig._itk_pie_resize = fig.canvas.mpl_connect('resize_event', lambda _e, f=fig: _replace_pie_labels(f))
+        except Exception:
+            fig._itk_pie_resize = None
+
+
+def _spread_centres(targets, heights):
+    """Centres closest to *targets* (top to bottom) with no two boxes overlapping.
+
+    Boxes that would touch are joined into one block, stacked in order and
+    centred on the mean of their targets, so each label moves as little as
+    it can from its own slice.
+    """
+    blocks = []
+    for k, (t, h) in enumerate(zip(targets, heights)):
+        blocks.append({'items': [k], 'offsets': [0.0], 'height': h, 'aim': [t + h / 2.0]})
+        while len(blocks) > 1:
+            upper, lower = blocks[-2], blocks[-1]
+            upper_bottom = _block_top(upper) - upper['height']
+            if _block_top(lower) <= upper_bottom + 1e-12:
+                break
+            shift = upper['height']
+            upper['items'] += lower['items']
+            upper['offsets'] += [o + shift for o in lower['offsets']]
+            upper['aim'] += lower['aim']
+            upper['height'] += lower['height']
+            blocks.pop()
+    out = [0.0] * len(targets)
+    for b in blocks:
+        top = _block_top(b)
+        for k, o in zip(b['items'], b['offsets']):
+            out[k] = top - o - heights[k] / 2.0
+    return out
+
+
+def _block_top(block):
+    """Top of a block of stacked boxes placed so their centres sit nearest their aims."""
+    return float(np.mean([a + o for a, o in zip(block['aim'], block['offsets'])]))
+
+
+def _replace_pie_labels(fig):
+    """Place the labels of every pie of *fig* again, after a resize."""
+    for ax in fig.axes:
+        if getattr(ax, '_itk_pie_labels', None):
+            _place_pie_labels(ax)
+
+
+def _place_pie_labels(ax):
+    """One placement of the labels set up by :func:`declutter_pie_labels`."""
+    anns = ax._itk_pie_labels
+    try:
+        renderer = ax.figure.canvas.get_renderer()
+    except Exception:
+        return
+    xlim, ylim = ax._itk_pie_lims
+    ax.set_xlim(*xlim)
+    ax.set_ylim(*ylim)
+    for a in anns:
+        a.xyann = a._itk_home
+        a.set_fontsize(a._itk_size)
+    room = ax.get_window_extent(renderer).height * 0.92
+    for side in (1, -1):
+        group = [a for a in anns if (a.xyann[0] >= 0) == (side > 0)]
+        tall = sum(a.get_window_extent(renderer).height for a in group) * 1.15
+        if group and room > 0 and tall > room:
+            for a in group:
+                a.set_fontsize(max(5.0, a.get_fontsize() * room / tall))
+    for _ in range(6):
+        inv = ax.transData.inverted()
+        items = []
+        for a in anns:
+            bb = a.get_window_extent(renderer)
+            (_x0, y0), (_x1, y1) = inv.transform([(bb.x0, bb.y0), (bb.x1, bb.y1)])
+            x, y = a.xyann
+            items.append([a, float(x), float(y), abs(float(y1) - float(y0))])
+        pad = max(ax._itk_pie_pad, 0.25 * float(np.median([i[3] for i in items])))
+        moved = False
+        for side in (1, -1):
+            group = sorted((i for i in items if (i[1] >= 0) == (side > 0)),
+                           key=lambda i: -i[0]._itk_home[1])
+            targets = [i[0]._itk_home[1] for i in group]
+            placed = _spread_centres(targets, [i[3] + pad for i in group])
+            for i, y in zip(group, placed):
+                if abs(i[2] - y) > 1e-9:
+                    moved = True
+                i[2] = y
+        for a, x, y, h in items:
+            reach = max(abs(y) - h / 2.0, 0.0)
+            clear = float(np.sqrt(max(1.12 ** 2 - reach ** 2, 0.0)))
+            a.xyann = (float(np.sign(x) or 1.0) * max(abs(x), clear), y)
+        lo, hi = ax.get_ylim()
+        new = (min(lo, min(i[2] - i[3] / 2.0 for i in items) - pad),
+               max(hi, max(i[2] + i[3] / 2.0 for i in items) + pad))
+        ax.set_ylim(*new)
+        if not moved and np.allclose(new, (lo, hi)):
+            break
 
 
 def make_viridis_colormap():
@@ -3015,7 +3160,7 @@ def _prepare_csv_dataframe(data, columns: dict | None = None) -> pd.DataFrame:
             for key, val in p.items():
                 if isinstance(val, dict):
                     for k2, v2 in val.items():
-                        col = f"{k2}" if key == 'elements' else f"{k2} ({key})"
+                        col = f"{k2}" if key == 'elements' else f"{k2} ({app_units.relabel(key)})"
                         row[col] = v2
                 else:
                     row[key] = val
@@ -3997,7 +4142,8 @@ def _add_det_limit_v(plot_item, cfg: dict):
     """Vertical detection limit line (for histogram / molar ratio plots)."""
     if not cfg.get('show_det_limit', False):
         return
-    val = float(cfg.get('det_limit_value', 1.0))
+    val = float(app_units.setting_for(cfg.get('det_limit_value', 1.0),
+                                      cfg.get('data_type_display', 'Counts')))
     log_x = cfg.get('log_x', False)
     pos = float(np.log10(max(val, 1e-12))) if log_x else val
     color = cfg.get('det_limit_color', '#DC2626')
@@ -4017,7 +4163,8 @@ def _add_det_limit_h(plot_item, cfg: dict):
     """Horizontal detection limit line (for box plot / scatter plots)."""
     if not cfg.get('show_det_limit', False):
         return
-    val = float(cfg.get('det_limit_value', 1.0))
+    val = float(app_units.setting_for(cfg.get('det_limit_value', 1.0),
+                                      cfg.get('data_type_display', 'Counts')))
     color = cfg.get('det_limit_color', '#DC2626')
     style = _QT_LINE.get(cfg.get('det_limit_style', 'dash'), _Qt.DashLine)
     width = int(cfg.get('det_limit_width', 2))
@@ -4107,3 +4254,92 @@ def build_quick_toggles_menu(parent_menu, cfg: dict,
             a.setChecked(cfg.get('shade_type', 'None') == st)
 
     return tm
+
+def equalize_panels(plot_widget, min_size: int = 80, fit_y: bool = False) -> None:
+    """Give every plot panel of a grid the same data-area width and height.
+
+    A ``GraphicsLayoutWidget`` shares its space out from each panel's own
+    preferred size, and the first panel of a row carries the Y-axis tick
+    values while the others hide them, so panels drawn side by side come out
+    with different data areas. This sets equal stretch on every row and
+    column that holds a plot, the same preferred and minimum size on every
+    plot, and the widest left-axis width and tallest bottom-axis height on
+    all of them, so the data areas match. It runs now and again once the
+    event loop has drawn the tick labels, when their final widths are known.
+    Colour bars and other items in the layout are left as they are.
+
+    Panels whose Y axes are linked share whichever range was set last, which
+    is the last panel's own data, so the others can be cut off. With *fit_y*,
+    linked panels are given one range covering the data of all of them.
+
+    Args:
+        plot_widget: The ``pg.GraphicsLayoutWidget`` holding the panels.
+        min_size: Smallest width and height, in pixels, a panel may shrink to.
+        fit_y: Fit the linked Y range to every linked panel; pass the node's
+            automatic Y range setting so a range typed by the user is kept.
+    """
+    from PySide6.QtCore import QTimer
+
+    def apply():
+        try:
+            ci = plot_widget.ci
+            layout = ci.layout
+        except RuntimeError:
+            return
+        plots = [(item, cells) for item, cells in ci.items.items() if isinstance(item, pg.PlotItem)]
+        if len(plots) < 2:
+            return
+        rows = sorted({r for _item, cells in plots for r, _c in cells})
+        cols = sorted({c for _item, cells in plots for _r, c in cells})
+        for c in cols:
+            layout.setColumnStretchFactor(c, 1)
+        for r in rows:
+            layout.setRowStretchFactor(r, 1)
+        left = [item.getAxis('left') for item, _cells in plots if item.getAxis('left').isVisible()]
+        bottom = [item.getAxis('bottom') for item, _cells in plots
+                  if item.getAxis('bottom').isVisible()]
+        if left:
+            width = max(axis.width() for axis in left)
+            for axis in left:
+                axis.setWidth(width)
+        if bottom:
+            height = max(axis.height() for axis in bottom)
+            for axis in bottom:
+                axis.setHeight(height)
+        for item, _cells in plots:
+            item.setPreferredWidth(min_size)
+            item.setMinimumWidth(min_size)
+            item.setPreferredHeight(min_size)
+            item.setMinimumHeight(min_size)
+        layout.invalidate()
+        if fit_y:
+            _fit_linked_y([item for item, _cells in plots])
+
+    apply()
+    QTimer.singleShot(0, apply)
+
+
+def _fit_linked_y(plots) -> None:
+    """Give Y-linked panels one range that covers the data of every one of them."""
+    views = [p.getViewBox() for p in plots]
+    linked = [v for v in views
+              if v.linkedView(pg.ViewBox.YAxis) is not None
+              or any(o.linkedView(pg.ViewBox.YAxis) is v for o in views)]
+    if len(linked) < 2:
+        return
+    lows, highs = [], []
+    for v in linked:
+        bounds = v.childrenBounds()[1]
+        if bounds is None:
+            continue
+        lo, hi = bounds
+        if np.isfinite(lo) and np.isfinite(hi):
+            lows.append(lo)
+            highs.append(hi)
+    if not lows:
+        return
+    lo, hi = min(lows), max(highs)
+    if hi <= lo:
+        return
+    for v in linked:
+        v.setYRange(lo, hi, padding=0.05)

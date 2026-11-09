@@ -115,6 +115,11 @@ a = Analysis(
         'PySide6.QtOpenGL',
         'PySide6.QtOpenGLWidgets',
         'PySide6.QtPrintSupport',
+        'PySide6.QtTest',
+
+        'objc',
+        'AppKit',
+        'Foundation',
 
         'pyqtgraph',
         'pyqtgraph.Qt',
@@ -500,8 +505,8 @@ app = BUNDLE(
     bundle_identifier='com.isotrack.app',
     info_plist={
         'NSHighResolutionCapable': 'True',
-        'CFBundleShortVersionString': '1.12.0',
-        'CFBundleVersion': '1.12.0',
+        'CFBundleShortVersionString': '1.13.0',
+        'CFBundleVersion': '1.13.0',
         'CFBundleDisplayName': 'IsotopeTrack',
         'CFBundleName': 'IsotopeTrack',
         'NSRequiresAquaSystemAppearance': 'False',

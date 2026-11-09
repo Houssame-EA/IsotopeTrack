@@ -80,14 +80,6 @@ in a folded list of steps; the summary appears at the bottom.
 | `_build_step_widget` | `(self, turn_num, rationale, code, result)` | Build the view of one turn. |
 | `apply_theme` | `(self)` | Re-render rich text and restyle the nested tables, figures and code. |
 
-### `_NumericItem` *(extends `QTableWidgetItem`)*
-
-QTableWidgetItem that sorts numerically when possible.
-
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `__lt__` | `(self, other)` | Compare numerically when both cells hold numbers. |
-
 ### `InteractiveTableBubble` *(extends `QFrame`)*
 
 A result table: sortable, filterable, with column statistics and export.

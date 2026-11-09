@@ -34,12 +34,15 @@ from results.figure_builder.core import engine as E
 from results.figure_builder.core import styles as S
 from results.figure_builder.ui.dataview import DataExplorer
 from results.figure_builder.ui import direct, interact, look
+from tools import window_glass
 from results.figure_builder.ui.editor import PanelEditor
 from results.figure_builder.core.expressions import DATA_TYPES, ParticleTable
 from results.figure_builder.core.recipes import RECIPES, recipe_panel
 from results.figure_builder.ui.sketch import LayoutSketch
 from results.figure_builder.ui.widgets import ColorButton, RowTable
 
+from utils.unit import units
+from widget.unit_combo import UnitComboBox
 import logging
 
 _log = logging.getLogger('IsotopeTrack.results.figure_builder')
@@ -87,6 +90,7 @@ class FigureBuilderNode(QObject):
         """Receive the upstream stream and fill empty axes with the first isotopes."""
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         self.input_data = input_data
         self.config = E.normalise_spec(self.config)
         table = ParticleTable.from_input(input_data, self.config.get('data_type', 'Counts'))
@@ -102,6 +106,8 @@ class FigureBuilderNode(QObject):
         if window is not None:
             from results.figure_builder.core.limits import attach_limits
             attach_limits(table, window)
+        from results.figure_builder.core.massbias import attach
+        attach(table, window, getattr(self, 'scene_ref', None))
         return table
 
     @property
@@ -764,7 +770,10 @@ class FigureBuilderDialog(QDialog):
         self._timer.setInterval(220)
         self._timer.timeout.connect(self._render)
         self._icon_buttons = []
+        self.setObjectName("figureBuilderDialog")
+        window_glass.attach(self, self._on_glass_active)
         self._build_ui()
+        self._restore_sidebar_state()
         self._apply_theme()
         look.connect(self._apply_theme)
         self._shortcuts()
@@ -796,9 +805,46 @@ class FigureBuilderDialog(QDialog):
         line.setFrameShape(QFrame.VLine)
         return line
 
+    def _sidebar_qss(self):
+        """Edge-to-edge settings sidebar; frosted while the glass backdrop is on."""
+        p = look.palette()
+        if getattr(self, '_glass_active', False):
+            from tools.theme import glass_rgba
+            panel_bg, dialog_bg = glass_rgba(p, p.bg_secondary), "transparent"
+        else:
+            panel_bg, dialog_bg = p.bg_secondary, p.bg_primary
+        glass_tabs = ""
+        if getattr(self, '_glass_active', False):
+            glass_tabs = """
+        QFrame#fbSidebar QTabWidget::pane { background: transparent; border: none; }
+        QFrame#fbSidebar QScrollArea,
+        QFrame#fbSidebar QWidget#qt_scrollarea_viewport,
+        QFrame#fbSidebar QWidget#qt_scrollarea_viewport > QWidget { background: transparent; }
+        """
+        return f"""
+        QDialog#figureBuilderDialog {{ background: {dialog_bg}; }}
+        QFrame#fbSidebar {{ background: {panel_bg}; border: none;
+                            border-right: 1px solid {p.border_subtle}; }}
+        QWidget#fbMain {{ background: {p.bg_primary}; }}
+        QSplitter#fbSplit::handle {{ background: {p.border_subtle}; }}
+        {glass_tabs}
+        QToolButton#fbWrapTab {{
+            background: transparent; color: {p.text_secondary}; border: none;
+            border-bottom: 2px solid transparent; border-radius: 0px;
+            padding: 5px 8px; font-weight: 600;
+        }}
+        QToolButton#fbWrapTab:hover {{ color: {p.text_primary}; }}
+        QToolButton#fbWrapTab:checked {{ color: {p.accent}; border-bottom: 2px solid {p.accent}; }}
+        """
+
     def _apply_theme(self):
         """Restyle the window and its icons for the current application theme."""
-        self.setStyleSheet(look.window_qss())
+        self.setStyleSheet(look.window_qss() + self._sidebar_qss())
+        if hasattr(self, 'sidebar_btn'):
+            self.sidebar_btn.setStyleSheet(
+                "QToolButton { border: none; border-radius: 6px; padding: 2px; background: transparent; }"
+                "QToolButton:checked { background: transparent; }"
+                f"QToolButton:hover {{ background: {look.palette().bg_hover}; }}")
         color = look.icon_color()
         for button, name in getattr(self, '_icon_buttons', []):
             try:
@@ -813,19 +859,21 @@ class FigureBuilderDialog(QDialog):
 
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(8, 8, 8, 8)
-        root.setSpacing(6)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
         toolbar = QFrame()
         toolbar.setObjectName('fbToolbar')
         bar = QHBoxLayout(toolbar)
         bar.setContentsMargins(6, 4, 6, 4)
         bar.setSpacing(2)
-        self.sidebar_btn = self._tool('', 'fa6s.table-columns', 'Show or hide the settings sidebar',
-                                      self._toggle_sidebar)
+        self.sidebar_btn = self._tool('', 'mdi6.dock-left', 'Show or hide the settings sidebar',
+                                      lambda: self._toggle_sidebar())
         self.sidebar_btn.setCheckable(True)
         self.sidebar_btn.setChecked(True)
         bar.addWidget(self.sidebar_btn)
-        bar.addWidget(self._sep())
+        self._sidebar_sep = self._sep()
+        bar.addWidget(self._sidebar_sep)
+        self._toolbar_layout = bar
         self.undo_btn = self._tool('', 'fa6s.rotate-left', 'Undo (Ctrl+Z)', self.undo)
         self.redo_btn = self._tool('', 'fa6s.rotate-right', 'Redo (Ctrl+Shift+Z)', self.redo)
         bar.addWidget(self.undo_btn)
@@ -876,14 +924,27 @@ class FigureBuilderDialog(QDialog):
         bar.addWidget(self._tool('', 'fa6s.circle-question', 'How to write expressions and more',
                                  self._help))
         bar.addSpacing(12)
-        bar.addWidget(QLabel('Quantity'))
-        self.data_type = QComboBox()
+        self._quantity_label = QLabel('Quantity')
+        bar.addWidget(self._quantity_label)
+        self.data_type = UnitComboBox()
         for k in DATA_TYPES:
             self.data_type.addItem(k, k)
         self.data_type.setCurrentIndex(max(0, self.data_type.findData(self.spec.get('data_type', 'Counts'))))
         self.data_type.setToolTip('What a bare isotope name such as Fe means in your expressions')
         self.data_type.currentIndexChanged.connect(self._on_data_type)
         bar.addWidget(self.data_type)
+        self._overflow_btn = QToolButton()
+        self._overflow_btn.setText('»')
+        self._overflow_btn.setToolTip('More tools')
+        self._overflow_btn.setAutoRaise(True)
+        self._overflow_btn.setPopupMode(QToolButton.InstantPopup)
+        self._overflow_menu = QMenu(self)
+        self._overflow_menu.aboutToShow.connect(self._fill_overflow_menu)
+        self._overflow_btn.setMenu(self._overflow_menu)
+        self._overflow_btn.hide()
+        self._overflow_items = [bar.itemAt(i).widget() for i in range(bar.count())
+                                if bar.itemAt(i).widget() is not None]
+        bar.addWidget(self._overflow_btn)
         bar.addStretch()
         self.status = QLabel('')
         self.status.setMinimumWidth(260)
@@ -896,10 +957,21 @@ class FigureBuilderDialog(QDialog):
         export.clicked.connect(self._export)
         self.export_btn = export
         bar.addWidget(export)
-        root.addWidget(toolbar)
+        self._toolbar = toolbar
+        self._toolbar_right = [bar.itemAt(i).widget() for i in range(bar.count())
+                               if bar.itemAt(i).widget() is not None
+                               and bar.itemAt(i).widget() not in self._overflow_items
+                               and bar.itemAt(i).widget() is not self._overflow_btn]
+        for w in self._overflow_items + self._toolbar_right:
+            if isinstance(w, QToolButton):
+                w.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        toolbar.installEventFilter(self)
 
         split = QSplitter(Qt.Horizontal)
+        split.setObjectName('fbSplit')
+        split.setHandleWidth(1)
         split.setChildrenCollapsible(False)
+        self._split = split
         left = QSplitter(Qt.Vertical)
         left.setChildrenCollapsible(False)
         top = QWidget()
@@ -928,8 +1000,17 @@ class FigureBuilderDialog(QDialog):
         left.setStretchFactor(1, 5)
         left.setSizes([150, 620])
         left.setMinimumWidth(300)
-        self.left_panel = left
-        split.addWidget(left)
+        sidebar = QFrame()
+        sidebar.setObjectName('fbSidebar')
+        side_lo = QVBoxLayout(sidebar)
+        side_lo.setContentsMargins(8, 8, 8, 8)
+        side_lo.setSpacing(0)
+        self._sb_top = QWidget()
+        self._sb_top.setFixedHeight(0)
+        side_lo.addWidget(self._sb_top)
+        side_lo.addWidget(left, 1)
+        self.left_panel = sidebar
+        split.addWidget(sidebar)
 
         right = QSplitter(Qt.Vertical)
         right.setChildrenCollapsible(False)
@@ -1009,11 +1090,20 @@ class FigureBuilderDialog(QDialog):
         right.setStretchFactor(0, 5)
         right.setStretchFactor(1, 2)
         right.setSizes([720, 150])
-        split.addWidget(right)
+        main_col = QWidget()
+        main_col.setObjectName('fbMain')
+        main_lo = QVBoxLayout(main_col)
+        self._main_lo = main_lo
+        main_lo.setContentsMargins(8, 8, 8, 8)
+        main_lo.setSpacing(6)
+        main_lo.addWidget(self._toolbar)
+        main_lo.addWidget(right, 1)
+        split.addWidget(main_col)
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
         split.setSizes([360, 1060])
         root.addWidget(split, 1)
+        split.splitterMoved.connect(lambda *_: self._save_sidebar_state())
 
     def _shortcuts(self):
         for seq, slot in ((QKeySequence.Undo, self.undo), (QKeySequence.Redo, self.redo),
@@ -1278,7 +1368,135 @@ class FigureBuilderDialog(QDialog):
         show = (not self.left_panel.isVisible()) if checked is None else bool(checked)
         self.left_panel.setVisible(show)
         self.sidebar_btn.setChecked(show)
+        self._update_toolbar_inset()
+        self._save_sidebar_state()
         self._schedule()
+
+    _SIDEBAR_VISIBLE_KEY = "ui/figure_builder_sidebar_visible"
+    _SIDEBAR_WIDTH_KEY = "ui/figure_builder_sidebar_width"
+
+    def _save_sidebar_state(self):
+        """Remember whether the settings sidebar is shown and how wide it is."""
+        settings = QSettings("IsotopeTrack", "IsotopeTrack")
+        settings.setValue(self._SIDEBAR_VISIBLE_KEY, self.left_panel.isVisible())
+        if self.left_panel.isVisible() and self.left_panel.width() > 0:
+            settings.setValue(self._SIDEBAR_WIDTH_KEY, self.left_panel.width())
+
+    def _restore_sidebar_state(self):
+        """Apply the settings sidebar width and visibility chosen last time."""
+        settings = QSettings("IsotopeTrack", "IsotopeTrack")
+        try:
+            width = int(settings.value(self._SIDEBAR_WIDTH_KEY, 360))
+        except (TypeError, ValueError):
+            width = 360
+        visible = str(settings.value(self._SIDEBAR_VISIBLE_KEY, True)).lower() not in ("false", "0")
+        total = sum(self._split.sizes()) or 1420
+        self._split.setSizes([max(316, width), max(1, total - width)])
+        self.left_panel.setVisible(visible)
+        self.sidebar_btn.setChecked(visible)
+        self._update_toolbar_inset()
+
+    def _on_glass_active(self, inset):
+        """Frosted backdrop is on: the settings sidebar runs up under the window buttons.
+
+        The show/hide button moves into the title row, next to the window buttons.
+        """
+        self._glass_inset = inset
+        self._sb_top.setFixedHeight(max(0, inset - 8))
+        self.sketch.transparent_background = True
+        self.sketch.update()
+        if inset:
+            size = 28
+            self.sidebar_btn.setFixedSize(size, size)
+            self.sidebar_btn.setIconSize(QSize(20, 20))
+            self.sidebar_btn.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            x, y = 78, max(0, (inset - size) // 2)
+            geo = window_glass.window_buttons_geometry(self)
+            if geo is not None:
+                x = int(round(geo[0] + 12))
+                y = max(0, int(round(geo[1] - size / 2)))
+            self.sidebar_btn.setParent(self)
+            self.sidebar_btn.move(x, y)
+            self.sidebar_btn.show()
+            self.sidebar_btn.raise_()
+            self._sidebar_sep.hide()
+            center = y + size / 2
+            bar_h = self._toolbar.sizeHint().height()
+            self._main_lo.setContentsMargins(8, max(0, int(round(center - bar_h / 2))), 8, 8)
+        self._update_toolbar_inset()
+        self._apply_theme()
+
+    def eventFilter(self, obj, event):
+        """Re-fit the toolbar whenever its width changes."""
+        if obj is getattr(self, '_toolbar', None) and event.type() == QEvent.Resize:
+            QTimer.singleShot(0, self._fit_toolbar)
+        return super().eventFilter(obj, event)
+
+    def _fit_toolbar(self):
+        """Hide toolbar tools from the right when they do not fit, behind a » menu."""
+        bar = getattr(self, '_toolbar_layout', None)
+        if bar is None:
+            return
+        items = [w for w in self._overflow_items if w is not self.sidebar_btn]
+        margins = bar.contentsMargins()
+        spacing = bar.spacing()
+        room = self._toolbar.width() - margins.left() - margins.right()
+        room -= sum(w.sizeHint().width() + spacing for w in self._toolbar_right)
+        room -= 12
+        if self.sidebar_btn.parent() is self._toolbar:
+            room -= self.sidebar_btn.sizeHint().width() + spacing
+        total = sum(w.sizeHint().width() + spacing for w in items)
+        hidden = []
+        if total > room:
+            room -= self._overflow_btn.sizeHint().width() + spacing
+            used = 0
+            for w in items:
+                width = w.sizeHint().width() + spacing
+                if hidden or used + width > room:
+                    hidden.append(w)
+                else:
+                    used += width
+        if self.data_type in hidden and self._quantity_label not in hidden:
+            hidden.insert(0, self._quantity_label)
+        visible = [w for w in items if w not in hidden]
+        while hidden and visible and visible[-1].objectName() == 'fbSep':
+            hidden.insert(0, visible.pop())
+        for w in items:
+            w.setVisible(w not in hidden)
+        self._overflow_hidden = hidden
+        self._overflow_btn.setVisible(bool(hidden))
+
+    def _fill_overflow_menu(self):
+        """List the tools that did not fit in the toolbar."""
+        menu = self._overflow_menu
+        menu.clear()
+        for w in getattr(self, '_overflow_hidden', []):
+            if isinstance(w, QToolButton):
+                label = w.text() or w.toolTip().split('\n')[0].split(':')[0].split(' (')[0]
+                if w.menu() is not None:
+                    sub = menu.addMenu(w.icon(), label)
+                    sub.addActions(w.menu().actions())
+                else:
+                    menu.addAction(w.icon(), label, w.click)
+            elif isinstance(w, QComboBox):
+                sub = menu.addMenu('Quantity')
+                for i in range(w.count()):
+                    act = sub.addAction(w.itemText(i), lambda i=i, box=w: box.setCurrentIndex(i))
+                    act.setCheckable(True)
+                    act.setChecked(i == w.currentIndex())
+            elif w.objectName() == 'fbSep' and menu.actions():
+                menu.addSeparator()
+
+    def _update_toolbar_inset(self):
+        """Keep the toolbar clear of the window buttons when the sidebar is hidden."""
+        bar = getattr(self, '_toolbar_layout', None)
+        if bar is None:
+            return
+        left = 6
+        if getattr(self, '_glass_inset', 0) and not self.left_panel.isVisible():
+            left = self.sidebar_btn.x() + self.sidebar_btn.width()
+        bar.setContentsMargins(left, 4, 6, 4)
+        QTimer.singleShot(0, self._fit_toolbar)
 
     def _panel_text_styles(self):
         from results.figure_builder.core import textstyle as T

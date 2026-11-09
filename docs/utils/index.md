@@ -29,10 +29,20 @@ Cross-session folder memory for every file dialog in the application.
 
 **0** classes &nbsp;·&nbsp; **4** functions &nbsp;·&nbsp; **0** methods
 
+### [`interference_detection.py`](interference-detection.md)
+Blind interference detection for spICP-ToF-MS spectra.
+
+**1** classes &nbsp;·&nbsp; **24** functions &nbsp;·&nbsp; **1** methods
+
 ### [`isobaric_correction.py`](isobaric-correction.md)
 Isobaric correction engine for spICP-ToF-MS.
 
 **2** classes &nbsp;·&nbsp; **25** functions &nbsp;·&nbsp; **7** methods
+
+### [`native_menu.py`](native-menu.md)
+System right-click menus on macOS.
+
+**3** classes &nbsp;·&nbsp; **16** functions &nbsp;·&nbsp; **10** methods
 
 ### [`numba_guard.py`](numba-guard.md)
 Process-wide serialisation of Numba parallel regions.
@@ -47,7 +57,7 @@ Defensive numeric formatting for text output (CSV exports, tables, logs).
 ### [`pyqtgraph_patches.py`](pyqtgraph-patches.md)
 Runtime compatibility patches for third-party libraries.
 
-**1** classes &nbsp;·&nbsp; **6** functions &nbsp;·&nbsp; **1** methods
+**1** classes &nbsp;·&nbsp; **8** functions &nbsp;·&nbsp; **1** methods
 
 ### [`signal_stats.py`](signal-stats.md)
 Exclusion-aware signal statistics (non-visual).
@@ -55,6 +65,6 @@ Exclusion-aware signal statistics (non-visual).
 **0** classes &nbsp;·&nbsp; **5** functions &nbsp;·&nbsp; **0** methods
 
 ### [`unit.py`](unit.md)
-Export unit definitions, formatting, and persistence (non-visual).
+The app's display units: definitions, conversion, formatting and persistence.
 
-**1** classes &nbsp;·&nbsp; **2** functions &nbsp;·&nbsp; **10** methods
+**2** classes &nbsp;·&nbsp; **6** functions &nbsp;·&nbsp; **31** methods

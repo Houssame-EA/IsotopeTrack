@@ -1924,6 +1924,12 @@ class EnhancedPlotWidget(pg.PlotWidget):
         fg = QColor(p.plot_fg)
         bg = QColor(p.plot_bg)
         legend.setLabelTextColor(fg)
+        for _sample, label in getattr(legend, 'items', []):
+            try:
+                label.setAttr('color', fg)
+                label.setText(label.text)
+            except (AttributeError, RuntimeError):
+                continue
         legend.setBrush(pg.mkBrush(bg.red(), bg.green(), bg.blue(), 150))
         legend.setPen(pg.mkPen(color=fg, width=1, style=Qt.SolidLine,
                                cosmetic=True, alpha=120))
@@ -2497,6 +2503,26 @@ class BasicPlotWidget(pg.PlotWidget):
         self.getPlotItem().setTitle(title)
 
 
+class StyledPlotWidget(EnhancedPlotWidget):
+    """IsotopeTrack-styled plot for non-time data (regressions, histograms).
+
+    Same fonts, axes, legend and light/dark theming as the main time plot, but
+    without the crosshair and the time-exclusion right-click entries.
+    """
+
+    def setup_interaction_features(self):
+        """Mouse zoom only; no crosshair lines."""
+        self.setMouseEnabled(x=True, y=True)
+        vb = self.getPlotItem().getViewBox()
+        vb.setMouseMode(vb.RectMode)
+        self.vertical_line = None
+        self.horizontal_line = None
+        self._install_autorange_button()
+
+    def _install_exclusion_context_menu(self):
+        """Time-exclusion bands do not apply to these plots."""
+
+
 class CalibrationPlotWidget(EnhancedPlotWidget):
     """
     Calibration plot with interactive exclusion of outlier points.
@@ -2522,6 +2548,7 @@ class CalibrationPlotWidget(EnhancedPlotWidget):
 
         self._setup_calibration_appearance()
         self._build_calibration_items()
+        self.apply_theme()
 
         from PySide6.QtCore import QTimer
         self._click_timer = QTimer(self)
@@ -2542,23 +2569,35 @@ class CalibrationPlotWidget(EnhancedPlotWidget):
         self._install_autorange_button()
 
     def _setup_calibration_appearance(self):
-        self.setBackground('white')
         pi = self.getPlotItem()
         pi.showGrid(x=False, y=False)
         pi.hideButtons()
-        ap = QPen(QColor("#000000"), 1)
-        tc = QColor("#000000")
         tf = QFont('Times New Roman', 20)
         tf.setBold(True)
         for axis in ['left', 'bottom']:
             ax = pi.getAxis(axis)
-            ax.setPen(ap)
-            ax.setTextPen(tc)
             ax.setFont(tf)
             ax.setStyle(tickFont=tf, tickTextOffset=10, tickLength=10)
-        self.legend = self.addLegend()
-        self.legend.setBrush(pg.mkBrush(255, 255, 255, 150))
-        self.legend.setPen(pg.mkPen(color="#000000", width=1, alpha=100))
+        self.legend.anchor((1, 1), (1, 1), offset=(-20, -60))
+        self.apply_theme()
+
+    def apply_theme(self, *args):
+        """Theme the axes and legend, plus the error bars, markers and labels."""
+        super().apply_theme(*args)
+        if not hasattr(self, '_equation_text'):
+            return
+        p = _app_theme.palette
+        fg = QColor(p.plot_fg)
+        try:
+            self._err_item.setData(pen=pg.mkPen(fg, width=1))
+            self._scatter_included.setPen(pg.mkPen(p.plot_bg, width=1))
+            self._equation_text.setColor(fg)
+            self._tooltip.setColor(QColor(p.text_primary))
+            self._tooltip.fill = pg.mkBrush(QColor(p.bg_secondary))
+            self._tooltip.border = pg.mkPen(QColor(p.border))
+            self._tooltip.update()
+        except RuntimeError:
+            _itk_log.exception("Handled exception in CalibrationPlotWidget.apply_theme")
 
     # ── Persistent plot items ────────────────────────────────────────────
 
@@ -2884,6 +2923,44 @@ class BarEditorDialog(QDialog):
         self.accept()
 
 
+def add_view_all_button(widget, callback, tooltip="Auto-scale (View All)"):
+    """Overlay the signal plot's View All button in the top-right corner of a plot.
+
+    Args:
+        widget (pg.PlotWidget): Plot that receives the button.
+        callback: Called when the button is clicked.
+        tooltip (str): Button tooltip.
+
+    Returns:
+        QPushButton: The button; call ``place_view_all_button`` on resize.
+    """
+    btn = QPushButton("⤢", widget)
+    btn.setFixedSize(24, 24)
+    btn.setToolTip(tooltip)
+    btn.setStyleSheet(
+        "QPushButton{background:rgba(50,50,50,150);color:#ccc;"
+        "border:1px solid #555;border-radius:3px;"
+        "font-size:13px;padding:0;}"
+        "QPushButton:hover{background:rgba(90,90,90,220);color:#fff;}"
+        "QPushButton:pressed{background:rgba(30,30,30,220);}"
+    )
+    btn.clicked.connect(callback)
+    place_view_all_button(widget, btn)
+    return btn
+
+
+def place_view_all_button(widget, btn):
+    """Keep a View All button in the top-right corner of its plot.
+
+    Args:
+        widget (pg.PlotWidget): Plot that holds the button.
+        btn (QPushButton | None): The button.
+    """
+    if btn is not None:
+        btn.move(widget.width() - btn.width() - 6, 6)
+        btn.raise_()
+
+
 class MzBarPlotWidget(pg.PlotWidget):
     """
     Drop-in pg.PlotWidget for the inline m/z bar chart.
@@ -2905,6 +2982,13 @@ class MzBarPlotWidget(pg.PlotWidget):
         super().__init__(parent, plotItem=pi)
         pi.plot_widget = self
         self._bar_meta = []
+        self._view_all_btn = add_view_all_button(
+            self, lambda: self.getPlotItem().getViewBox().autoRange())
+
+    def resizeEvent(self, event):
+        """Keep the View All button in the top-right corner."""
+        super().resizeEvent(event)
+        place_view_all_button(self, getattr(self, '_view_all_btn', None))
 
     # ── Required by CustomPlotItem.getContextMenus ────────────────────
     def open_plot_settings(self):
@@ -2962,4 +3046,351 @@ class MzBarPlotWidget(pg.PlotWidget):
         except Exception as exc:
             _itk_log.exception("Handled exception in mouseDoubleClickEvent")
             _itk_log.error(f"Warning: MzBarPlotWidget double-click error: {exc}")
+            super().mouseDoubleClickEvent(event)
+
+
+class SpectrumPlotWidget(pg.PlotWidget):
+    """
+    Resolved mass spectrum for the Spectrum view, styled like the signal plot.
+
+    Choosing an isotope zooms onto its peak, shades the integration window
+    (green) and the baseline windows (orange), and shows the peak check in a
+    box in the top-right corner of the plot.
+
+      Double-click title       → TitleEditorDialog
+      Double-click left axis   → AxisLabelEditorDialog('left')
+      Double-click bottom axis → AxisLabelEditorDialog('bottom')
+      Double-click the trace   → TraceEditorDialog
+      Double-click empty area  → BackgroundEditorDialog
+      ⤢ button                 → full spectrum
+      Right-click              → Zoom to isotope / Show full spectrum / Plot Settings…
+    """
+
+    ZOOM_HALF_WIDTH = 0.5
+    Y_FLOOR = 1e-3
+    DEFAULT_LABELS = {'left': ('Intensity', 'ions / bin'), 'bottom': ('m/z', None)}
+
+    def __init__(self, parent=None):
+        pi = CustomPlotItem()
+        super().__init__(parent, plotItem=pi)
+        pi.plot_widget = self
+        self._curve = None
+        self._curve_default_color = None
+        self._sample_key = None
+        self._masses = None
+        self._y = None
+        self._regions = []
+        self._target = None
+        self._full = False
+        self._info_rows = []
+        self._markers = []
+        self._marker_items = []
+
+        vb = pi.getViewBox()
+        self._info = pg.TextItem(anchor=(1, 0))
+        self._info.setParentItem(vb)
+        self._info.setZValue(100)
+        self._info.hide()
+        self._message = pg.TextItem(anchor=(0.5, 0.5))
+        self._message.setParentItem(vb)
+        self._message.setZValue(100)
+        self._message.hide()
+        vb.sigResized.connect(self._place_overlays)
+
+        self._zoom_action = QAction("Zoom to selected isotope", self)
+        self._zoom_action.triggered.connect(self.zoom_to_isotope)
+        self._full_action = QAction("Show full spectrum", self)
+        self._full_action.triggered.connect(self.show_full_spectrum)
+        first = vb.menu.actions()[0] if vb.menu.actions() else None
+        vb.menu.insertAction(first, self._zoom_action)
+        vb.menu.insertAction(first, self._full_action)
+        vb.menu.insertSeparator(first)
+
+        self._setup_appearance()
+        self._view_all_btn = add_view_all_button(self, self.show_full_spectrum,
+                                                 "View All (full spectrum)")
+
+    def resizeEvent(self, event):
+        """Move the View All button and the overlays with the plot."""
+        super().resizeEvent(event)
+        if getattr(self, '_info', None) is None:
+            return
+        place_view_all_button(self, self._view_all_btn)
+        self._place_overlays()
+
+    def _setup_appearance(self):
+        """Use the fonts and label style of the signal plot."""
+        pi = self.getPlotItem()
+        pi.showGrid(x=False, y=False)
+        pi.hideButtons()
+        tick_font = QFont('Times New Roman', 20)
+        tick_font.setBold(True)
+        for name in ('left', 'bottom'):
+            ax = pi.getAxis(name)
+            ax.enableAutoSIPrefix(False)
+            ax.setFont(tick_font)
+            ax.setStyle(tickFont=tick_font, tickTextOffset=10, tickLength=10)
+            text, units = self.DEFAULT_LABELS[name]
+            pi.setLabel(name, text, units=units, font='bold 20pt Times New Roman')
+        self.apply_theme()
+        self._theme_disconnect = _app_theme.connect_theme(self.apply_theme)
+        self.destroyed.connect(lambda *_: self._theme_disconnect())
+
+    def apply_theme(self, *args):
+        """Repaint the background, axes, labels, trace and overlays from the theme.
+
+        Label text and units the user edited are kept; only their colour follows the theme.
+        """
+        try:
+            p = _app_theme.palette
+            fg = QColor(p.plot_fg)
+            self.setBackground(p.plot_bg)
+        except RuntimeError:
+            disc = getattr(self, '_theme_disconnect', None)
+            if disc is not None:
+                disc()
+            return
+        pi = self.getPlotItem()
+        for name in ('left', 'bottom'):
+            ax = pi.getAxis(name)
+            ax.setPen(QPen(fg, 1))
+            ax.setTextPen(fg)
+            text = ax.labelText or self.DEFAULT_LABELS[name][0]
+            units = ax.labelUnits or None
+            pi.setLabel(name, text, units=units, color=fg.name(),
+                        font='bold 20pt Times New Roman')
+        if self._curve is not None:
+            pen = self._curve.opts.get('pen')
+            color = pg.mkPen(pen).color().name() if pen is not None else None
+            if color is None or color == self._curve_default_color:
+                self._curve_default_color = QColor(p.accent).name()
+                self._curve.setPen(pg.mkPen(p.accent, width=1.5))
+        self._render_info()
+        self._render_markers()
+        self._message.setColor(QColor(p.text_secondary))
+
+    def open_plot_settings(self):
+        """Open the shared Plot Settings dialog (fonts, grid, traces)."""
+        PlotSettingsDialog(self, self.parent()).exec()
+
+    def set_units(self, units):
+        """Set the intensity units, unless the user renamed the left axis.
+
+        Args:
+            units (str): Units shown on the left axis.
+        """
+        ax = self.getPlotItem().getAxis('left')
+        if (ax.labelText or self.DEFAULT_LABELS['left'][0]) == self.DEFAULT_LABELS['left'][0]:
+            fg = QColor(_app_theme.palette.plot_fg)
+            self.getPlotItem().setLabel('left', self.DEFAULT_LABELS['left'][0], units=units,
+                                        color=fg.name(), font='bold 20pt Times New Roman')
+
+    def set_spectrum(self, key, masses, intensity):
+        """Show a spectrum; nothing is redrawn when the same sample is shown again.
+
+        Args:
+            key: Identifies the spectrum (the sample name).
+            masses (np.ndarray): m/z of every point.
+            intensity (np.ndarray): Intensity of every point.
+        """
+        self._message.hide()
+        self.getPlotItem().showAxis('left')
+        self.getPlotItem().showAxis('bottom')
+        if key == self._sample_key and self._curve is not None:
+            return
+        pen = None
+        if self._curve is not None:
+            pen = self._curve.opts.get('pen')
+            self.removeItem(self._curve)
+        if pen is None:
+            accent = _app_theme.palette.accent
+            self._curve_default_color = QColor(accent).name()
+            pen = pg.mkPen(accent, width=1.5)
+        self._masses = np.asarray(masses, dtype=np.float64)
+        self._y = np.maximum(np.asarray(intensity, dtype=np.float64), self.Y_FLOOR)
+        self._curve = self.plot(self._masses, self._y, pen=pen, antialias=True)
+        self._sample_key = key
+
+    def set_isotope(self, target, windows, rows, markers=None):
+        """Mark the selected isotope and zoom onto its peak.
+
+        Args:
+            target (float | None): m/z of the isotope; None shows the full spectrum.
+            windows (list): ``(lo, hi, kind)`` regions, kind is 'window' or 'baseline'.
+            rows (list): ``(name, value, alert)`` rows of the peak check box. A
+                row whose value is None is a section title; a row with an empty
+                name is a centred verdict. ``alert`` is False, True or 'warn'.
+            markers (list | None): ``(m/z, label, kind)`` vertical lines, kind is
+                'expected' or 'interferer'.
+        """
+        p = _app_theme.palette
+        for region in self._regions:
+            self.removeItem(region)
+        self._regions = []
+        for lo, hi, kind in windows or []:
+            brush = QColor(p.success if kind == 'window' else p.warning)
+            brush.setAlpha(60 if kind == 'window' else 45)
+            region = pg.LinearRegionItem(values=(lo, hi), movable=False, brush=brush)
+            for line in region.lines:
+                line.setPen(pg.mkPen(None))
+            region.setZValue(-10)
+            self.addItem(region)
+            self._regions.append(region)
+        self._target = target
+        self._info_rows = list(rows or [])
+        self._markers = list(markers or [])
+        self._render_info()
+        self._render_markers()
+        if target is None:
+            self.show_full_spectrum()
+        else:
+            self.zoom_to_isotope()
+
+    def zoom_to_isotope(self):
+        """Zoom onto the selected isotope."""
+        if self._target is None or self._masses is None:
+            return
+        self._full = False
+        pi = self.getPlotItem()
+        lo, hi = self._target - self.ZOOM_HALF_WIDTH, self._target + self.ZOOM_HALF_WIDTH
+        near = (self._masses >= lo) & (self._masses <= hi)
+        top = float(self._y[near].max()) if near.any() else 1.0
+        pi.setXRange(lo, hi, padding=0)
+        pi.setYRange(0, max(top, 1e-2) * 1.15, padding=0)
+
+    def show_full_spectrum(self):
+        """Show the whole mass range."""
+        if self._masses is None:
+            return
+        self._full = True
+        pi = self.getPlotItem()
+        pi.setXRange(float(self._masses[0]), float(self._masses[-1]), padding=0.01)
+        pi.setYRange(0, max(float(self._y.max()), 1e-2) * 1.05, padding=0)
+
+    def show_message(self, text):
+        """Clear the plot and show a message in its centre.
+
+        Args:
+            text (str): Message to show.
+        """
+        for region in self._regions:
+            self.removeItem(region)
+        self._regions = []
+        if self._curve is not None:
+            self.removeItem(self._curve)
+        self._curve = None
+        self._sample_key = None
+        self._masses = self._y = None
+        self._target = None
+        self._info_rows = []
+        self._markers = []
+        self._render_markers()
+        self._info.hide()
+        self.getPlotItem().setRange(xRange=(0, 1), yRange=(0, 1), padding=0)
+        self.getPlotItem().hideAxis('left')
+        self.getPlotItem().hideAxis('bottom')
+        self._message.setTextWidth(620)
+        self._message.setColor(QColor(_app_theme.palette.text_secondary))
+        self._message.setHtml(
+            "<div style=\"font-family:'Times New Roman'; font-size:16pt;\" align=\"center\">"
+            + text.replace("\n", "<br>") + "</div>")
+        self._message.show()
+        self._place_overlays()
+
+    def _render_info(self):
+        """Draw the peak check box from the stored rows."""
+        if not self._info_rows:
+            self._info.hide()
+            return
+        p = _app_theme.palette
+        cells = "".join(self._info_row_html(p, name, value, alert)
+                        for name, value, alert in self._info_rows)
+        self._info.setHtml(
+            "<div style=\"font-family:'Times New Roman'; font-size:13pt;\">"
+            f"<div style='color:{p.plot_fg}; font-weight:bold; font-size:14pt;'>Peak check</div>"
+            f"<table cellspacing='0'>{cells}</table></div>")
+        fill = QColor(p.plot_bg)
+        fill.setAlpha(235)
+        self._info.fill = pg.mkBrush(fill)
+        self._info.border = pg.mkPen(p.border)
+        self._info.update()
+        self._info.show()
+        self._place_overlays()
+
+    @staticmethod
+    def _alert_color(p, alert, default):
+        """Return the colour of a value: danger, warning or the default."""
+        if alert == 'warn':
+            return p.warning
+        return p.danger if alert else default
+
+    def _info_row_html(self, p, name, value, alert):
+        """Return one table row of the peak check box."""
+        if value is None:
+            return (f"<tr><td colspan='2' style='color:{p.plot_fg}; font-weight:bold;"
+                    f" font-size:14pt; padding:10px 0 1px 0;'>{name}</td></tr>")
+        if not name:
+            color = self._alert_color(p, alert, p.success)
+            return (f"<tr><td colspan='2' align='center' style='color:{color}; font-weight:bold;"
+                    f" padding:6px 0 1px 0;'>{value}</td></tr>")
+        return (f"<tr><td style='color:{p.text_secondary}; padding:1px 14px 1px 0;'>{name}</td>"
+                f"<td align='right' style='color:{self._alert_color(p, alert, p.plot_fg)};"
+                f" font-weight:bold;'>{value}</td></tr>")
+
+    def _render_markers(self):
+        """Draw the expected and interfering m/z as labelled vertical lines."""
+        for item in self._marker_items:
+            self.removeItem(item)
+        self._marker_items = []
+        p = _app_theme.palette
+        for mz, label, kind in self._markers:
+            color = p.danger if kind == 'interferer' else p.plot_fg
+            style = Qt.DashLine if kind == 'interferer' else Qt.DotLine
+            line = pg.InfiniteLine(
+                pos=mz, angle=90, movable=False, pen=pg.mkPen(color, width=1.6, style=style),
+                label=label,
+                labelOpts={'position': 0.55 if kind == 'interferer' else 0.75, 'color': color,
+                           'rotateAxis': (1, 0), 'fill': pg.mkBrush(QColor(p.plot_bg)),
+                           'anchors': [(1, 0.5), (1, 0.5)] if kind == 'interferer'
+                           else [(0, 0.5), (0, 0.5)]})
+            line.label.setFont(QFont('Times New Roman', 12, QFont.Bold))
+            line.setZValue(20)
+            self.addItem(line)
+            self._marker_items.append(line)
+
+    def _place_overlays(self, *args):
+        """Keep the peak check box in the top-right corner and the message centred."""
+        vb = self.getPlotItem().getViewBox()
+        rect = vb.boundingRect()
+        top = rect.top() + 10
+        btn = getattr(self, '_view_all_btn', None)
+        if btn is not None:
+            below = vb.mapFromScene(self.mapToScene(0, btn.geometry().bottom() + 8)).y()
+            top = max(top, below)
+        self._info.setPos(rect.right() - 10, top)
+        self._message.setPos(rect.center())
+
+    def mouseDoubleClickEvent(self, event):
+        """Open the editor for the title, an axis, the trace or the background."""
+        try:
+            pos = event.position() if hasattr(event, 'position') else event.pos()
+            scene_pos = self.mapToScene(pos.toPoint())
+            pi = self.getPlotItem()
+            tl = pi.titleLabel
+            if tl and tl.isVisible() and tl.mapRectToScene(tl.boundingRect()).contains(scene_pos):
+                TitleEditorDialog(self, self.parent()).exec()
+                event.accept(); return
+            for name in ('left', 'bottom'):
+                ax = pi.getAxis(name)
+                if ax.mapRectToScene(ax.boundingRect()).contains(scene_pos):
+                    AxisLabelEditorDialog(self, name, self.parent()).exec()
+                    event.accept(); return
+            curve = EnhancedPlotWidget._find_closest_curve(self, scene_pos)
+            if curve is not None:
+                TraceEditorDialog(curve, self, self.parent()).exec()
+                event.accept(); return
+            BackgroundEditorDialog(self, self.parent()).exec()
+            event.accept()
+        except Exception:
+            _itk_log.exception("Handled exception in SpectrumPlotWidget.mouseDoubleClickEvent")
             super().mouseDoubleClickEvent(event)

@@ -160,6 +160,9 @@ class ParticleTable:
         sample_order: Sample names in the order the upstream node lists them.
         class_order: Classifier bucket labels in registry order.
         class_colors: Classifier bucket colours chosen by the user.
+        variables: User-defined variables, name to expression.
+        factors: Per-particle mass-bias factor columns installed by
+            :func:`results.figure_builder.core.massbias.prepare`, name to array.
     """
 
     particles: list
@@ -169,6 +172,7 @@ class ParticleTable:
     class_order: list = field(default_factory=list)
     class_colors: dict = field(default_factory=dict)
     variables: dict = field(default_factory=dict)
+    factors: dict = field(default_factory=dict)
     _cache: dict = field(default_factory=dict, repr=False)
     _busy: set = field(default_factory=set, repr=False)
 
@@ -304,6 +308,8 @@ class ParticleTable:
 
     def column(self, name: str) -> np.ndarray:
         """Return a column by its canonical name (see :meth:`names`)."""
+        if name in self.factors:
+            return self.factors[name]
         if name != 'total' and name in self._cache:
             return self._cache[name]
         if name == 'total' and ('total', self.default_prefix) in self._cache:
@@ -393,6 +399,7 @@ class ParticleTable:
             out.extend(f'{prefix}:{b}' for b in base)
         out.extend(SPECIAL_NAMES)
         out.extend(self.variables)
+        out.extend(self.factors)
         return out
 
     def samples(self) -> list[str]:
@@ -673,6 +680,12 @@ def plain(text: str) -> str:
     return re.sub(r'\$\^\{(\d+)\}\$', r'\1', text or '').replace('$', '')
 
 
+def _shown_unit(unit: str) -> str:
+    """A base unit (fg, fmol, nm) as the app's chosen unit; other units unchanged."""
+    from utils.unit import units
+    return units.relabel(unit)
+
+
 def pretty(expr: str, table: ParticleTable, style: str = 'isotope', with_unit: bool = True) -> str:
     """Turn an expression into a readable axis or legend title.
 
@@ -682,6 +695,10 @@ def pretty(expr: str, table: ParticleTable, style: str = 'isotope', with_unit: b
     text = (expr or '').strip()
     if not text:
         return ''
+    from results.figure_builder.core.massbias import CORRECTED
+    corrected = CORRECTED.match(text)
+    if corrected and corrected.group(2) in table.factors:
+        return f'{pretty(corrected.group(1), table, style, with_unit)} (corrected)'
     names = table.names()
     code, mapping = _substitute(text, names)
     single = re.fullmatch(r'_v\d+', code.strip())
@@ -692,7 +709,7 @@ def pretty(expr: str, table: ParticleTable, style: str = 'isotope', with_unit: b
         if name in SPECIAL_NAMES:
             if name == 'total' and with_unit:
                 q = QUANTITY_PREFIXES[table.default_prefix]
-                return f'total {q[1]} ({q[2]})'.replace('  ', ' ')
+                return f'total {q[1]} ({_shown_unit(q[2])})'.replace('  ', ' ')
             return name.replace('_', ' ')
         if ':' in name:
             prefix, lab = name.split(':', 1)
@@ -705,6 +722,7 @@ def pretty(expr: str, table: ParticleTable, style: str = 'isotope', with_unit: b
         out = _format_label(lab, style)
         if ':' in name or with_unit:
             _, human, unit = QUANTITY_PREFIXES.get(prefix, ('', prefix, ''))
+            unit = _shown_unit(unit)
             out = (f'{out} {human}' if human else out) + (f' ({unit})' if with_unit and unit else '')
         return out
 

@@ -35,6 +35,50 @@ def apply_pyqtgraph_patches():
     _patch_export_dialog_template()
     _patch_file_dialog()
     _patch_exporter_save_directory()
+    _patch_log_axes()
+
+
+def thin_log_labels(values, strings):
+    """Keep only the 1, 2 and 5 × 10ⁿ labels when more than three share an axis level.
+
+    pyqtgraph labels every value between two powers of ten on a log axis,
+    which on a short range writes ``2·10¹ 3·10¹ 4·10¹ …`` into one another.
+    """
+    if len(values) <= 3:
+        return list(strings)
+    out = []
+    for v, s in zip(values, strings):
+        mantissa = 10 ** (float(v) % 1.0)
+        keep = any(abs(mantissa - k) < 0.05 * k for k in (1, 2, 5, 10))
+        out.append(s if keep else '')
+    return out
+
+
+def _patch_log_axes():
+    """Readable log axes in every pyqtgraph plot of the app.
+
+    Tick labels are thinned with :func:`thin_log_labels`, and no SI factor
+    such as ``(x1e+12)`` is applied on a log axis, where pyqtgraph scales
+    the exponents by it and shows wrong numbers.
+    """
+    from pyqtgraph import AxisItem
+
+    original_strings = AxisItem.logTickStrings
+    original_prefix = AxisItem.updateAutoSIPrefix
+
+    def log_tick_strings(self, values, scale, spacing):
+        return thin_log_labels(values, original_strings(self, values, scale, spacing))
+
+    def update_auto_si_prefix(self):
+        if self.logMode:
+            self.autoSIPrefixScale = 1.0
+            self.labelUnitPrefix = ''
+            self._updateLabel()
+            return
+        original_prefix(self)
+
+    AxisItem.logTickStrings = log_tick_strings
+    AxisItem.updateAutoSIPrefix = update_auto_si_prefix
 
 
 def _export_dialog_stylesheet():

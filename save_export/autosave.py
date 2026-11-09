@@ -238,6 +238,11 @@ class AutosaveManager(QObject):
     def _write(self, fp):
         """Write a heavy snapshot if the sample set changed, else a light one."""
         self._pending_fp = fp
+        try:
+            from save_export.calibration_store import refresh_calibration_snapshot
+            refresh_calibration_snapshot(self.main_window)
+        except Exception:
+            _itk_log.exception("Autosave could not capture the calibration state")
         sig = self._sample_sig()
         if sig != self._heavy_sig or not self._heavy_path().exists():
             self._write_heavy(sig)
@@ -254,7 +259,7 @@ class AutosaveManager(QObject):
             _itk_log.exception("Autosave unavailable: cannot import SaveProjectThread")
             return
         self._writing = True
-        thread = SaveProjectThread(str(self._heavy_path()), self.main_window)
+        thread = SaveProjectThread(str(self._heavy_path()), self.main_window, include_reserve=False)
         thread.succeeded.connect(lambda _p, _sig=sig: self._on_heavy_ok(_sig))
         thread.failed.connect(self._on_heavy_fail)
         thread.finished.connect(thread.deleteLater)

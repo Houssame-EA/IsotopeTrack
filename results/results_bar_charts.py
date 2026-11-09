@@ -14,6 +14,8 @@ import pyqtgraph as pg
 import numpy as np
 from scipy import stats
 from scipy.stats import gaussian_kde
+from utils.unit import units
+from widget.unit_combo import UnitComboBox
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_bar_charts")
 
@@ -37,6 +39,7 @@ def _ensure_project_root_on_sys_path():
 _ensure_project_root_on_sys_path()
 
 from results.shared_plot_utils import (
+    equalize_panels,
     FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
     get_font_config, apply_font_to_pyqtgraph, set_axis_labels,
     apply_plot_item_text_styling, apply_plot_title_style, apply_axis_label_style,
@@ -1674,6 +1677,11 @@ def _get_legend_sample_graphics_item(legend_sample_item):
     return getattr(legend_sample_item, 'item', legend_sample_item)
 
 
+def shown_setting(cfg, key, default):
+    """A saved bin width, x range or limit, in the units the figure shows."""
+    return units.setting_for(cfg.get(key, default), cfg.get('data_type_display', 'Counts'))
+
+
 def _get_xy_labels(cfg):
     """Build x/y label strings."""
     dt = cfg.get('data_type_display', 'Counts')
@@ -1978,6 +1986,7 @@ class HistogramSettingsDialog(QDialog):
         self.setWindowTitle("Histogram Settings")
         self.setMinimumWidth(520)
         self._cfg = dict(config)
+        self._shown_dt = self._cfg.get('data_type_display', 'Counts')
         self._multi = is_multi
         self._samples = sample_names
         self._available_elements = available_elements or []
@@ -2017,7 +2026,7 @@ class HistogramSettingsDialog(QDialog):
 
         g = QGroupBox("Data Type")
         fl = QFormLayout(g)
-        self.data_type = QComboBox()
+        self.data_type = UnitComboBox()
         self.data_type.addItems(HIST_DATA_TYPES)
         self.data_type.setCurrentText(
             self._cfg.get('data_type_display', 'Counts'))
@@ -2179,8 +2188,8 @@ class HistogramSettingsDialog(QDialog):
         self.show_det_cb.setChecked(self._cfg.get('show_det_limit', False))
         fl.addRow("Detection Limit Line:", self.show_det_cb)
         self.det_val_spin = QDoubleSpinBox()
-        self.det_val_spin.setRange(0.0, 999999999); self.det_val_spin.setDecimals(4)
-        self.det_val_spin.setValue(self._cfg.get('det_limit_value', 1.0))
+        self.det_val_spin.setDecimals(6); self.det_val_spin.setRange(0.0, 999999999)
+        self.det_val_spin.setValue(units.setting_for(self._cfg.get('det_limit_value', 1.0), self._shown_dt))
         fl.addRow("DL Value:", self.det_val_spin)
         self.det_label_edit = QLineEdit(self._cfg.get('det_limit_label', ''))
         self.det_label_edit.setPlaceholderText("Auto  (e.g.  DL: 1.0)")
@@ -2193,10 +2202,10 @@ class HistogramSettingsDialog(QDialog):
         g = QGroupBox("Plot Options")
         fl = QFormLayout(g)
         self.bin_width = QDoubleSpinBox()
-        self.bin_width.setRange(0.1, 100000)
-        self.bin_width.setDecimals(2)
+        self.bin_width.setDecimals(6)
+        self.bin_width.setRange(1e-6, 1e9)
         self.bin_width.setSingleStep(5)
-        self.bin_width.setValue(self._cfg.get('bin_width', 20))
+        self.bin_width.setValue(units.setting_for(self._cfg.get('bin_width', 20), self._shown_dt))
         self.bin_width.setToolTip(
             "Width of each histogram bin in data units (e.g. 20 = bins of 20 counts).\n"
             "Used only in Linear bin mode; Geometric mode always uses 0.25-decade bins.\n"
@@ -2241,11 +2250,13 @@ class HistogramSettingsDialog(QDialog):
         hl = QHBoxLayout(w)
         hl.setContentsMargins(0, 0, 0, 0)
         self.x_min = QDoubleSpinBox()
-        self.x_min.setRange(-999999, 999999)
-        self.x_min.setValue(self._cfg.get('x_min', 0))
+        self.x_min.setDecimals(6)
+        self.x_min.setRange(-1e9, 1e9)
+        self.x_min.setValue(units.setting_for(self._cfg.get('x_min', 0), self._shown_dt))
         self.x_max = QDoubleSpinBox()
-        self.x_max.setRange(-999999, 999999)
-        self.x_max.setValue(self._cfg.get('x_max', 1000))
+        self.x_max.setDecimals(6)
+        self.x_max.setRange(-1e9, 1e9)
+        self.x_max.setValue(units.setting_for(self._cfg.get('x_max', 1000), self._shown_dt))
         hl.addWidget(self.x_min)
         hl.addWidget(QLabel("to"))
         hl.addWidget(self.x_max)
@@ -2366,18 +2377,18 @@ class HistogramSettingsDialog(QDialog):
         out['shade_color'] = self._shade_color_val
         out['shade_alpha'] = self._shade_alpha_spin.value()
         out['show_det_limit'] = self.show_det_cb.isChecked()
-        out['det_limit_value'] = self.det_val_spin.value()
+        out['det_limit_value'] = units.saved_for(self.det_val_spin.value(), self._shown_dt)
         out['det_limit_label'] = self.det_label_edit.text().strip()
         out['show_box'] = self.show_box_cb.isChecked()
-        out['bin_width'] = self.bin_width.value()
+        out['bin_width'] = units.saved_for(self.bin_width.value(), self._shown_dt)
         out['bin_mode'] = self.bin_mode_combo.currentText().lower()
         out['alpha'] = self.alpha.value() / 100.0
         out['log_x'] = self.log_x.isChecked()
         out['log_y'] = self.log_y.isChecked()
         out['show_stats'] = self.show_stats.isChecked()
         out['auto_x'] = self.auto_x.isChecked()
-        out['x_min'] = self.x_min.value()
-        out['x_max'] = self.x_max.value()
+        out['x_min'] = units.saved_for(self.x_min.value(), self._shown_dt)
+        out['x_max'] = units.saved_for(self.x_max.value(), self._shown_dt)
         out['auto_y'] = self.auto_y.isChecked()
         out['y_min'] = self.y_min.value()
         out['y_max'] = self.y_max.value()
@@ -3444,8 +3455,10 @@ class HistogramDisplayDialog(QDialog):
                     cfg.get('display_mode', HIST_DISPLAY_MODES[0]))
                 if mode == 'Individual Subplots':
                     self._draw_subplots(plot_data, cfg)
+                    equalize_panels(self.plot_widget, fit_y=cfg.get('auto_y', True))
                 elif mode == 'Side by Side Subplots':
                     self._draw_side_by_side(plot_data, cfg)
+                    equalize_panels(self.plot_widget, fit_y=cfg.get('auto_y', True))
                 else:
                     self._draw_overlaid(plot_data, cfg)
             else:
@@ -3580,7 +3593,7 @@ class HistogramDisplayDialog(QDialog):
                 if cfg.get('log_y', False):
                     pi.getAxis('left').setLogMode(True)
                 if not cfg.get('auto_x', True):
-                    xn, xx = cfg.get('x_min', 0), cfg.get('x_max', 1000)
+                    xn, xx = shown_setting(cfg, 'x_min', 0), shown_setting(cfg, 'x_max', 1000)
                     if cfg.get('log_x', False) and xn > 0 and xx > 0:
                         xn, xx = float(np.log10(xn)), float(np.log10(xx))
                     pi.setXRange(xn, xx, padding=0)
@@ -3600,7 +3613,7 @@ class HistogramDisplayDialog(QDialog):
         """
         dt = cfg.get('data_type_display', 'Counts')
         log_x = cfg.get('log_x', False)
-        bin_width = cfg.get('bin_width', 20)
+        bin_width = shown_setting(cfg, 'bin_width', 20)
         bin_mode = cfg.get('bin_mode', 'geometric')
         per_ml = _per_ml_active(cfg, self.node.input_data)
         cuts = _get_broken_cuts(cfg)
@@ -3700,7 +3713,7 @@ class HistogramDisplayDialog(QDialog):
             if cfg.get('log_y', False):
                 pi.getAxis('left').setLogMode(True)
             if not cfg.get('auto_x', True):
-                xn, xx = cfg.get('x_min', 0), cfg.get('x_max', 1000)
+                xn, xx = shown_setting(cfg, 'x_min', 0), shown_setting(cfg, 'x_max', 1000)
                 if cfg.get('log_x', False) and xn > 0 and xx > 0:
                     xn, xx = float(np.log10(xn)), float(np.log10(xx))
                 pi.setXRange(xn, xx, padding=0)
@@ -4319,6 +4332,7 @@ class HistogramPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         self.input_data = input_data
         self.configuration_changed.emit()
 
@@ -5054,7 +5068,7 @@ def _compute_hist_bar_data(values, cfg, bin_edges=None, y_scale=1.0):
         True.  All arrays are empty when edges cannot be computed.
     """
     if bin_edges is None:
-        bw = cfg.get('bin_width', 20)
+        bw = shown_setting(cfg, 'bin_width', 20)
         lx = cfg.get('log_x', False)
         bm = cfg.get('bin_mode', 'geometric')
         bin_edges = _compute_bin_edges(values, bw, lx, bin_mode=bm)
@@ -5093,7 +5107,7 @@ def _draw_histogram_bars(plot_item, values, cfg, color_hex, bin_edges=None,
             persists to ``element_colors`` like the Plot Settings dialog.
     """
     if bin_edges is None:
-        bin_width = cfg.get('bin_width', 20)
+        bin_width = shown_setting(cfg, 'bin_width', 20)
         log_x = cfg.get('log_x', False)
         bin_mode = cfg.get('bin_mode', 'geometric')
         bin_edges = _compute_bin_edges(values, bin_width, log_x, bin_mode=bin_mode)
@@ -5282,7 +5296,7 @@ def _add_stats_text(plot_item, plot_data, cfg):
 
     if lines:
         ti = pg.TextItem(
-            '\n'.join(lines), anchor=(0, 1),
+            units.relabel('\n'.join(lines)), anchor=(0, 1),
             border=pg.mkPen(color='#CBD5E1', width=1),
             fill=pg.mkBrush(255, 255, 255, 220),
             color='#374151')
@@ -5325,7 +5339,7 @@ def _draw_single_histogram(
     dt = cfg.get('data_type_display', 'Counts')
     log_x = cfg.get('log_x', False)
     log_y = cfg.get('log_y', False)
-    bin_width = cfg.get('bin_width', 20)
+    bin_width = shown_setting(cfg, 'bin_width', 20)
     bin_mode = cfg.get('bin_mode', 'geometric')
     show_vals = cfg.get('show_values', False)
     hidden = set(hidden_elements or set())
@@ -5414,7 +5428,7 @@ def _draw_single_histogram(
         plot_item.getAxis('left').setLogMode(True)
 
     if not cfg.get('auto_x', True):
-        xn, xx = cfg.get('x_min', 0), cfg.get('x_max', 1000)
+        xn, xx = shown_setting(cfg, 'x_min', 0), shown_setting(cfg, 'x_max', 1000)
         if cfg.get('log_x', False) and xn > 0 and xx > 0:
             xn, xx = float(np.log10(xn)), float(np.log10(xx))
         plot_item.setXRange(xn, xx, padding=0)
@@ -6417,8 +6431,10 @@ class ElementBarChartDisplayDialog(QDialog):
                 mode = cfg.get('display_mode', BAR_DISPLAY_MODES[0])
                 if mode == 'Individual Subplots':
                     self._draw_subplots(plot_data, cfg)
+                    equalize_panels(self.plot_widget, fit_y=cfg.get('auto_y', True))
                 elif mode == 'Side by Side Subplots':
                     self._draw_side_by_side(plot_data, cfg)
+                    equalize_panels(self.plot_widget, fit_y=cfg.get('auto_y', True))
                 elif mode == 'Stacked Bars':
                     self._draw_stacked(plot_data, cfg)
                 elif mode == 'By Sample (Element Colors)':
@@ -6987,6 +7003,7 @@ class ElementBarChartPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         self.input_data = input_data
         self.configuration_changed.emit()
 

@@ -41,6 +41,7 @@ from results.shared_plot_utils import (
     get_display_name, download_matplotlib_figure,
     pick_color_hex,
 )
+from utils.unit import units
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_triangle")
 
@@ -596,7 +597,7 @@ class TernarySettingsDialog(QDialog):
 
             self.tribin_color_data_type_combo = QComboBox()
             for lbl, key in COLOR_ISOTOPE_DATA_TYPE_OPTIONS:
-                self.tribin_color_data_type_combo.addItem(lbl, key)
+                self.tribin_color_data_type_combo.addItem(units.relabel(lbl), key)
             _cur_hcdt = self._cfg.get('tribin_color_data_type', 'counts')
             _hcdti = self.tribin_color_data_type_combo.findData(_cur_hcdt)
             self.tribin_color_data_type_combo.setCurrentIndex(max(0, _hcdti))
@@ -627,7 +628,7 @@ class TernarySettingsDialog(QDialog):
             pqfl.setContentsMargins(0, 0, 0, 0)
             self.color_particle_quantity_combo = QComboBox()
             for lbl, key in COLOR_PARTICLE_QUANTITY_OPTIONS:
-                self.color_particle_quantity_combo.addItem(lbl, key)
+                self.color_particle_quantity_combo.addItem(units.relabel(lbl), key)
             _cur_pq = self._cfg.get('color_particle_quantity', 'total_counts')
             _pqi = self.color_particle_quantity_combo.findData(_cur_pq)
             self.color_particle_quantity_combo.setCurrentIndex(max(0, _pqi))
@@ -646,7 +647,7 @@ class TernarySettingsDialog(QDialog):
             isfl.addRow("Isotope:", self.color_isotope_combo)
             self.color_isotope_data_type_combo = QComboBox()
             for lbl, key in COLOR_ISOTOPE_DATA_TYPE_OPTIONS:
-                self.color_isotope_data_type_combo.addItem(lbl, key)
+                self.color_isotope_data_type_combo.addItem(units.relabel(lbl), key)
             _cur_idt = self._cfg.get('color_isotope_data_type', 'counts')
             _idti = self.color_isotope_data_type_combo.findData(_cur_idt)
             self.color_isotope_data_type_combo.setCurrentIndex(max(0, _idti))
@@ -2134,7 +2135,7 @@ class TriangleDisplayDialog(QDialog):
                     # Clamp inter-subplot gaps — tight_layout is over-generous
                     # with ternary axis label room
                     if cfg.get('display_mode', '') == 'Individual Subplots':
-                        self.figure.subplots_adjust(hspace=0.15, wspace=0.08)
+                        self.figure.subplots_adjust(hspace=0.5, wspace=0.08)
                     self._last_layout_key = layout_key
                 if pending is not None:
                     self._pending_shared_cbar = None
@@ -3200,6 +3201,7 @@ class TrianglePlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         # Classifier support is NOT shipped for this node type (see
         # classifier_view.CLASSIFIER_WIP_NODE_TYPES). Undo the
         # classifier's destructive composition collapse and its

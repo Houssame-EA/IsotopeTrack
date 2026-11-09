@@ -266,6 +266,39 @@ class InputMethodCalibration(QMainWindow):
             else:
                 self._set_preview(f"{msg}", "error")
 
+    def export_project_state(self):
+        """Return the typed values stored inside a project file.
+
+        Returns:
+            dict: Field texts and unit selections.
+        """
+        return {
+            'initial_weight': self.initial_weight.text(),
+            'final_weight': self.final_weight.text(),
+            'waste_weight': self.waste_weight.text(),
+            'analysis_time': self.analysis_time.text(),
+            'weight_unit': self.weight_unit.currentText(),
+            'time_unit': self.time_unit.currentText(),
+            'direct_rate': self.direct_rate.text(),
+        }
+
+    def restore_project_state(self, state):
+        """Put back the values saved in a project file.
+
+        Args:
+            state (dict): State from ``export_project_state``.
+        """
+        for combo, key in ((self.weight_unit, 'weight_unit'), (self.time_unit, 'time_unit')):
+            idx = combo.findText(state.get(key) or '')
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+        for field, key in ((self.initial_weight, 'initial_weight'),
+                           (self.final_weight, 'final_weight'),
+                           (self.waste_weight, 'waste_weight'),
+                           (self.analysis_time, 'analysis_time'),
+                           (self.direct_rate, 'direct_rate')):
+            field.setText(state.get(key) or '')
+
     def _calculate(self):
         """Compute the transport rate, emit the result, and show a detail dialog."""
         try:

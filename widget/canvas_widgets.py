@@ -65,7 +65,9 @@ from tools.particle_classifier_node import (
 import qtawesome as qta
 
 from tools.theme import theme as _app_theme
+from tools import window_glass
 from widget import canvas_layout as _layout
+from utils.unit import units
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.widget.canvas_widgets")
 
@@ -1080,21 +1082,47 @@ def _dialog_base_style():
     """
 
 
-def _canvas_chrome_style():
+def _canvas_chrome_style(glass=False):
     """Stylesheet for the canvas dialog chrome (header, palette, statusbar).
     The canvas itself (nodes/links/grid) stays always-dark like Figma.
+
+    Args:
+        glass (bool): The window has the frosted backdrop: the window is clear,
+            the node palette column is a translucent tint and the main column
+            stays opaque.
     """
     p = _app_theme.palette
+    if glass:
+        from tools.theme import glass_rgba
+        dialog_bg = "transparent"
+        palette_bg = glass_rgba(p, p.bg_secondary)
+    else:
+        dialog_bg = p.bg_primary
+        palette_bg = p.bg_secondary
     return f"""
     QDialog {{
         background: {p.bg_primary};
+    }}
+    QDialog#canvasResultsDialog {{
+        background: {dialog_bg};
+    }}
+    QWidget#chromeMain {{
+        background: {p.bg_primary};
+    }}
+    QSplitter#canvasSplitter::handle {{
+        background: {p.border};
+        margin: 0 2px;
+    }}
+    QSplitter#canvasSplitter::handle:hover {{
+        background: {p.accent};
+        margin: 0 1px;
     }}
     QFrame#chromeHeader {{
         background: {p.bg_secondary};
         border-bottom: 1px solid {p.border};
     }}
     QFrame#chromePalette {{
-        background: {p.bg_secondary};
+        background: {palette_bg};
         border-right: 1px solid {p.border};
     }}
     QFrame#chromeStatus {{
@@ -4430,12 +4458,33 @@ class DraggableNodeButton(QPushButton):
     def __init__(self, text, node_type, icon_name=None, color=None):
         super().__init__(text)
         self.node_type = node_type
+        self._full_text = text
         self._icon_name = icon_name
         self._color = color or DS.ACCENT
         self.setMinimumHeight(34)
+        self.setMinimumWidth(40)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.setCursor(QCursor(Qt.OpenHandCursor))
+        self.setToolTip(text)
         self._refresh_style()
         _app_theme.themeChanged.connect(lambda _: self._refresh_style())
+
+    def natural_width(self):
+        """Width the button needs to show its whole name, icon and padding."""
+        shown = self.text()
+        self.setText(self._full_text)
+        width = super().sizeHint().width()
+        self.setText(shown)
+        return width
+
+    def resizeEvent(self, event):
+        """Shorten the name with an ellipsis when the palette is too narrow for it."""
+        super().resizeEvent(event)
+        icon = self.iconSize().width() + 8 if self._icon_name else 0
+        room = max(0, self.width() - icon - 26)
+        text = self.fontMetrics().elidedText(self._full_text, Qt.ElideRight, room)
+        if text != self.text():
+            self.setText(text)
 
     def _refresh_style(self):
         p = _app_theme.palette
@@ -4530,6 +4579,100 @@ class _CollapsibleGroup(QWidget):
         self._btn.setText(f"  {arrow}  {self._title}")
 
 
+class _PaletteGrip(QWidget):
+    """Thin handle on the right edge of the canvas node list; drag it to resize."""
+
+    def __init__(self, dialog):
+        super().__init__()
+        self._dialog = dialog
+        self._start_x = None
+        self._start_w = 0
+        self._hover = False
+        self.setFixedWidth(6)
+        self.setCursor(Qt.SizeHorCursor)
+        self.setToolTip("Drag to resize the node list")
+
+    def enterEvent(self, event):
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        if not (self._hover or self._start_x is not None):
+            return
+        painter = QPainter(self)
+        painter.fillRect(QRect(2, 0, 2, self.height()), QColor(_app_theme.palette.accent))
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._start_x = event.globalPosition().x()
+            self._start_w = self._dialog._palette_frame.width()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._start_x is not None:
+            delta = event.globalPosition().x() - self._start_x
+            target = self._start_w + delta
+            if target < self._dialog._PALETTE_MIN - self._dialog._PALETTE_CLOSE_PULL:
+                self._start_x = None
+                self._dialog._save_palette_width()
+                self._dialog._toggle_palette()
+            else:
+                self._dialog._set_palette_width(target)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if self._start_x is not None:
+            self._start_x = None
+            self._dialog._save_palette_width()
+            self.update()
+            event.accept()
+
+
+def _palette_groups():
+    """Node list shown in the palette and in the canvas right-click menu.
+
+    Returns:
+        list[tuple[str, list[tuple[str, str, str, str]]]]: Group title and its
+        ``(label, node type, icon, colour)`` entries.
+    """
+    return [
+        ("DATA PROCESSING", [
+            ("Single Sample",    "sample_selector",          'fa6s.flask',           DS.INDIGO),
+            ("Multiple Sample",  "multiple_sample_selector", 'fa6s.flask-vial',      DS.PURPLE),
+            ("Batch Windows",    "batch_sample_selector",    'fa6s.window-restore',  DS.TEAL),
+            ("Particle Filter",  "particle_filter",          'fa6s.filter',          DS.TEAL),
+            ("Particle Classifier", "particle_classifier",   'fa6s.tags',            DS.INDIGO),
+        ]),
+        ("VISUALIZATION", [
+            ("Histogram",         "histogram_plot",                'fa6s.chart-column',       DS.ORANGE),
+            ("Element Bar Chart", "element_bar_chart_plot",        'fa6s.chart-bar',          DS.ERROR),
+            ("Box Plot",          "box_plot",                      'fa6s.chart-simple',       DS.PURPLE),
+            ("Correlation",       "correlation_plot",              'fa6s.chart-line',         DS.PINK),
+            ("Pie Chart",         "pie_chart_plot",                'fa6s.chart-pie',          DS.TEAL),
+            ("Composition",       "element_composition_plot",      'fa6s.circle-half-stroke', DS.CYAN),
+            ("Heatmap",           "heatmap_plot",                  'fa6s.fire',               DS.WARNING),
+            ("Molar Ratio",       "molar_ratio_plot",              'fa6s.divide',             DS.INDIGO),
+            ("Isotopic Ratio",    "isotopic_ratio_plot",           'fa6s.atom',               DS.PURPLE),
+            ("Ternary Plot",      "triangle_plot",                 'fa6s.play',               DS.SUCCESS),
+            ("Single / Multiple", "single_multiple_element_plot",  'fa6s.layer-group',        DS.ACCENT),
+            ("Clustering",        "clustering_plot",               'fa6s.circle-nodes',       DS.CYAN),
+            ("Corr. Matrix",      "correlation_matrix",            'fa6s.table-cells',        DS.PINK),
+            ("Concentration",     "concentration_comparison",      'fa6s.arrows-left-right',  DS.PURPLE),
+            ("Network",           "network_diagram",               'fa6s.diagram-project',    DS.TEAL),
+            ("Figure Builder",    "figure_builder",                'fa6s.pen-ruler',          DS.INDIGO),
+        ]),
+        ("AI & ANALYTICS", [
+            ("AI Data Assistant", "ai_assistant", 'fa6s.wand-magic-sparkles', DS.PINK),
+        ]),
+    ]
+
+
 class NodePalette(QWidget):
 
     def __init__(self, parent_window=None):
@@ -4565,50 +4708,13 @@ class NodePalette(QWidget):
         cl.setSpacing(4)
 
         # ── Data Processing ────────────────────────────────────────────────
-        dg = _CollapsibleGroup("DATA PROCESSING")
-        for txt, ntype, icon, color in [
-            ("Single Sample",    "sample_selector",          'fa6s.flask',           DS.INDIGO),
-            ("Multiple Sample",  "multiple_sample_selector", 'fa6s.flask-vial',          DS.PURPLE),
-            ("Batch Windows",    "batch_sample_selector",    'fa6s.window-restore',  DS.TEAL),
-            ("Particle Filter",  "particle_filter",          'fa6s.filter',          DS.TEAL),
-            ("Particle Classifier", "particle_classifier",   'fa6s.tags',            DS.INDIGO),
-        ]:
-            b = DraggableNodeButton(txt, ntype, icon, color)
-            dg.addWidget(b)
-            self._all_buttons.append((b, txt))
-        cl.addWidget(dg)
-
-        # ── Visualization ──────────────────────────────────────────────────
-        vg = _CollapsibleGroup("VISUALIZATION")
-        for txt, ntype, icon, color in [
-            ("Histogram",         "histogram_plot",                'fa6s.chart-column',       DS.ORANGE),
-            ("Element Bar Chart", "element_bar_chart_plot",        'fa6s.chart-bar',          DS.ERROR),
-            ("Box Plot",          "box_plot",                      'fa6s.chart-simple',       DS.PURPLE),
-            ("Correlation",       "correlation_plot",              'fa6s.chart-line',         DS.PINK),
-            ("Pie Chart",         "pie_chart_plot",                'fa6s.chart-pie',          DS.TEAL),
-            ("Composition",       "element_composition_plot",      'fa6s.circle-half-stroke', DS.CYAN),
-            ("Heatmap",           "heatmap_plot",                  'fa6s.fire',               DS.WARNING),
-            ("Molar Ratio",       "molar_ratio_plot",              'fa6s.divide',             DS.INDIGO),
-            ("Isotopic Ratio",    "isotopic_ratio_plot",           'fa6s.atom',               DS.PURPLE),
-            ("Ternary Plot",      "triangle_plot",                 'fa6s.play',               DS.SUCCESS),
-            ("Single / Multiple", "single_multiple_element_plot",  'fa6s.layer-group',        DS.ACCENT),
-            ("Clustering",        "clustering_plot",               'fa6s.circle-nodes',       DS.CYAN),
-            ("Corr. Matrix",      "correlation_matrix",            'fa6s.table-cells',        DS.PINK),
-            ("Concentration",     "concentration_comparison",      'fa6s.arrows-left-right',  DS.PURPLE),
-            ("Network",           "network_diagram",               'fa6s.diagram-project',    DS.TEAL),
-            ("Figure Builder",    "figure_builder",                'fa6s.pen-ruler',          DS.INDIGO),
-        ]:
-            b = DraggableNodeButton(txt, ntype, icon, color)
-            vg.addWidget(b)
-            self._all_buttons.append((b, txt))
-        cl.addWidget(vg)
-
-        ag = _CollapsibleGroup("AI & ANALYTICS")
-        b = DraggableNodeButton("AI Data Assistant", "ai_assistant",
-                                'fa6s.wand-magic-sparkles', DS.PINK)
-        ag.addWidget(b)
-        self._all_buttons.append((b, "AI Data Assistant"))
-        cl.addWidget(ag)
+        for title, entries in _palette_groups():
+            group = _CollapsibleGroup(title)
+            for txt, ntype, icon, color in entries:
+                b = DraggableNodeButton(txt, ntype, icon, color)
+                group.addWidget(b)
+                self._all_buttons.append((b, txt))
+            cl.addWidget(group)
 
         cl.addStretch()
         scroll.setWidget(content)
@@ -4620,18 +4726,24 @@ class NodePalette(QWidget):
         root.addWidget(hint)
         self._apply_palette_theme()
 
+    def set_glass(self, on):
+        """Paint the palette transparent so the frosted column behind it shows."""
+        self._glass = bool(on)
+        self._apply_palette_theme()
+
     def _apply_palette_theme(self):
         p = _app_theme.palette
-        self.setStyleSheet(f"background: {p.bg_secondary};")
+        glass = getattr(self, '_glass', False)
+        self.setStyleSheet("background: transparent;" if glass else f"background: {p.bg_secondary};")
         if hasattr(self, 'search'):
             self.search.setStyleSheet(f"""
                 QLineEdit {{
                     background: {p.bg_tertiary};
                     color: {p.text_primary};
                     border: 1px solid {p.border};
-                    border-radius: 8px;
-                    padding: 8px 12px;
-                    margin: 10px 10px 6px 10px;
+                    border-radius: 7px;
+                    padding: 4px 10px;
+                    margin: 6px 16px 6px 10px;
                     font-size: 12px;
                 }}
                 QLineEdit:focus {{ border: 2px solid {p.accent}; }}
@@ -4640,7 +4752,7 @@ class NodePalette(QWidget):
             self._scroll_area.setStyleSheet(f"""
                 QScrollArea {{ border: none; background: transparent; }}
                 QScrollBar:vertical {{
-                    background: {p.bg_secondary}; width: 6px; border-radius: 3px;
+                    background: transparent; width: 6px; border-radius: 3px;
                 }}
                 QScrollBar::handle:vertical {{
                     background: {p.border}; border-radius: 3px; min-height: 20px;
@@ -4649,11 +4761,17 @@ class NodePalette(QWidget):
                 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
             """)
         if hasattr(self, '_hint_label'):
+            hint_bg = "transparent" if glass else p.bg_primary
             self._hint_label.setStyleSheet(
                 f"color: {p.text_muted}; font-size: 10px;"
-                f" padding: 8px 12px; background: {p.bg_primary};"
+                f" padding: 8px 12px; background: {hint_bg};"
                 f" border-top: 1px solid {p.border};"
             )
+    def required_width(self):
+        """Palette width at which every node name and group title is fully visible."""
+        widest = max([b.natural_width() for b, _ in self._all_buttons] or [160])
+        return widest + 20 + 10
+
     def _filter(self, text):
         q = text.lower()
         for btn, name in self._all_buttons:
@@ -4724,6 +4842,7 @@ class EnhancedCanvasScene(QGraphicsScene):
         # When True, add_link's per-link data push is skipped; a single
         # flush_data_flow() pass replaces it (see project load).
         self._suppress_data_flow = False
+        units.unitsChanged.connect(self._on_units_changed)
 
         self.setSceneRect(self.BASE_RECT)
         self.selectionChanged.connect(self._on_selection)
@@ -5380,6 +5499,16 @@ class EnhancedCanvasScene(QGraphicsScene):
             _itk_log.exception("Handled exception in _trigger_data_flow")
             _itk_log.error(f"Data flow error: {e}")
 
+    def _on_units_changed(self, *_):
+        """Send every node's data again so each figure redraws in the new units."""
+        try:
+            self.flush_data_flow()
+        except RuntimeError:
+            try:
+                units.unitsChanged.disconnect(self._on_units_changed)
+            except (RuntimeError, TypeError):
+                pass
+
     def flush_data_flow(self):
         """Push each node's output to its sinks exactly once, sources first.
 
@@ -5479,6 +5608,24 @@ class EnhancedCanvasScene(QGraphicsScene):
             for n, orig in originals.items():
                 n.get_output_data = orig
 
+    def add_node_of_type(self, ntype, scene_pos):
+        """Create a node of ``ntype`` at ``scene_pos``, snapped to the grid.
+
+        Same result as dragging it in from the palette.
+
+        Args:
+            ntype (str): Node type key, as used by the palette.
+            scene_pos (QPointF): Where to place it.
+        """
+        factory = _NODE_FACTORIES.get(ntype)
+        if not factory:
+            return
+        gs = DS.GRID_SIZE
+        snapped = QPointF(round(scene_pos.x() / gs) * gs, round(scene_pos.y() / gs) * gs)
+        self.add_node(factory(self.parent_window), snapped)
+        if ntype == "particle_classifier":
+            QTimer.singleShot(0, lambda: maybe_show_classifier_onboarding(self.parent_window))
+
     def contextMenuEvent(self, event):
         """Right-click on empty canvas space → canvas context menu."""
         items = self.items(event.scenePos())
@@ -5487,6 +5634,21 @@ class EnhancedCanvasScene(QGraphicsScene):
             return
         menu = QMenu()
         menu.setStyleSheet(NodeItem._ctx_menu_style())
+        add_actions = {}
+        group_icons = {
+            "DATA PROCESSING": ('fa6s.flask', DS.INDIGO),
+            "VISUALIZATION": ('fa6s.chart-column', DS.ORANGE),
+            "AI & ANALYTICS": ('fa6s.wand-magic-sparkles', DS.PINK),
+        }
+        for title, entries in _palette_groups():
+            label = title.title().replace('Ai ', 'AI ').replace('&', '&&')
+            icon_name, icon_color = group_icons.get(title, ('fa6s.plus', DS.ACCENT))
+            sub = menu.addMenu(qta.icon(icon_name, color=icon_color), f"  Add {label}")
+            sub.setStyleSheet(NodeItem._ctx_menu_style())
+            for txt, ntype, icon, color in entries:
+                act = sub.addAction(qta.icon(icon, color=color), f"  {txt}")
+                add_actions[act] = ntype
+        menu.addSeparator()
         note_act = menu.addAction(
             qta.icon('fa6s.note-sticky', color=DS.WARNING), "  Add Note")
         arrange_act = menu.addAction(
@@ -5497,7 +5659,9 @@ class EnhancedCanvasScene(QGraphicsScene):
             qta.icon('fa6s.rotate-left', color=DS.ACCENT), "  Undo  (Ctrl+Z)")
         undo_act.setEnabled(bool(self._undo_stack))
         result = menu.exec(event.screenPos())
-        if result == note_act:
+        if result in add_actions:
+            self.add_node_of_type(add_actions[result], event.scenePos())
+        elif result == note_act:
             note = StickyNoteItem()
             note.setPos(event.scenePos())
             self.addItem(note)
@@ -6017,9 +6181,12 @@ class CanvasResultsDialog(QDialog):
         self.parent = parent
         self.setWindowTitle("IsotopeTrack — Workflow Builder")
         self.setMinimumSize(1300, 780)
+        self.setObjectName("canvasResultsDialog")
+        window_glass.attach(self, self._on_glass_active)
         self._apply_chrome_theme()
         _app_theme.themeChanged.connect(lambda _: self._apply_chrome_theme())
         self._build()
+        self._apply_chrome_theme()
         ual = _ual()
         if ual:
             ual.log_action('NEW_WINDOW', 'Opened Workflow Builder canvas',
@@ -6033,7 +6200,7 @@ class CanvasResultsDialog(QDialog):
         that was active when the window opened.
         """
         try:
-            self.setStyleSheet(_canvas_chrome_style())
+            self.setStyleSheet(_canvas_chrome_style(getattr(self, '_glass_active', False)))
             for btn in getattr(self, '_tool_buttons', []):
                 btn.setStyleSheet(self._tool_btn_style())
             for btn, icon in getattr(self, '_zoom_icons', []):
@@ -6042,6 +6209,13 @@ class CanvasResultsDialog(QDialog):
             if arr is not None:
                 arr.setStyleSheet(self._tool_btn_style() + "QPushButton { font-size: 12px; padding: 0 10px; }")
                 arr.setIcon(qta.icon('fa6s.wand-magic-sparkles', color=_app_theme.palette.text_primary))
+            pbtn = getattr(self, '_palette_btn', None)
+            if pbtn is not None:
+                pbtn.setIcon(qta.icon('mdi6.dock-left', color=_app_theme.palette.text_primary))
+                pbtn.setStyleSheet(
+                    "QPushButton { border: none; border-radius: 6px; padding: 4px;"
+                    " background: transparent; }"
+                    f"QPushButton:hover {{ background: {_app_theme.palette.bg_hover}; }}")
             logo = getattr(self, '_logo', None)
             if logo is not None:
                 logo.setStyleSheet(self._logo_style())
@@ -6057,8 +6231,136 @@ class CanvasResultsDialog(QDialog):
                 f" font-size: 16px; font-weight: 700;"
                 f" font-family: '{DS.FONT_FAMILY}';")
 
-    def _build(self):                          
-        root = QVBoxLayout(self)
+    def _on_glass_active(self, inset):
+        """Frosted backdrop is on: let the palette column run up under the window buttons.
+
+        The node-list toggle moves into the title row, just right of the window buttons.
+        """
+        self._palette_top.setFixedHeight(inset)
+        self.palette.set_glass(True)
+        if inset:
+            size = self._palette_btn.width()
+            x, y = 78, max(0, (inset - size) // 2)
+            geo = window_glass.window_buttons_geometry(self)
+            if geo is not None:
+                x = int(round(geo[0] + 12))
+                y = max(0, int(round(geo[1] - size / 2)))
+            self._palette_btn.setParent(self)
+            self._palette_btn.move(x, y)
+            self._palette_btn.show()
+            self._palette_btn.raise_()
+        self._apply_chrome_theme()
+
+    _PALETTE_MIN = 150
+    _PALETTE_BREATHING = 24
+    _PALETTE_CLOSE_PULL = 40
+    _INSIGHTS_MAX = 640
+    _PALETTE_DEFAULT = 240
+    _PALETTE_KEY = "ui/canvas_palette_width"
+
+    def _palette_max_width(self):
+        """Widest useful node list: every name visible, nothing more."""
+        return max(self._PALETTE_MIN,
+                   self.palette.required_width() + self._palette_grip.width() + self._PALETTE_BREATHING)
+
+    def _set_palette_width(self, width):
+        """Resize the node list, kept between the minimum and the all-names-visible width."""
+        width = int(max(self._PALETTE_MIN, min(width, self._palette_max_width())))
+        self._palette_frame.setFixedWidth(width)
+        return width
+
+    def _restore_palette_width(self):
+        """Apply the width chosen last time, once the buttons know their size."""
+        from PySide6.QtCore import QSettings
+        try:
+            saved = int(QSettings("IsotopeTrack", "IsotopeTrack").value(
+                self._PALETTE_KEY, self._PALETTE_DEFAULT))
+        except (TypeError, ValueError):
+            saved = self._PALETTE_DEFAULT
+        self._set_palette_width(saved)
+
+    def _save_palette_width(self):
+        """Remember the node list width for the next time the canvas opens."""
+        from PySide6.QtCore import QSettings
+        QSettings("IsotopeTrack", "IsotopeTrack").setValue(
+            self._PALETTE_KEY, self._palette_frame.width())
+
+    def _on_insights_dragged(self, _pos, _index):
+        """Dragging the Insights edge past its minimum closes it, like its button."""
+        panel = self.insights_panel
+        if panel.isVisible() and self._insights_splitter.sizes()[-1] == 0:
+            self._insights_btn.click()
+
+    def _toggle_palette(self):
+        """Show or hide the node list; nodes stay reachable from the right-click menu."""
+        from PySide6.QtCore import QSettings
+        visible = not self._palette_frame.isVisible()
+        self._palette_frame.setVisible(visible)
+        self._palette_btn.raise_()
+        QSettings("IsotopeTrack", "IsotopeTrack").setValue("ui/canvas_palette_visible", visible)
+
+    def _restore_panels(self):
+        """Reopen the node list and Insights as they were left last time."""
+        from PySide6.QtCore import QSettings
+        settings = QSettings("IsotopeTrack", "IsotopeTrack")
+
+        def _flag(key, default):
+            return str(settings.value(key, default)).lower() not in ("false", "0")
+
+        self._restore_palette_width()
+        if not _flag("ui/canvas_palette_visible", True):
+            self._palette_frame.setVisible(False)
+        try:
+            width = int(settings.value("ui/canvas_insights_width", 0))
+        except (TypeError, ValueError):
+            width = 0
+        if width:
+            self._insights_prev_w = width
+        if _flag("ui/canvas_insights_visible", False) and not self.insights_panel.isVisible():
+            self._insights_btn.click()
+
+    def _save_insights_state(self):
+        """Remember whether Insights is open and how wide it is."""
+        from PySide6.QtCore import QSettings
+        settings = QSettings("IsotopeTrack", "IsotopeTrack")
+        panel = self.insights_panel
+        settings.setValue("ui/canvas_insights_visible", panel.isVisible())
+        if panel.isVisible():
+            width = self._insights_splitter.sizes()[-1]
+            if width >= panel.MIN_WIDTH:
+                settings.setValue("ui/canvas_insights_width", width)
+
+    def _build(self):
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        pf = QFrame()
+        pf.setObjectName("chromePalette")
+        self._palette_frame = pf
+        frame_row = QHBoxLayout(pf)
+        frame_row.setContentsMargins(0, 0, 0, 0)
+        frame_row.setSpacing(0)
+        column = QWidget()
+        pl = QVBoxLayout(column)
+        pl.setContentsMargins(0, 0, 0, 0)
+        pl.setSpacing(0)
+        self._palette_top = QWidget()
+        self._palette_top.setFixedHeight(0)
+        pl.addWidget(self._palette_top)
+        self.palette = NodePalette(self.parent)
+        pl.addWidget(self.palette)
+        frame_row.addWidget(column, 1)
+        self._palette_grip = _PaletteGrip(self)
+        frame_row.addWidget(self._palette_grip)
+        outer.addWidget(pf)
+        QTimer.singleShot(0, self._restore_panels)
+        self._set_palette_width(self._PALETTE_DEFAULT)
+
+        main = QWidget()
+        main.setObjectName("chromeMain")
+        outer.addWidget(main, 1)
+        root = QVBoxLayout(main)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
     
@@ -6069,10 +6371,13 @@ class CanvasResultsDialog(QDialog):
         hl = QHBoxLayout(hdr)
         hl.setContentsMargins(16, 0, 16, 0)
     
-        logo = QLabel("◆  Workflow Builder")
-        self._logo = logo
-        logo.setStyleSheet(self._logo_style())
-        hl.addWidget(logo)
+        self._palette_btn = QPushButton()
+        self._palette_btn.setObjectName("paletteToggle")
+        self._palette_btn.setFixedSize(28, 28)
+        self._palette_btn.setIconSize(QSize(20, 20))
+        self._palette_btn.setToolTip("Show or hide the node list")
+        self._palette_btn.clicked.connect(self._toggle_palette)
+        hl.addWidget(self._palette_btn)
         hl.addStretch()
     
         def _zoom_out():
@@ -6191,29 +6496,30 @@ class CanvasResultsDialog(QDialog):
         # ── body splitter ──────────────────────────────────────────────────
         splitter = QSplitter(Qt.Horizontal)
         splitter.setHandleWidth(1)
-    
-        pf = QFrame()
-        pf.setObjectName("chromePalette")
-        pf.setFixedWidth(240)
-        pl = QVBoxLayout(pf)
-        pl.setContentsMargins(0, 0, 0, 0)
-        self.palette = NodePalette(self.parent)
-        pl.addWidget(self.palette)
-    
+
         self.canvas = EnhancedCanvasView(self.parent)
         self.canvas.zoom_changed.connect(
             lambda z: self.zoom_label.setText(f"{int(z * 100)}%"))
     
-        splitter.addWidget(pf)
         splitter.addWidget(self.canvas)
-    
+
         self.insights_panel = integrate_insights_panel(self, splitter)
-        splitter.setSizes([240, 860, 0])  
+        splitter.setSizes([860, 0])
     
         real_btn = make_insights_toggle_button(self, splitter)
         hl.replaceWidget(self._insights_placeholder, real_btn)
         self._insights_placeholder.deleteLater()
         self._insights_btn = real_btn
+
+        splitter.setObjectName("canvasSplitter")
+        splitter.setHandleWidth(6)
+        splitter.setCollapsible(splitter.indexOf(self.canvas), False)
+        splitter.setCollapsible(splitter.indexOf(self.insights_panel), True)
+        self.insights_panel.setMaximumWidth(self._INSIGHTS_MAX)
+        self._insights_splitter = splitter
+        splitter.splitterMoved.connect(self._on_insights_dragged)
+        splitter.splitterMoved.connect(lambda *_: self._save_insights_state())
+        real_btn.clicked.connect(lambda *_: QTimer.singleShot(0, self._save_insights_state))
         # ──────────────────────────────────────────────────────────────────
     
         root.addWidget(splitter)

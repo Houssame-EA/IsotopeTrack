@@ -30,6 +30,8 @@ Stand-in header item used when the real one is mis-wrapped.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `apply_pyqtgraph_patches` | `()` | Install all pyqtgraph compatibility patches. Safe to call more than once. |
+| `thin_log_labels` | `(values, strings)` | Keep only the 1, 2 and 5 × 10ⁿ labels when more than three share an axis level. |
+| `_patch_log_axes` | `()` | Readable log axes in every pyqtgraph plot of the app. |
 | `_export_dialog_stylesheet` | `()` | Return the export-dialog stylesheet built from the active theme palette. |
 | `_install_theme_binding` | `(form)` | Apply the themed stylesheet to *form* and keep it in sync with theme changes. |
 | `_patch_file_dialog` | `()` | Theme pyqtgraph's non-native file save dialogs so they follow the app palette. |

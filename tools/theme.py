@@ -735,10 +735,61 @@ def main_window_qss(p: Palette) -> str:
     """
         
 
-def sidebar_qss(p: Palette) -> str:
+def _rgba(hex_color: str, alpha: float) -> str:
+    """Return ``hex_color`` as a QSS ``rgba()`` string with the given opacity."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r}, {g}, {b}, {int(round(alpha * 255))})"
+
+
+_GLASS_ALPHA = {
+    ("darwin", "light"): (0.70, 0.48),
+    ("darwin", "dark"): (0.70, 0.48),
+    ("win32", "light"): (0.70, 0.48),
+    ("win32", "dark"): (0.70, 0.48),
+}
+
+
+def _glass_alpha(p: Palette):
+    """Return (sidebar, panel) opacities for the frosted sidebar on this OS."""
+    import sys
+    key = ("darwin" if sys.platform == "darwin" else "win32", p.name)
+    return _GLASS_ALPHA.get(key, (0.70, 0.48))
+
+
+def glass_rgba(p: Palette, color: str, panel: bool = False) -> str:
+    """Return ``color`` at the frosted-sidebar opacity used by every glass window.
+
+    Args:
+        p (Palette): Active palette (selects the light/dark opacity).
+        color (str): Hex colour of the sidebar or panel.
+        panel (bool): Use the lighter opacity for panels inside a sidebar.
+    """
+    return _rgba(color, _glass_alpha(p)[1 if panel else 0])
+
+
+def glass_window_qss(p: Palette) -> str:
+    """Extra main-window rules used while the frosted backdrop is active.
+
+    The window and its central widget become transparent so the blur shows
+    through, and the whole sidebar column gets a semi-transparent tint.
+    """
+    tint = _rgba(p.bg_sidebar, _glass_alpha(p)[0])
+    return f"""
+        QMainWindow, QWidget#centralWidget {{
+            background-color: transparent;
+        }}
+        QWidget#sidebarContainer {{
+            background-color: {tint};
+        }}
+    """
+
+
+def sidebar_qss(p: Palette, glass: bool = False) -> str:
+    bg = "transparent" if glass else p.bg_sidebar
     return f"""
         QWidget {{
-            background-color: {p.bg_sidebar};
+            background-color: {bg};
             color: {p.text_on_sidebar};
         }}
         QWidget#sidebar {{
@@ -806,10 +857,11 @@ def sidebar_list_label_qss(p: Palette) -> str:
     """
 
 
-def calibration_panel_qss(p: Palette) -> str:
+def calibration_panel_qss(p: Palette, glass: bool = False) -> str:
+    bg = _rgba(p.bg_sidebar_alt, _glass_alpha(p)[1]) if glass else p.bg_sidebar_alt
     return f"""
         QTextEdit {{
-            background-color: {p.bg_sidebar_alt};
+            background-color: {bg};
             color: {p.text_on_sidebar};
             border: none;
             padding: 10px;
@@ -817,13 +869,16 @@ def calibration_panel_qss(p: Palette) -> str:
     """
 
 
-def sample_table_qss(p: Palette) -> str:
+def sample_table_qss(p: Palette, glass: bool = False) -> str:
+    bg = _rgba(p.bg_sidebar_alt, _glass_alpha(p)[1]) if glass else p.bg_sidebar_alt
+    head = "transparent" if glass else p.bg_sidebar
+    grid = _rgba(p.text_on_sidebar, 0.12) if glass else p.bg_sidebar
     return f"""
         QTableWidget {{
-            background-color: {p.bg_sidebar_alt};
+            background-color: {bg};
             color: {p.text_on_sidebar};
             border: none;
-            gridline-color: {p.bg_sidebar};
+            gridline-color: {grid};
         }}
         QTableWidget::item {{
             padding: 5px;
@@ -833,13 +888,13 @@ def sample_table_qss(p: Palette) -> str:
             color: {p.text_inverse};
         }}
         QHeaderView::section {{
-            background-color: {p.bg_sidebar};
+            background-color: {head};
             color: {p.text_on_sidebar};
             padding: 5px;
             border: none;
         }}
         QTableCornerButton::section {{
-            background-color: {p.bg_sidebar};
+            background-color: {head};
             border: none;
         }}
     """
@@ -911,7 +966,8 @@ def theme_toggle_button_qss(p: Palette) -> str:
 def sidebar_toggle_button_qss(p: Palette) -> str:
     return f"""
         QPushButton {{
-            border-radius: 16px;
+            border: none;
+            border-radius: 6px;
             padding: 4px;
             margin: 0px;
             background-color: transparent;
@@ -1084,6 +1140,41 @@ def results_header_qss(p: Palette) -> str:
     """
 
 
+def results_tabs_qss(p: Palette) -> str:
+    """Underline tabs that switch between the Single Element and Multi-Element tables."""
+    return f"""
+        QWidget#resultsTabBar {{
+            background: transparent;
+            border: none;
+            border-bottom: 1px solid {p.border};
+            border-radius: 0px;
+        }}
+        QPushButton#resultsTab {{
+            background: transparent;
+            color: {p.text_secondary};
+            border: none;
+            border-bottom: 2px solid transparent;
+            border-radius: 0px;
+            padding: 8px 14px;
+            font-size: 13px;
+            font-weight: 600;
+        }}
+        QPushButton#resultsTab:hover {{
+            color: {p.text_primary};
+        }}
+        QPushButton#resultsTab:checked {{
+            color: {p.accent};
+            border-bottom: 2px solid {p.accent};
+        }}
+        QLabel#resultsInfo {{
+            color: {p.text_muted};
+            font-size: 12px;
+            background: transparent;
+            border: none;
+        }}
+    """
+
+
 def results_title_qss(p: Palette) -> str:
     return f"""
         QLabel {{
@@ -1211,7 +1302,7 @@ def results_table_qss(p: Palette) -> str:
     the Results Display section).
     """
     return f"""
-        QTableWidget {{
+        QTableWidget, QTableView {{
             gridline-color: {p.border};
             background-color: {p.bg_secondary};
             color: {p.text_primary};
@@ -1222,11 +1313,11 @@ def results_table_qss(p: Palette) -> str:
             selection-background-color: {p.accent};
             selection-color: {p.text_inverse};
         }}
-        QTableWidget::item {{
+        QTableWidget::item, QTableView::item {{
             padding: 4px;
             color: {p.text_primary};
         }}
-        QTableWidget::item:selected {{
+        QTableWidget::item:selected, QTableView::item:selected {{
             background-color: {p.accent};
             color: {p.text_inverse};
         }}

@@ -10,6 +10,7 @@
 |--------|-----------|-------------|
 | `__init__` | `(self, calibration_results, selected_methods, method_preferences=None,` | Initialize the calibration information dialog. |
 | `apply_theme` | `(self)` | Apply the currently active theme palette to this dialog. |
+| `_on_units_changed` | `(self, *_)` | Show the detection limits again in the newly chosen units. |
 | `closeEvent` | `(self, event)` |  |
 | `get_modern_stylesheet` | `(self)` | Stylesheet parameterized on the active theme palette. |
 | `_quality_row_color` | `(self, r_squared, method_name)` | Pick a row tint color for the ionic table based on R² + method. |
@@ -23,6 +24,7 @@
 | `create_transport_rate_tab` | `(self)` | Create transport rate calibration tab. |
 | `setup_transport_rate_table` | `(self)` |  |
 | `create_ionic_calibration_tab` | `(self)` | Create ionic calibration tab. |
+| `_ionic_headers` | `()` | Column titles of the ionic calibration table, in the chosen units. |
 | `setup_ionic_table` | `(self)` |  |
 | `create_bottom_buttons` | `(self, layout)` |  |
 | `populate_data` | `(self)` |  |
@@ -31,6 +33,7 @@
 | `_apply_ionic_row_tints` | `(self)` | Apply theme-aware row tints to the ionic calibration table. |
 | `_repaint_rows_for_theme` | `(self)` | Re-apply row tints after a theme change. |
 | `create_item` | `(self, value, editable=True)` |  |
+| `_in_units` | `(value, kind)` | *value* in the chosen unit of *kind*; missing or text values pass through. |
 | `create_scientific_item` | `(self, value)` |  |
 | `create_decimal_item` | `(self, value, decimals=2)` |  |
 | `create_quality_item` | `(self, r_squared)` |  |

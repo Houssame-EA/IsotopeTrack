@@ -10,11 +10,11 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
     QLineEdit, QWidget, QMenu, QScrollArea, QDialogButtonBox, QMessageBox,
-    QFileDialog, QTabWidget, QTableWidget, QTableWidgetItem,
-    QAbstractItemView,
+    QFileDialog, QTabWidget,
 )
 from PySide6.QtCore import Qt, Signal, QObject
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QBrush, QColor
+from widget.results_table_view import ResultsTableView
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import numpy as np
@@ -23,13 +23,15 @@ from collections import defaultdict
 
 from results.shared_plot_utils import copy_figure_to_clipboard
 from results.shared_plot_utils import (
-    make_font_properties, apply_font_to_matplotlib,
+    make_font_properties, apply_font_to_matplotlib, declutter_pie_labels,
     FontSettingsGroup, LegendGroup, ExportSettingsGroup,
     MplDraggableCanvas, get_display_name, download_matplotlib_figure, LABEL_MODES,
     format_combination_label, Renderer,
     pick_color_hex,
 )
 from widget.colors import default_colors, colorheatmap
+from utils.unit import units
+from widget.unit_combo import UnitComboBox
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_single_multiple")
 
@@ -84,7 +86,7 @@ def basis_unit(basis, per_ml=False):
         str: ``P``/``fg``/``fmol``, or their per-mL form when ``per_ml``.
     """
     plain, per_volume = QUANTITY_BASIS_UNITS[normalize_quantity_basis(basis)]
-    return per_volume if per_ml else plain
+    return units.relabel(per_volume if per_ml else plain)
 
 
 def format_quantity(value, basis):
@@ -545,7 +547,7 @@ class SingleMultipleElementHelper:
                     + [f'{pct:.1f}%', f'mNP ({ne} elem) {unit}'])
             return rows
 
-        quantity_columns = ['Particles', 'Mass (fg)', 'Moles (fmol)']
+        quantity_columns = ['Particles'] + [units.relabel(c) for c in ('Mass (fg)', 'Moles (fmol)')]
         rows = []
         if is_multi:
             for sn, sr in analysis_data.items():
@@ -767,7 +769,7 @@ class SingleMultipleSettingsDialog(QDialog):
 
             g2 = QGroupBox("Units & Dilution")
             f2 = QFormLayout(g2)
-            self.basis_combo = QComboBox(); self.basis_combo.addItems(QUANTITY_BASES)
+            self.basis_combo = UnitComboBox(); self.basis_combo.addItems(QUANTITY_BASES)
             self.basis_combo.setCurrentText(normalize_quantity_basis(
                 self._cfg.get('quantity_basis', 'Particle Count')))
             f2.addRow("Quantity Basis:", self.basis_combo)
@@ -1019,10 +1021,11 @@ class SingleMultipleElementDisplayDialog(QDialog):
         table_lay.setContentsMargins(0, 0, 0, 0)
         table_lay.setSpacing(4)
 
-        self.table = QTableWidget()
+        self.table = ResultsTableView()
         self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.set_row_brush(self._summary_row_brush)
+        self.table.setSortingEnabled(False)
         table_lay.addWidget(self.table)
 
         table_btn_row = QHBoxLayout()
@@ -1157,7 +1160,8 @@ class SingleMultipleElementDisplayDialog(QDialog):
         df = SingleMultipleElementHelper.statistics_table(
             ad, self._multi, cfg.get('use_particles_per_ml'),
             self.parent_window, cfg.get('dilution_factor', 1.0),
-            cfg.get('label_mode', 'Symbol'))
+            cfg.get('label_mode', 'Symbol'),
+            cfg.get('quantity_basis', 'Particle Count'))
         path, _ = QFileDialog.getSaveFileName(self, "Save Table", "statistics.csv", "CSV (*.csv);;All (*)")
         if path:
             try:
@@ -1204,7 +1208,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
                 self._update_stats(ad)
                 self._update_table(ad)
 
-            self.fig.tight_layout()
+            self.fig.tight_layout(rect=(0, 0, 1, 0.97))
             self.canvas.draw()
             self.canvas.snapshot_positions()
         except Exception as e:
@@ -1435,6 +1439,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
         fc = cfg.get('font_color', '#000000')
 
         anns: dict = {}
+        placed = []
         for wedge, text, combo_key in zip(wedges, texts, combo_keys):
             theta = np.radians((wedge.theta1 + wedge.theta2) / 2)
 
@@ -1443,15 +1448,17 @@ class SingleMultipleElementDisplayDialog(QDialog):
 
             if combo_key in saved:
                 lx, ly = saved[combo_key]
+                ha = 'center'
             else:
                 lx = label_d * (1.0 + exp_amt) * np.cos(theta)
                 ly = label_d * (1.0 + exp_amt) * np.sin(theta)
+                ha = 'left' if lx >= 0 else 'right'
 
             ann = ax.annotate(
                 text,
                 xy=(tip_x, tip_y),
                 xytext=(lx, ly),
-                ha='center', va='center',
+                ha=ha, va='center',
                 fontproperties=fp, color=fc,
                 arrowprops=dict(
                     arrowstyle='-',
@@ -1470,7 +1477,10 @@ class SingleMultipleElementDisplayDialog(QDialog):
             except AttributeError:
                 _itk_log.exception("Handled exception in _pie_one")
             anns[combo_key] = ann
+            if combo_key not in saved:
+                placed.append(ann)
 
+        declutter_pie_labels(ax, placed)
         if sp_key:
             self._anns[sp_key] = anns
 
@@ -1598,6 +1608,14 @@ class SingleMultipleElementDisplayDialog(QDialog):
             f"Single: {format_quantity(calc(sc), basis)}  |  "
             f"Multiple: {format_quantity(calc(mc), basis)}")
 
+    @staticmethod
+    def _summary_row_brush(row):
+        """Tint SUMMARY rows with the theme's soft accent colour."""
+        if row and str(row[0]) == 'SUMMARY':
+            from tools.theme import theme
+            return QBrush(QColor(theme.palette.accent_soft))
+        return None
+
     def _update_table(self, ad):
         try:
             cfg = self.node.config
@@ -1606,15 +1624,8 @@ class SingleMultipleElementDisplayDialog(QDialog):
                 self.parent_window, cfg.get('dilution_factor', 1.0),
                 cfg.get('label_mode', 'Symbol'),
                 cfg.get('quantity_basis', 'Particle Count'))
-            self.table.setRowCount(len(df))
-            self.table.setColumnCount(len(df.columns))
-            self.table.setHorizontalHeaderLabels(df.columns.tolist())
-            for i, row in df.iterrows():
-                for j, val in enumerate(row):
-                    item = QTableWidgetItem(str(val))
-                    if j == 0 and str(val) == 'SUMMARY':
-                        item.setBackground(QColor('#E6F3FF'))
-                    self.table.setItem(i, j, item)
+            rows = [[str(v) for v in r] for r in df.itertuples(index=False, name=None)]
+            self.table.set_table([str(c) for c in df.columns], rows)
             self.table.resizeColumnsToContents()
         except Exception as e:
             _itk_log.exception("Handled exception in _update_table")
@@ -1654,6 +1665,7 @@ class SingleMultipleElementPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         # Classifier support is NOT shipped for this node type (see
         # classifier_view.CLASSIFIER_WIP_NODE_TYPES). Undo the
         # classifier's destructive composition collapse and its

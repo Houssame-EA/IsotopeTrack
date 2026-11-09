@@ -13,6 +13,7 @@
 | `apply_theme` | `(self, *_)` | Re-apply the shared calibration stylesheet from the current palette. |
 | `_refresh_tool_icons` | `(self)` | Recolour the toolbar icons for the current theme. |
 | `_refresh_return_button` | `(self)` | Apply the theme's 'Back to Main' style and icon colour, if the |
+| `_refresh_remove_button` | `(self)` | Apply the theme's danger colours to the Remove Selected Samples button. |
 | `_refresh_plot_label_colors` | `(self)` | Swap the pyqtgraph axis label color to the current theme's |
 | `_refresh_results_table_colors` | `(self)` | When the theme changes, any existing background QBrush() values |
 | `_tool` | `(self, action, icon)` | A flat toolbar button driven by *action*, with a themed icon. |
@@ -71,6 +72,8 @@
 | `on_selection_confirmed` | `(self, selected_data)` | Handle confirmed selections from the periodic table. |
 | `on_isotope_selected` | `(self, element, mass, abundance)` | Handle individual isotope selections. |
 | `update_plot_isotope_combo` | `(self)` | Update the isotope combo box for the time plot. |
+| `export_project_state` | `(self)` | Return the window state stored inside a project file. |
+| `restore_project_state` | `(self, state, data)` | Restore the window from a session stored in a project file. |
 | `save_session` | `(self)` | Save session using the CSV handler. |
 | `load_session` | `(self)` | Load session from CSV format. |
 | `_go_prev_isotope` | `(self)` | Navigate to the previous isotope in the combo box. |
@@ -80,6 +83,8 @@
 | `update_sample_combo` | `(self)` | Update the sample combo box with folder names. |
 | `table_key_press_event` | `(self, event)` | Handle key press events for copy/paste operations. |
 | `show_context_menu` | `(self, position)` | Show context menu for cell operations. |
+| `_selected_sample_rows` | `(self)` | Return the table rows that have at least one selected cell. |
+| `remove_selected_samples` | `(self)` | Remove every sample that has a selected cell, after confirmation. |
 | `set_selected_cells_to_value` | `(self, value)` | Set selected cells to a specific value. |
 | `set_selected_cells_to_minus_one` | `(self)` | Set all selected cells to -1. |
 | `copy_cells` | `(self)` | Copy selected cells to clipboard. |

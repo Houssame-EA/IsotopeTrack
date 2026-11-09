@@ -19,12 +19,14 @@ from PySide6.QtWidgets import (
 
 from results.shared_plot_utils import copy_figure_to_clipboard
 from results.shared_plot_utils import (
-    FontSettingsGroup, get_display_name, LABEL_MODES,
+    FontSettingsGroup, get_display_name, LABEL_MODES, declutter_pie_labels,
     format_element_label, format_combination_label, Renderer, per_ml_active,
     per_ml_factor, conc_meta_available, single_sample_name, format_per_ml,
     pick_color_hex, seed_suggested_element_colors,
 )
 from results.utils_sort import sort_elements_by_mass
+from utils.unit import units
+from widget.unit_combo import UnitComboBox
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_pie_charts")
 
@@ -575,6 +577,7 @@ class MplPieCanvas(QWidget):
         saved      = cfg.get('label_positions', {}).get(sp_key, {})
 
         anns: dict = {}
+        placed = []
         for wedge, label, text in zip(wedges, labels, texts):
             theta = np.radians((wedge.theta1 + wedge.theta2) / 2)
             exp   = explode_d.get(label, 0.0)
@@ -584,15 +587,17 @@ class MplPieCanvas(QWidget):
 
             if label in saved:
                 lx, ly = saved[label]
+                ha = 'center'
             else:
                 lx = label_dist * (1.0 + exp) * np.cos(theta)
                 ly = label_dist * (1.0 + exp) * np.sin(theta)
+                ha = 'left' if lx >= 0 else 'right'
 
             ann = ax.annotate(
                 text,
                 xy=(tip_x, tip_y),
                 xytext=(lx, ly),
-                ha='center', va='center',
+                ha=ha, va='center',
                 fontsize=fs, color=fc, fontfamily=ff,
                 fontweight=fw, fontstyle=fst,
                 arrowprops=dict(
@@ -612,7 +617,10 @@ class MplPieCanvas(QWidget):
             except AttributeError:
                 _itk_log.exception("Handled exception in _draw_one")
             anns[label] = ann
+            if label not in saved:
+                placed.append(ann)
 
+        declutter_pie_labels(ax, placed)
         self._anns[sp_key] = anns
 
         # â"€â"€ Legend â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
@@ -718,7 +726,7 @@ class PieChartSettingsDialog(QDialog):
             self._chart_type.addItems(PIE_CHART_TYPES)
             self._chart_type.setCurrentText(self._cfg.get('chart_type', PIE_CHART_TYPES[0]))
             f1.addRow("Chart Type:", self._chart_type)
-            self._data_type = QComboBox()
+            self._data_type = UnitComboBox()
             self._data_type.addItems(PIE_DATA_TYPES)
             self._data_type.setCurrentText(self._cfg.get('data_type_display', PIE_DATA_TYPES[0]))
             f1.addRow("Data Type:", self._data_type)
@@ -1235,9 +1243,9 @@ class PieChartDisplayDialog(QDialog):
                 else:
                     dv = data.get(lbl, 0)
                 if 'Mass' in dt:
-                    parts.append(f"[{dv:.3g} fg]")
+                    parts.append(f"[{dv:.3g} {units.unit('mass')}]")
                 elif 'Moles' in dt:
-                    parts.append(f"[{dv:.3g} fmol]")
+                    parts.append(f"[{dv:.3g} {units.unit('moles')}]")
                 else:
                     parts.append(f"[{int(round(dv)):,} counts]")
             if cfg.get('show_percentages', True):  parts.append(f"{sz:.1f}%")
@@ -1314,6 +1322,7 @@ class PieChartPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         # Classifier support is NOT shipped for this node type (see
         # classifier_view.CLASSIFIER_WIP_NODE_TYPES). Undo the
         # classifier's destructive composition collapse and its
@@ -1463,7 +1472,7 @@ class ElementCompositionSettingsDialog(QDialog):
             self._analysis.setCurrentText(
                 self._cfg.get('analysis_type', COMP_ANALYSIS_TYPES[0]))
             f1.addRow("Analysis:", self._analysis)
-            self._data_type = QComboBox()
+            self._data_type = UnitComboBox()
             self._data_type.addItems(PIE_DATA_TYPES)
             self._data_type.setCurrentText(
                 self._cfg.get('data_type_display', PIE_DATA_TYPES[0]))
@@ -2014,9 +2023,9 @@ class ElementCompositionDisplayDialog(QDialog):
                     parts.append(f"({pc:,} particles)")
             if cfg.get('show_data_values', True):
                 if 'Mass' in dt:
-                    parts.append(f"[{dv:.3g} fg]")
+                    parts.append(f"[{dv:.3g} {units.unit('mass')}]")
                 elif 'Moles' in dt:
-                    parts.append(f"[{dv:.3g} fmol]")
+                    parts.append(f"[{dv:.3g} {units.unit('moles')}]")
                 else:
                     parts.append(f"[{int(round(dv)):,} counts]")
             if cfg.get('show_percentages', True):
@@ -2105,6 +2114,7 @@ class ElementCompositionPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         # Classifier support is NOT shipped for this node type (see
         # classifier_view.CLASSIFIER_WIP_NODE_TYPES). Undo the
         # classifier's destructive composition collapse and its

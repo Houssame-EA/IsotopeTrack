@@ -15,6 +15,8 @@ from __future__ import annotations
 import logging
 
 from results.figure_builder.charts import DRAWERS
+from results.figure_builder.core import massbias
+from results.figure_builder.core.isotopes import counts_for_isotope_ratios
 from results.figure_builder.core.common import (
     CBAR_LOCATIONS, Group, RenderReport, annotate, candidate_groups, draw_shapes, fit_decorations,
     fit_outside_legend, merge_legend, place_colorbar, resolve_groups)
@@ -209,12 +211,28 @@ def render(fig, spec: dict, table: ParticleTable) -> RenderReport:
                     _render_facets(fig, index, panel, spec, table, report, style, fw, fh, bg, Rectangle)
                 else:
                     _render_panel(fig, index, panel, spec, table, report, style, fw, fh, bg, Rectangle)
+            _show_units(fig)
     finally:
         font_log.setLevel(previous)
     return report
 
 
-NO_FACET = {'text', 'code', 'pairs'}
+def _show_units(fig) -> None:
+    """Name the app's chosen units in every axis and colour bar title.
+
+    The particles reach the figure in those units, so a title written with a
+    base unit, such as ``Particle mass (fg)``, is shown as ``Particle mass (pg)``.
+    """
+    from utils.unit import units
+    for ax in fig.axes:
+        for get, put in ((ax.get_xlabel, ax.set_xlabel), (ax.get_ylabel, ax.set_ylabel)):
+            text = get()
+            shown = units.relabel(text)
+            if shown != text:
+                put(shown)
+
+
+NO_FACET = {'text', 'code', 'pairs', 'spectrum'}
 """Panel kinds that cannot be split into one small plot per group."""
 
 SHARED_LIMIT_KINDS = {'scatter', 'line', 'density', 'hexbin', 'contour', 'histogram', 'box', 'violin',
@@ -368,8 +386,10 @@ def _render_panel(fig, index, panel, spec, table, report, style, fw, fh, bg, Rec
     report.artists[panel['id']] = {'ax': ax}
     ptable = table.view(panel.get('data_type'))
     try:
-        if len(table) == 0 and kind not in ('text', 'code'):
+        if len(table) == 0 and kind not in ('text', 'code', 'spectrum'):
             raise ExpressionError('No particles: connect a sample or filter node')
+        panel = counts_for_isotope_ratios(panel, ptable)
+        panel = massbias.prepare(panel, ptable, report)
         DRAWERS.get(kind, DRAWERS['scatter'])(fig, ax, panel, ptable, report,
                                                panel.get('label_style') or style)
         if kind in SHAPE_KINDS:

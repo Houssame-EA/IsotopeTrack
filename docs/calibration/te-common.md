@@ -13,6 +13,7 @@
 | `HISTOGRAM_COLORS` | `[(30, 144, 255, 180), (50, 205, 50, 180), (255, 69, 0, 18…` |
 | `DEFAULT_DETECTION_PARAMS` | `{'method': 'CPLN table', 'manual_threshold': 10.0, 'min_c…` |
 | `DETECTION_METHODS` | `detection_registry.selectable_labels()` |
+| `REMOVE_SAMPLES_TEXT` | `' Remove Selected Samples'` |
 
 ## Classes
 
@@ -36,9 +37,18 @@ Custom delegate that restricts table-cell editing to numeric values.
 | `show_data_source_dialog` | `(parent=None)` | Show the "Select Data Source" popup and return the user's choice. |
 | `snr_to_color` | `(ratio, palette=None)` | Map a signal-to-noise ratio to a QColor for table row highlighting. |
 | `create_scrollable_container` | `(parent_layout=None, spacing=15)` | Build a QScrollArea wrapping a container QWidget with a QVBoxLayout. |
-| `export_table_to_csv` | `(table, parent_widget, dialog_title='Export Detection Results')` | Export the contents of a QTableWidget to a CSV file. |
+| `export_table_to_csv` | `(table, parent_widget, dialog_title='Export Detection Results')` | Export the contents of a QTableWidget or ResultsTableView to a CSV file. |
 | `populate_detection_row` | `(table, row, sample_name, element_label, defaults=None)` | Populate a single row in a detection-parameters QTableWidget. |
 | `read_detection_row` | `(table, row)` | Read all detection parameters from a single row of the detection table. |
+| `style_remove_button` | `(button, p=None)` | Give a Remove button the theme's danger colours and a trash icon. |
+| `make_remove_button` | `(slot, tooltip)` | Create a themed "Remove Selected Samples" button. |
+| `remove_menu_label` | `(count)` | Return the context-menu label for removing selected samples. |
+| `remove_menu_icon` | `()` | Return the danger-coloured trash icon used in context menus. |
+| `confirm_remove_samples` | `(parent, names, consequence)` | Ask before removing samples; Cancel is the default. |
+| `quiet_progress` | `(widget, progress)` | Keep a progress dialog hidden while the widget is restored from a project. |
+| `mark_project_unsaved` | `(widget)` | Flag the main window's project as having unsaved changes. |
+| `remove_rows_by_name` | `(table, names, column=0)` | Remove the rows of a table whose text in one column is in ``names``. |
+| `set_detection_row_params` | `(table, row, params)` | Write saved detection parameters into one row of a TE detection table. |
 | `apply_global_method` | `(table, method_name)` | Set the detection method combo box on every row to *method_name*. |
 | `_style_plot_axes` | `(plot_widget, title=None)` | Apply the main-window plot appearance to *plot_widget*. |
 | `plot_raw_signal` | `(plot_widget, sample_name, signal, time_array)` | Plot a raw signal preview using the main-window plot settings. |

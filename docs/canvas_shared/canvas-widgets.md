@@ -461,6 +461,8 @@ AI sparkle icon.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, text, node_type, icon_name=None, color=None)` |  |
+| `natural_width` | `(self)` | Width the button needs to show its whole name, icon and padding. |
+| `resizeEvent` | `(self, event)` | Shorten the name with an ellipsis when the palette is too narrow for it. |
 | `_refresh_style` | `(self)` |  |
 | `mousePressEvent` | `(self, event)` |  |
 
@@ -473,13 +475,29 @@ AI sparkle icon.
 | `addWidget` | `(self, w)` |  |
 | `toggle` | `(self)` |  |
 
+### `_PaletteGrip` *(extends `QWidget`)*
+
+Thin handle on the right edge of the canvas node list; drag it to resize.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, dialog)` |  |
+| `enterEvent` | `(self, event)` |  |
+| `leaveEvent` | `(self, event)` |  |
+| `paintEvent` | `(self, event)` |  |
+| `mousePressEvent` | `(self, event)` |  |
+| `mouseMoveEvent` | `(self, event)` |  |
+| `mouseReleaseEvent` | `(self, event)` |  |
+
 ### `NodePalette` *(extends `QWidget`)*
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, parent_window=None)` |  |
 | `_setup` | `(self)` |  |
+| `set_glass` | `(self, on)` | Paint the palette transparent so the frosted column behind it shows. |
 | `_apply_palette_theme` | `(self)` |  |
+| `required_width` | `(self)` | Palette width at which every node name and group title is fully visible. |
 | `_filter` | `(self, text)` |  |
 
 ### `EnhancedCanvasScene` *(extends `QGraphicsScene`)*
@@ -512,8 +530,10 @@ AI sparkle icon.
 | `_check_link_allowed` | `(self, src_node, snk_node)` | Temp-aware connectivity check wrapping _direct_link_allowed. |
 | `add_link` | `(self, src_node, src_ch, snk_node, snk_ch)` |  |
 | `_trigger_data_flow` | `(self, wl)` |  |
+| `_on_units_changed` | `(self, *_)` | Send every node's data again so each figure redraws in the new units. |
 | `flush_data_flow` | `(self)` | Push each node's output to its sinks exactly once, sources first. |
 | `_flush_data_flow_inner` | `(self)` | The topological push itself; see :meth:`flush_data_flow`. |
+| `add_node_of_type` | `(self, ntype, scene_pos)` | Create a node of ``ntype`` at ``scene_pos``, snapped to the grid. |
 | `contextMenuEvent` | `(self, event)` | Right-click on empty canvas space → canvas context menu. |
 | `mousePressEvent` | `(self, event)` |  |
 | `mouseMoveEvent` | `(self, event)` |  |
@@ -555,6 +575,15 @@ AI sparkle icon.
 | `__init__` | `(self, parent=None)` |  |
 | `_apply_chrome_theme` | `(self)` | Re-style the dialog chrome and its header controls for the current theme. |
 | `_logo_style` | `()` |  |
+| `_on_glass_active` | `(self, inset)` | Frosted backdrop is on: let the palette column run up under the window buttons. |
+| `_palette_max_width` | `(self)` | Widest useful node list: every name visible, nothing more. |
+| `_set_palette_width` | `(self, width)` | Resize the node list, kept between the minimum and the all-names-visible width. |
+| `_restore_palette_width` | `(self)` | Apply the width chosen last time, once the buttons know their size. |
+| `_save_palette_width` | `(self)` | Remember the node list width for the next time the canvas opens. |
+| `_on_insights_dragged` | `(self, _pos, _index)` | Dragging the Insights edge past its minimum closes it, like its button. |
+| `_toggle_palette` | `(self)` | Show or hide the node list; nodes stay reachable from the right-click menu. |
+| `_restore_panels` | `(self)` | Reopen the node list and Insights as they were left last time. |
+| `_save_insights_state` | `(self)` | Remember whether Insights is open and how wide it is. |
 | `_build` | `(self)` |  |
 | `_update_sel` | `(self, count)` |  |
 | `_tool_btn_style` | `()` |  |
@@ -570,7 +599,7 @@ AI sparkle icon.
 | `_combine_concentration_meta` | `(metas, dilution_resolution=None)` | Combine per member concentration metadata into a single entry. |
 | `_warn_before_apply_changes` | `(parent, node)` | Remind the user that applying this node's configuration now may |
 | `_dialog_base_style` | `()` | Dialog stylesheet synced to the current app theme. The canvas itself |
-| `_canvas_chrome_style` | `()` | Stylesheet for the canvas dialog chrome (header, palette, statusbar). |
+| `_canvas_chrome_style` | `(glass=False)` | Stylesheet for the canvas dialog chrome (header, palette, statusbar). |
 | `sample_particle_counts` | `(parent_window, samples, batch_particle_data=None)` | Particles per sample, for showing next to each name in the selectors. |
 | `suggest_group_name` | `(names)` | A group name for several samples: their shared replicate root or common prefix. |
 | `_count_text` | `(n)` | Short particle count for a sample row. |
@@ -579,6 +608,7 @@ AI sparkle icon.
 | `_step_button` | `(text, tip)` | A small arrow button for stepping through samples. |
 | `_style_sample_scroll` | `(scroll, container)` | Let the sample list paint the themed background set in the dialog style. |
 | `_make_viz_icon_node` | `(grad_colors, icon_name, label, dialog_class, multi_figure=False)` | Factory: creates a circular icon node for each visualization type. |
+| `_palette_groups` | `()` | Node list shown in the palette and in the canvas right-click menu. |
 | `_io_families` | `(node)` | Return (input_family, output_family) for a node. |
 | `validate_classifier_link` | `(src_node, snk_node)` | Check a proposed link against Particle Classifier connectivity rules. |
 | `show_canvas_results` | `(parent_window)` |  |

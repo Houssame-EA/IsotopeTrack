@@ -24,15 +24,17 @@ from results.figure_builder.core.limits import detection_limits
 from results.insights import discovery as _disc
 from results.insights import evidence as _evidence
 from results.insights import figures as _figures
+from results.insights import spectrum as _spectrum
 from results.insights.explain import explanation_for
 from results.insights.engine import (
     _ANALYSERS, _FONT, FOCUSED_CARD_LIMIT, MAX_SELECTOR_NODES, NODE_TYPE_META, AnalysisScope,
     Suggestion, checked_samples, find_selector, numbered_selectors,
     _AnalysisWorker, _dedupe_suggestions, _find_batch_node, _itk_log, analysers_for,
     category_keys, gather_scope_data, invalidate_context_cache, keep_elements, node_type_keys,
-    resolve_scope,
+    resolve_scope, shows_in, FILTER_CATEGORIES,
 )
 from tools.theme import theme as _theme
+from utils.unit import units as app_units
 
 
 def _find_source_node(scene) -> object | None:
@@ -266,7 +268,8 @@ SECTIONS: tuple[tuple[str, frozenset], ...] = (
     ("Isotope ratios", frozenset({"isotope", "isotope_groups"})),
     ("Differences between groups", frozenset({"comparison", "signature"})),
     ("Replicates", frozenset({"replicate"})),
-    ("Fixed ratios and co-occurrence", frozenset({"stoichiometry", "cooccurrence"})),
+    ("Fixed ratios and co-occurrence", frozenset({"stoichiometry", "ratio_split",
+                                                  "cooccurrence"})),
     ("Correlations", frozenset({"correlation", "network"})),
     ("Composition", frozenset({"composition", "ternary", "single_multi", "size"})),
     ("Particle types", frozenset({"types"})),
@@ -297,6 +300,49 @@ def isotope_markup(text: str) -> str:
     import html
     escaped = html.escape(text, quote=False)
     return _ISOTOPE_IN_TEXT.sub(r"<sup>\1</sup>\2", escaped)
+
+
+def spectrum_sources(parent_window, sample_names) -> dict:
+    """Collect, on the GUI thread, what the spectrum check needs for each sample.
+
+    Args:
+        parent_window: Main window holding the run info, folders, spectra
+            already read and the selected isotopes.
+        sample_names: Samples in scope.
+
+    Returns:
+        ``{"samples": [SpectrumSource], "isotopes": [(label, exact mass)],
+        "blanks": [SpectrumSource]}``, the blanks being loaded blank runs
+        outside the scope; empty lists when nothing has a resolved spectrum.
+    """
+    isotopes = []
+    label_of = getattr(parent_window, "get_formatted_label", None)
+    for element, masses in (getattr(parent_window, "selected_isotopes", None) or {}).items():
+        for mass in masses:
+            try:
+                label = label_of(f"{element}-{float(mass):.4f}") if label_of else None
+            except Exception:
+                label = None
+            if label:
+                isotopes.append((label, float(mass)))
+    run_infos = getattr(parent_window, "sample_run_info", None) or {}
+    folders = getattr(parent_window, "sample_to_folder_map", None) or {}
+    spectra = getattr(parent_window, "sample_raw_spectrum", None) or {}
+    identified = getattr(parent_window, "_interference_by_sample", None) or {}
+
+    def source(name):
+        info = run_infos.get(name)
+        if not info or "MassCalCoefficients" not in info:
+            return None
+        return _spectrum.SpectrumSource(name, dict(info), folders.get(name), spectra.get(name),
+                                        identified.get(name))
+
+    samples = [s for s in (source(name) for name in sample_names) if s is not None]
+    in_scope = set(sample_names)
+    blanks = [s for s in (source(name) for name in folders
+                          if name not in in_scope and _spectrum.idet.is_blank_name(name))
+              if s is not None]
+    return {"samples": samples, "isotopes": isotopes, "blanks": blanks}
 
 
 def section_of(category: str) -> str:
@@ -422,6 +468,73 @@ class _StrengthDots(QWidget):
         painter.end()
 
 
+def evidence_cells(evidence) -> list[tuple[str, str, bool | None]]:
+    """The evidence strip's cells: ``(heading, value, passed)``.
+
+    *passed* is ``None`` for a plain number, ``True`` or ``False`` for a check.
+    """
+    cells = []
+    if evidence.effect:
+        cells.append(("Effect", evidence.effect, None))
+    if evidence.evidence:
+        cells.append(("Evidence", evidence.evidence.replace("q ", "", 1), None))
+    if evidence.replicates:
+        n = len(evidence.replicates)
+        cells.append(("Reproducible", f"{evidence.n_ok} of {n} replicates", evidence.reproducible))
+    fold = evidence.coincidence_fold
+    if fold is not None:
+        from results.insights.robustness import COINCIDENCE_MIN_FOLD
+        text = f"{fold:.0f}× above chance" if fold >= COINCIDENCE_MIN_FOLD else "≈ chance"
+        cells.append(("Coincidence", text, fold >= COINCIDENCE_MIN_FOLD))
+    return cells
+
+
+STRIP_COLUMNS = {1: 1, 2: 2, 3: 3, 4: 2}
+"""Cells per row of the evidence strip; four go two by two to fit a narrow panel."""
+
+
+def evidence_strip(evidence) -> QFrame | None:
+    """The strip under a card's text: effect, evidence, replicates and coincidence.
+
+    Returns:
+        The strip, or ``None`` when the evidence holds nothing to show.
+    """
+    cells = evidence_cells(evidence)
+    if not cells:
+        return None
+    from PySide6.QtWidgets import QGridLayout
+    strip = QFrame()
+    strip.setObjectName("iStrip")
+    grid = QGridLayout(strip)
+    grid.setContentsMargins(8, 6, 8, 6)
+    grid.setHorizontalSpacing(12)
+    grid.setVerticalSpacing(1)
+    tips = {
+        "Effect": "How large the pattern is, measured on the finding's particles",
+        "Evidence": "False discovery rate after correcting for every test of this kind",
+        "Reproducible": "Replicates where the pattern is seen on its own",
+        "Coincidence": "Particles carrying both elements against those two particles "
+                       "arriving in one event would give by chance",
+    }
+    for col, (head, value, passed) in enumerate(cells):
+        key = QLabel(head)
+        key.setObjectName("iStripKey")
+        mark = "" if passed is None else ("✓ " if passed else "✗ ")
+        val = QLabel(mark + value)
+        val.setObjectName("iStripValue" if passed is None
+                          else ("iStripOk" if passed else "iStripBad"))
+        if head == "Reproducible" and evidence.replicates:
+            val.setToolTip("\n".join(f"{'✓' if c.ok else '✗'} {c.label}: {c.value}"
+                                      for c in evidence.replicates))
+        else:
+            val.setToolTip(tips.get(head, ""))
+        key.setToolTip(tips.get(head, ""))
+        row, col = divmod(col, STRIP_COLUMNS[len(cells)])
+        grid.addWidget(key, 2 * row, col)
+        grid.addWidget(val, 2 * row + 1, col)
+    return strip
+
+
 class _Card(QFrame):
     """One finding in the panel.
 
@@ -492,6 +605,18 @@ class _Card(QFrame):
             samples.setWordWrap(True)
             root.addWidget(samples)
 
+        evidence = getattr(self._s, "evidence", None)
+        if evidence is not None:
+            strip = evidence_strip(evidence)
+            if strip is not None:
+                root.addWidget(strip)
+            missing = evidence.failed
+            if missing:
+                note = QLabel("Not seen in " + ", ".join(f"{c.label} ({c.value})" for c in missing))
+                note.setObjectName("iStripNote")
+                note.setWordWrap(True)
+                root.addWidget(note)
+
         explanation = explanation_for(self._s.explain_key, self._s.category)
         if self._s.details or explanation is not None:
             self._details_btn = QToolButton()
@@ -510,19 +635,26 @@ class _Card(QFrame):
         dots = _StrengthDots(filled)
         dots.setToolTip(f"Ranking score {self._s.confidence:.2f}")
         footer.addWidget(dots)
+        if evidence is not None:
+            word = f"{word} · score {self._s.confidence:.2f}"
         strength = QLabel(word)
         strength.setObjectName("iMuted")
         footer.addWidget(strength)
         footer.addStretch()
-        plot_name = NODE_TYPE_META.get(self._s.node_type, "plot")
-        self._add_btn = QPushButton(f"Add {plot_name.lower()}"
-                                    + ("" if plot_name.lower().endswith(("plot", "builder",
-                                                                         "chart", "matrix"))
-                                       else " plot"))
+        if self.shows_spectrum:
+            self._add_btn = QPushButton("Show in Spectrum view")
+            self._add_btn.setToolTip("Opens the main window's Spectrum view on this sample "
+                                     "and isotope")
+        else:
+            plot_name = NODE_TYPE_META.get(self._s.node_type, "plot")
+            self._add_btn = QPushButton(f"Add {plot_name.lower()}"
+                                        + ("" if plot_name.lower().endswith(("plot", "builder",
+                                                                             "chart", "matrix"))
+                                           else " plot"))
+            self._add_btn.setToolTip("Adds the plot with a selector holding only these samples "
+                                     "and elements")
         self._add_btn.setObjectName("iAddBtn")
         self._add_btn.setCursor(Qt.PointingHandCursor)
-        self._add_btn.setToolTip("Adds the plot with a selector holding only these samples "
-                                 "and elements")
         self._add_btn.clicked.connect(self._clicked)
         footer.addWidget(self._add_btn)
         root.addLayout(footer)
@@ -548,6 +680,11 @@ class _Card(QFrame):
                 figure_row.addWidget(self._cluster_btn)
             figure_row.addWidget(self._figure_btn)
             root.addLayout(figure_row)
+
+    @property
+    def shows_spectrum(self) -> bool:
+        """Whether the card is a spectrum finding, opened in the Spectrum view."""
+        return "spectrum" in (self._s.facts or {})
 
     def _build_details(self, explanation) -> QWidget:
         """Build the hidden details section: key numbers, then the explanation."""
@@ -624,6 +761,8 @@ class _Card(QFrame):
         log_click(f"Insights: added plot for '{self._s.title}'",
                   {"category": self._s.category, "node_type": self._s.node_type})
         self._on_add(self._s)
+        if self.shows_spectrum:
+            return
         original = self._add_btn.text()
         self._add_btn.setText("Added")
         self._add_btn.setEnabled(False)
@@ -639,15 +778,14 @@ class _Card(QFrame):
         QTimer.singleShot(1400, restore)
 
 
-EXPONENTIAL_LAW = "Exponential Law (instrumental mass fractionation)"
-"""The Isotopic Ratio node's name for the exponential-law mass-bias correction."""
+from results.figure_builder.core.massbias import EXPONENTIAL_LAW
 
 
 def mass_bias_reference(scene) -> dict | None:
     """The exponential-law reference set up in an Isotopic Ratio node on the canvas.
 
-    The first node whose correction is the exponential law with a complete
-    reference (two isotopes, a certified and a measured ratio) is used.
+    See :func:`results.figure_builder.core.massbias.node_reference`, which
+    Figure Builder panels use too.
 
     Args:
         scene: The canvas scene.
@@ -656,23 +794,8 @@ def mass_bias_reference(scene) -> dict | None:
         ``{ref_num, ref_den, certified, measured}``, or ``None`` when no node
         has one.
     """
-    for node in getattr(scene, "workflow_nodes", []) or []:
-        if getattr(node, "node_type", "") != "isotopic_ratio_plot":
-            continue
-        cfg = getattr(node, "config", None) or {}
-        if cfg.get("correction_method") != EXPONENTIAL_LAW:
-            continue
-        ref = {"ref_num": str(cfg.get("ref_isotope_num") or ""),
-               "ref_den": str(cfg.get("ref_isotope_den") or "")}
-        try:
-            ref["certified"] = float(cfg.get("ref_certified_ratio"))
-            ref["measured"] = float(cfg.get("ref_measured_ratio"))
-        except (TypeError, ValueError):
-            continue
-        if ref["ref_num"] and ref["ref_den"] and ref["certified"] > 0 and ref["measured"] > 0 \
-                and abs(ref["certified"] - ref["measured"]) > 1e-12:
-            return ref
-    return None
+    from results.figure_builder.core.massbias import node_reference
+    return node_reference(scene)
 
 
 OWN_SELECTOR_CATEGORIES = frozenset({"replicate", "time"})
@@ -921,6 +1044,7 @@ class SmartInsightsPanel(QWidget):
         self._build_ui()
         self._apply_theme()
         self._theme_dc = _theme.connect_theme(lambda _: self._apply_theme())
+        app_units.unitsChanged.connect(self._on_units_changed)
 
         self._poll = QTimer(self)
         self._poll.setInterval(self.SCOPE_POLL_MS)
@@ -1014,6 +1138,8 @@ class SmartInsightsPanel(QWidget):
         self._node_btn.setToolTip("Search one Single or Multi-Sample node, by the number shown on "
                                   "it; its plots connect straight to that node")
         self._node_menu = QMenu(self._node_btn)
+        self._node_menu_stale = False
+        self._node_menu.aboutToHide.connect(self._refill_node_menu_later)
         self._node_btn.setMenu(self._node_menu)
         self._fill_node_menu()
         types_row = QHBoxLayout()
@@ -1115,6 +1241,13 @@ class SmartInsightsPanel(QWidget):
             QPushButton#iNewBar:hover {{ background: {p.accent}; color: {p.text_inverse}; }}
             QFrame#iDetails {{ background: {p.bg_primary}; border: 1px solid {p.border_subtle};
                               border-radius: 6px; }}
+            QFrame#iStrip {{ background: {p.bg_primary}; border: 1px solid {p.border_subtle};
+                            border-radius: 6px; }}
+            QLabel#iStripKey {{ color: {p.text_muted}; font-size: 9px; }}
+            QLabel#iStripValue {{ color: {p.text_primary}; font-size: 11px; font-weight: 600; }}
+            QLabel#iStripOk {{ color: {p.success}; font-size: 11px; font-weight: 600; }}
+            QLabel#iStripBad {{ color: {p.danger}; font-size: 11px; font-weight: 600; }}
+            QLabel#iStripNote {{ color: {p.danger}; font-size: 10px; }}
             QLabel#iDetailKey {{ color: {p.text_muted}; font-size: 10px; }}
             QLabel#iDetailValue {{ color: {p.text_primary}; font-size: 10px; }}
             QLabel#iDetailText {{ color: {p.text_secondary}; font-size: 11px; }}
@@ -1275,7 +1408,8 @@ class SmartInsightsPanel(QWidget):
             self._fill_focus_menu(symbols)
         order = [k for k in category_keys() if k in needed]
         self._worker = _AnalysisWorker(scope, particles, sample_idx,
-                                       categories=order, dedupe=False, focus=self._focus)
+                                       categories=order, dedupe=False, focus=self._focus,
+                                       spectra=spectrum_sources(self._pw, scope.sample_names))
         self._worker.progress.connect(self._set_status)
         self._worker.partial.connect(
             lambda found, detector, key=scope.key: self._on_partial(found, detector, key))
@@ -1303,8 +1437,8 @@ class SmartInsightsPanel(QWidget):
     def _sync_nodes(self) -> bool:
         """Follow the numbered nodes on the canvas; return whether the searched node changed.
 
-        Until the user picks, the lowest-numbered node is searched. A picked
-        node that is removed hands over to the lowest-numbered one.
+        Until the user picks a node, every node is searched ("All"), also
+        after a node is added. A picked node that is removed hands back to "All".
         """
         entries = self._node_entries()
         numbers = [e[0] for e in entries]
@@ -1312,19 +1446,28 @@ class SmartInsightsPanel(QWidget):
         if self._node_number and self._node_number not in numbers:
             self._node_auto = True
         if self._node_auto:
-            self._node_number = numbers[0] if numbers else 0
+            self._node_number = 0
         if entries != self._node_list or before != self._node_number:
             self._node_list = entries
             self._fill_node_menu()
         return before != self._node_number
 
     def _fill_node_menu(self):
-        """List every numbered node and the choice of searching across them all."""
+        """List "All" (every loaded sample) and every numbered node.
+
+        The menu is not rebuilt while it is open, which would delete the
+        action under the pointer; it is rebuilt as soon as it closes.
+        """
+        if self._node_menu.isVisible():
+            self._node_menu_stale = True
+            self._node_btn.setText(f"Node: {self._node_number or 'all'}  ▾")
+            return
+        self._node_menu_stale = False
         self._node_menu.clear()
         from PySide6.QtGui import QActionGroup
         group = QActionGroup(self._node_menu)
         group.setExclusive(True)
-        every = self._node_menu.addAction("All selector nodes")
+        every = self._node_menu.addAction("All")
         every.setCheckable(True)
         every.setChecked(not self._node_number)
         group.addAction(every)
@@ -1340,6 +1483,11 @@ class SmartInsightsPanel(QWidget):
             action.triggered.connect(lambda _checked=False, k=number: self._pick_node(k))
         self._node_btn.setText(f"Node: {self._node_number or 'all'}  ▾")
         self._node_btn.setVisible(bool(self._node_list))
+
+    def _refill_node_menu_later(self):
+        """Rebuild the node menu once it has closed, if nodes changed while it was open."""
+        if self._node_menu_stale:
+            QTimer.singleShot(0, self._fill_node_menu)
 
     def current_node(self) -> int:
         """Return the number of the node searched, or 0 when searching across all of them."""
@@ -1364,8 +1512,8 @@ class SmartInsightsPanel(QWidget):
         self.set_node(number)
 
     def _resolve(self) -> AnalysisScope:
-        """The scope for the node being searched, or across the canvas."""
-        return resolve_scope(self._scene, self._pw, self._node_number)
+        """The scope for the node being searched, or every loaded sample under "All"."""
+        return resolve_scope(self._scene, self._pw, self._node_number, every=not self._node_number)
 
     def _pick_focus(self, symbol: str):
         """Search around the element picked from the menu, and log the choice."""
@@ -1377,6 +1525,11 @@ class SmartInsightsPanel(QWidget):
         """Show the findings that were held back, and log the click."""
         log_click("Insights: showed new findings")
         self._release_held()
+
+    def _on_units_changed(self, *_):
+        """Write the findings again in the newly chosen units."""
+        if self.isVisible():
+            self.scan(force=True)
 
     def refresh(self):
         """Search everything again from scratch."""
@@ -1395,7 +1548,8 @@ class SmartInsightsPanel(QWidget):
         analyser = _ANALYSERS.get(key)
         if analyser is None:
             return
-        self._set_filter(next(iter(sorted(analyser.node_types)), None))
+        own = [k for k, cats in FILTER_CATEGORIES.items() if key in cats]
+        self._set_filter(own[0] if own else next(iter(sorted(analyser.node_types)), None))
         self.scan(force=force)
 
     def _check_scope(self):
@@ -1532,7 +1686,7 @@ class SmartInsightsPanel(QWidget):
         if self._filter is None:
             return _dedupe_suggestions(self._found,
                                        FOCUSED_CARD_LIMIT if self._focus else None)
-        wanted = [s for s in self._found if s.node_type == self._filter]
+        wanted = [s for s in self._found if shows_in(s, self._filter)]
         return _dedupe_suggestions(wanted, FOCUSED_CARD_LIMIT)
 
     def _update_chip_counts(self):
@@ -1552,7 +1706,7 @@ class SmartInsightsPanel(QWidget):
                 action.setEnabled(True)
                 continue
             count = len(_dedupe_suggestions(
-                [s for s in self._found if s.node_type == key], FOCUSED_CARD_LIMIT))
+                [s for s in self._found if shows_in(s, key)], FOCUSED_CARD_LIMIT))
             action.setText(f"{label}  ({count})" if count else f"{label}  (none)")
             action.setEnabled(bool(count) or not finished or key == self._filter)
 
@@ -1786,6 +1940,22 @@ class SmartInsightsPanel(QWidget):
             return
         self._add_suggestion(s, node_type="figure_builder", config=spec, narrow_elements=False)
 
+    def _show_spectrum(self, s: Suggestion):
+        """Open the main window's Spectrum view on a spectrum finding's sample and isotope.
+
+        Args:
+            s: A spectrum finding.
+        """
+        facts = s.facts["spectrum"]
+        show = getattr(self._pw, "show_spectrum_for", None)
+        if show is None or not show(facts.get("focus"), facts.get("label")):
+            self._flash_status("Could not open the Spectrum view for this sample")
+            return
+        window = self._pw.window() if hasattr(self._pw, "window") else None
+        if window is not None:
+            window.raise_()
+            window.activateWindow()
+
     def _add_clustering(self, s: Suggestion):
         """Add a Clustering node over a particle-type finding's samples and elements.
 
@@ -1816,6 +1986,9 @@ class SmartInsightsPanel(QWidget):
             config: Settings for that node instead of the suggestion's.
             narrow_elements: Keep only the finding's elements in the selector.
         """
+        if node_type is None and "spectrum" in (s.facts or {}):
+            self._show_spectrum(s)
+            return
         node_type = node_type or s.node_type
         config = s.config if config is None else config
         try:
@@ -1974,6 +2147,10 @@ class SmartInsightsPanel(QWidget):
             self._theme_dc()
         except Exception:
             _itk_log.exception("[Insights] theme disconnect failed")
+        try:
+            app_units.unitsChanged.disconnect(self._on_units_changed)
+        except (RuntimeError, TypeError):
+            pass
         self._stop_worker()
 
 

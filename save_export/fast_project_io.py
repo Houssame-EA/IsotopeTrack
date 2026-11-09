@@ -16,6 +16,9 @@ from pathlib import Path
 
 import numpy as np
 from calibration_methods import calibration_registry
+from save_export.isotope_reserve import ReserveSource, write_sample_reserve, SOURCE_NONE
+from save_export.calibration_store import snapshot_state, te_snapshot_state, write_ionic_data
+from save_export.te_store import write_te_data
 _itk_log = logging.getLogger("IsotopeTrack.save_export.fast_project_io")
 
 logger = logging.getLogger(__name__)
@@ -245,6 +248,7 @@ def build_metadata(mw: MainWindow):
         '_exclusion_regions_by_sample': getattr(mw, '_exclusion_regions_by_sample', {}),
         'sample_run_info': getattr(mw, 'sample_run_info', {}),
         'sample_method_info': getattr(mw, 'sample_method_info', {}),
+        'sample_tuning_info': getattr(mw, 'sample_tuning_info', {}),
 
         'element_mass_fractions': mw.mass_fraction_service.element_mass_fractions,
         'element_densities': mw.mass_fraction_service.element_densities,
@@ -272,6 +276,8 @@ def build_metadata(mw: MainWindow):
         'saturation_filtered_multi': getattr(mw, 'saturation_filtered_multi', {}),
         'saturation_windows': getattr(mw, 'saturation_windows', {}),
         'saturation_excluded_time_s': getattr(mw, 'saturation_excluded_time_s', {}),
+        'ionic_session': snapshot_state(mw),
+        'te_session': te_snapshot_state(mw),
     }
 
     sia_manager = getattr(mw, 'sia_manager', None)
@@ -297,17 +303,43 @@ def build_metadata(mw: MainWindow):
     return metadata
 
 
-def save_project_v2(filepath, mw: MainWindow, progress_callback=None):
+def _read_spectrum(folder_path):
+    """Read a sample's resolved spectrum from its run folder, or None when out of reach.
+
+    Args:
+        folder_path (str | Path | None): The sample's raw data folder.
+
+    Returns:
+        dict | None: ``{'spectrum', 'n_snapshots'}`` as the main window keeps it.
+    """
+    if not folder_path:
+        return None
+    try:
+        from loading.nu_raw_spectrum import read_nu_raw_spectrum
+        return read_nu_raw_spectrum(folder_path)
+    except Exception:
+        logger.exception(f"Could not read the resolved spectrum from {folder_path}")
+        return None
+
+
+def save_project_v2(filepath, mw: MainWindow, progress_callback=None, include_reserve=True):
     """
     Save project in optimized v2 format.
 
     Uses ZIP archive with separate numpy files per sample, lz4-compressed
-    pickle for metadata, and columnar particle storage.
+    pickle for metadata, and columnar particle storage. Unless disabled, the
+    mass channels that are not selected are also kept, compressed, in the
+    ``reserve/`` folder of the archive (see ``isotope_reserve``), and every
+    sample's resolved spectrum is stored, read from its run folder when it
+    was not opened during the session.
 
     Args:
         filepath (str or Path): Output file path (.itproj)
         mw: MainWindow instance with all data attributes
         progress_callback (callable, optional): func(percent, message) for progress updates
+        include_reserve (bool): Write the reserve of unselected isotopes and read
+            the spectra not yet in memory. Autosave passes False to keep its
+            snapshots small and fast; it still stores the spectra in memory.
 
     Returns:
         bool: True on success
@@ -347,19 +379,11 @@ def save_project_v2(filepath, mw: MainWindow, progress_callback=None):
     try:
         with zipfile.ZipFile(tmp_path, 'w', compression=zipfile.ZIP_STORED) as zf:
             zf.writestr('__format__', 'ITPROJ_V2')
-            
-            manifest = {
-                'format_version': 2,
-                'compression': compression_lib,
-                'sample_names': sample_names,
-                'created': time.strftime('%Y-%m-%dT%H:%M:%S'),
-            }
-            zf.writestr('manifest.json', json.dumps(manifest, indent=2))
 
             zf.writestr('metadata.dat', meta_compressed)
 
             for idx, sample_name in enumerate(sample_names):
-                pct = 15 + int(35 * idx / max(total_samples, 1))
+                pct = 15 + int(25 * idx / max(total_samples, 1))
                 _progress(pct, f"Saving arrays: {sample_name}")
 
                 sample_data = mw.data_by_sample.get(sample_name, {})
@@ -390,7 +414,7 @@ def save_project_v2(filepath, mw: MainWindow, progress_callback=None):
                     zf.writestr(f'arrays/{safe_name}.npz', buf.getvalue())
 
             for idx, sample_name in enumerate(sample_names):
-                pct = 50 + int(40 * idx / max(total_samples, 1))
+                pct = 40 + int(15 * idx / max(total_samples, 1))
                 _progress(pct, f"Saving particles: {sample_name}")
 
                 particles = mw.sample_particle_data.get(sample_name, [])
@@ -403,11 +427,84 @@ def save_project_v2(filepath, mw: MainWindow, progress_callback=None):
                     safe_name = sample_name.replace('/', '_').replace('\\', '_')
                     zf.writestr(f'particles/{safe_name}.pkl', buf.getvalue())
 
+            raw_spectra = {}
+            for sample_name in sample_names:
+                entry = (getattr(mw, 'sample_raw_spectrum', None) or {}).get(sample_name)
+                if (not entry or entry.get('spectrum') is None) and include_reserve:
+                    _progress(54, f"Saving resolved spectrum: {sample_name}")
+                    entry = _read_spectrum(mw.sample_to_folder_map.get(sample_name))
+                if not entry or entry.get('spectrum') is None:
+                    continue
+                buf = io.BytesIO()
+                np.save(buf, np.asarray(entry['spectrum'], dtype=np.float32), allow_pickle=False)
+                safe_name = sample_name.replace('/', '_').replace('\\', '_')
+                zf.writestr(f'spectra/{safe_name}.npy', buf.getvalue(),
+                            compress_type=zipfile.ZIP_DEFLATED, compresslevel=6)
+                raw_spectra[sample_name] = int(entry.get('n_snapshots') or 0)
+
+            reserve_index = {}
+            reserve_sources = {}
+            reserve_report = {}
+            ionic_entries = {}
+            te_entries = {}
+            if include_reserve:
+                source = ReserveSource(getattr(mw, '_project_filepath', None))
+                try:
+                    _progress(55, "Saving sensitivity calibration...")
+                    try:
+                        ionic_entries = write_ionic_data(zf, mw, source)
+                    except Exception:
+                        logger.exception("Could not save the sensitivity calibration standards")
+                    _progress(56, "Saving transport efficiency calibration...")
+                    try:
+                        te_entries = write_te_data(zf, mw, source)
+                    except Exception:
+                        logger.exception("Could not save the transport efficiency samples")
+                    for idx, sample_name in enumerate(sample_names):
+                        pct = 55 + int(38 * idx / max(total_samples, 1))
+                        _progress(pct, f"Saving unselected isotopes: {sample_name}")
+                        folder_path = mw.sample_to_folder_map.get(sample_name)
+                        selected = list(mw.data_by_sample.get(sample_name, {}).keys())
+                        try:
+                            written, origin = write_sample_reserve(
+                                zf, sample_name, selected, folder_path, source,
+                                kept=(getattr(mw, 'session_reserve', None) or {}).get(sample_name)
+                            )
+                        except Exception:
+                            logger.exception(f"Could not save unselected isotopes for {sample_name}")
+                            written, origin = [], SOURCE_NONE
+                        reserve_report[sample_name] = origin
+                        if written:
+                            reserve_index[sample_name] = written
+                            reserve_sources[sample_name] = str(folder_path or '')
+                finally:
+                    source.close()
+            mw._last_save_reserve_report = reserve_report
+
+            manifest = {
+                'format_version': 2,
+                'compression': compression_lib,
+                'sample_names': sample_names,
+                'created': time.strftime('%Y-%m-%dT%H:%M:%S'),
+                'reserve_version': 1,
+                'reserve': reserve_index,
+                'reserve_sources': reserve_sources,
+                'ionic_entries': ionic_entries,
+                'te_entries': te_entries,
+                'raw_spectra': raw_spectra,
+            }
+            zf.writestr('manifest.json', json.dumps(manifest, indent=2))
+
         _progress(95, "Finalizing...")
 
         if filepath.exists():
             filepath.unlink()
         tmp_path.rename(filepath)
+        if include_reserve:
+            mw.sample_reserve_masses = reserve_index
+            mw._ionic_saved_entries = ionic_entries
+            mw._te_saved_index = te_entries
+            mw._ionic_saved_fingerprint = (getattr(mw, '_calibration_snapshot', None) or {}).get('fingerprint')
 
         elapsed = time.time() - t0
         _progress(100, f"Saved in {elapsed:.1f}s")
@@ -450,6 +547,13 @@ def load_project_v2(filepath, mw: MainWindow, progress_callback=None):
         manifest = json.loads(zf.read('manifest.json'))
         compression_lib = manifest.get('compression', 'lz4')
         sample_names = manifest.get('sample_names', [])
+        mw.sample_reserve_masses = {
+            name: [float(m) for m in masses]
+            for name, masses in (manifest.get('reserve') or {}).items()
+        }
+        mw.session_reserve = {}
+        mw._ionic_saved_entries = dict(manifest.get('ionic_entries') or {})
+        mw._te_saved_index = dict(manifest.get('te_entries') or {})
 
         _progress(5, "Loading metadata...")
 
@@ -515,6 +619,21 @@ def load_project_v2(filepath, mw: MainWindow, progress_callback=None):
             else:
                 mw.sample_particle_data[sample_name] = []
 
+        mw.sample_raw_spectrum = {}
+        mw._raw_spectrum_missing = set()
+        mw._interference_by_sample = {}
+        names = set(zf.namelist())
+        for sample_name, n_snapshots in (manifest.get('raw_spectra') or {}).items():
+            safe_name = sample_name.replace('/', '_').replace('\\', '_')
+            entry_name = f'spectra/{safe_name}.npy'
+            if entry_name not in names:
+                continue
+            try:
+                spectrum = np.load(io.BytesIO(zf.read(entry_name)), allow_pickle=False)
+                mw.sample_raw_spectrum[sample_name] = {'spectrum': spectrum, 'n_snapshots': int(n_snapshots)}
+            except (ValueError, OSError):
+                logger.exception(f"Could not read the resolved spectrum of {sample_name}")
+
     elapsed = time.time() - t0
     _progress(100, f"Loaded in {elapsed:.1f}s")
     logger.info(f"Project loaded (v2) in {elapsed:.1f}s: {filepath}")
@@ -537,7 +656,7 @@ def _restore_metadata(mw: MainWindow, metadata):
         'selected_transport_rate_methods', 'current_sample',
         'overlap_threshold_percentage', '_global_sigma', '_sigma_mode',
         '_exclusion_regions_by_sample',
-        'sample_run_info', 'sample_method_info',
+        'sample_run_info', 'sample_method_info', 'sample_tuning_info',
         'sample_dilutions',
         'sample_status', 'detection_states',
         'transport_rate_methods',
@@ -556,6 +675,9 @@ def _restore_metadata(mw: MainWindow, metadata):
     for attr in simple_attrs:
         if attr in metadata:
             setattr(mw, attr, metadata[attr])
+
+    mw._ionic_saved_state = metadata.get('ionic_session')
+    mw._te_saved_state = metadata.get('te_session')
 
     mass_fraction_service_attrs = [
         'element_mass_fractions', 'element_densities', 'element_molecular_weights',

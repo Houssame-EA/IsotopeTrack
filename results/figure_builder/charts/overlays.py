@@ -180,7 +180,7 @@ def _marginal_data(panel, data, table, report):
         xq = np.asarray(evaluate(panel['x'], view), dtype=float)
         yq = np.asarray(evaluate(panel['y'], view), dtype=float)
     except Exception as exc:
-        report.stats.append(f'Edges in {MARGINAL_UNITS[unit].lower()}: {exc}')
+        report.stats.append(f'Edges in {_shown(MARGINAL_UNITS[unit]).lower()}: {exc}')
         return None
     points = handles(report, panel).get('points') or []
     out = []
@@ -189,10 +189,16 @@ def _marginal_data(panel, data, table, report):
         out.append((g, xq[idx], yq[idx]))
     allx = np.concatenate([x for _g, x, _y in out]) if out else np.array([])
     if not np.any(np.isfinite(allx) & (allx > 0)):
-        report.stats.append(f'Edges in {MARGINAL_UNITS[unit].lower()}: these particles have no '
+        report.stats.append(f'Edges in {_shown(MARGINAL_UNITS[unit]).lower()}: these particles have no '
                             'such values, so the edges use the axes\' quantity')
         return None
     return out
+
+
+def _shown(text):
+    """*text* with its base unit shown in the app's chosen unit."""
+    from utils.unit import units
+    return units.relabel(text)
 
 
 def _edge_values(v, log):
@@ -219,7 +225,7 @@ def _edge_titles(panel, table, style, own):
             text = pretty(expr, view, style)
         except Exception:
             text = ''
-        unit = UNIT_SUFFIX[panel['marginals_unit']]
+        unit = _shown(UNIT_SUFFIX[panel['marginals_unit']])
         auto.append(text if text.endswith(unit.split(' ')[-1]) else f'{text} {unit}'.strip())
     return [t or a for t, a in zip(typed, auto)]
 
@@ -399,74 +405,79 @@ def sd_envelope(ax, fx, fy, res, color, log_x, log_y):
 
 
 def counting_band_fits(panel, table=None) -> bool:
-    """Whether a panel plots an isotope ratio against its denominator's counts.
+    """Whether a panel's Y is an isotope ratio of counts, the ratio the band is defined for.
 
-    The counting-statistics band is only defined on those axes: Y must be
-    one isotope divided by another, both in counts, and X the denominator
-    isotope in counts. On any other axes the band would be drawn in the
-    wrong units.
+    The counting-statistics band describes the spread of a ratio of counted
+    ions, so Y must be one isotope divided by another, both read in counts
+    (a mass-bias factor is allowed). X can be anything: the band is built
+    from each particle's own denominator counts.
     """
-    import re
-    from results.figure_builder.core.isotopes import ratio_parts, split_factor
-    y, _factor = split_factor(panel.get('y') or '')
-    if re.search(r'\b(?!counts:)[a-z]+:', y):
-        return False
-    parts = ratio_parts(y, table)
-    if parts is None:
-        return False
-    m = re.fullmatch(r'(?:counts:)?`?([A-Za-z0-9]+)`?', (panel.get('x') or '').strip())
-    if not m:
-        return False
-    name = m.group(1)
-    if table is not None:
-        try:
-            name = table.resolve_label(name)
-        except Exception:
-            pass
-    return name == parts[1]
+    from results.figure_builder.core.isotopes import is_count_ratio, ratio_parts, split_factor
+    y = split_factor(panel.get('y') or '')[0]
+    return ratio_parts(y, table) is not None and is_count_ratio(y, table)
 
 
 def poisson_band(ax, panel, data, report, table=None):
-    """Counting-statistics envelope of a ratio plotted against the denominator's counts.
+    """Counting-statistics envelope of an isotope ratio, along any X axis.
 
-    For a ratio R of two Poisson counts with denominator counts λ, the
-    expected standard deviation is σ = √(R(1 + R)/λ). The band is
-    R̄ ± k·σ around each group's mean ratio, over the plotted counts. A ratio
-    written ``(A / B) * f``, a mass-bias corrected ratio, gets the band of the
-    measured ratio scaled by the same factor. It is
-    left out, with a note, unless the panel's axes are the ones the formula
-    describes (see :func:`counting_band_fits`). The band never widens the
-    Y axis: at a few counts it spans most of the possible ratios, so the axis
-    keeps the range of the particles and the band runs off its edges.
+    For a ratio R of two Poisson counts with denominator counts N, the
+    expected standard deviation is σ = √(R(1 + R)/N). The band is R̄ ± k·σ
+    around each group's mean measured ratio, with N each particle's own
+    count of the denominator isotope, so it is exact when X is those counts
+    and follows the particles' typical count when X is a mass, moles, size
+    or anything else (see
+    :func:`results.figure_builder.core.isotopes.counting_envelope`). A
+    mass-bias corrected ratio gets the band of the measured ratio scaled by
+    the correction factor: the written factor of ``(A / B) * f``, or the mean
+    factor of each group's particles for a ratio corrected per sample. The
+    share of particles inside the band uses each particle's own σ. The band
+    is left out, with a note, unless Y is an isotope ratio of counts. It
+    never widens the Y axis: at a few counts it spans most of the possible
+    ratios, so the axis keeps the range of the particles and the band runs
+    off its edges.
     """
     k = float_or_none(panel.get('poisson_band')) or 0
     if k <= 0:
         return
-    if not counting_band_fits(panel, table):
+    if table is None or not counting_band_fits(panel, table):
         report.stats.append('Counting-statistics band left out: it needs Y = one isotope divided by '
-                            'another, in counts, and X = the denominator isotope in counts')
+                            'another, read in counts')
         return
+    from results.figure_builder.core.isotopes import (
+        counting_envelope, particle_sigma, ratio_parts, split_factor)
+    from results.figure_builder.core.massbias import group_factor
+    from results.figure_builder.core.common import handles
     y_range = ax.get_ylim()
-    from results.figure_builder.core.isotopes import split_factor
-    factor = split_factor(panel.get('y') or '')[1]
+    den_label = ratio_parts(split_factor(panel.get('y') or '')[0], table)[1]
+    den = table.column(f'counts:{den_label}')
+    index = handles(report, panel).get('band_index') or {}
+    log_x = ax.get_xscale() == 'log'
     for g, x, y in data:
-        ok = np.isfinite(x) & np.isfinite(y) & (x > 0)
+        idx = index.get(g.key)
+        if idx is None or len(idx) != len(x):
+            continue
+        n = den[idx]
+        ok = np.isfinite(x) & np.isfinite(y) & (n > 0)
+        if log_x:
+            ok &= x > 0
         if ok.sum() < 3:
             continue
-        y = y / factor
-        r = float(np.mean(y[ok]))
-        lo, hi = float(x[ok].min()), float(x[ok].max())
-        xs = np.logspace(np.log10(max(lo, 1e-9)), np.log10(hi * 1.05), 200) if ax.get_xscale() == 'log' \
-            else np.linspace(lo, hi * 1.05, 200)
-        sigma = np.sqrt(max(r, 0) * (1 + max(r, 0)) / np.maximum(xs, 1.0))
-        upper, lower = r + k * sigma, np.maximum(r - k * sigma, 0)
+        factor = group_factor(panel, table, getattr(g, 'mask', None))
+        measured = y / factor
+        r = float(np.mean(measured[ok]))
+        env = counting_envelope(x[ok], n[ok], r, k, log_x)
+        if env is None:
+            continue
+        xs, lower, upper = env
         if ax.get_yscale() == 'log':
             lower = np.maximum(lower, r * 1e-3)
         ax.fill_between(xs, lower * factor, upper * factor, color=g.color, alpha=0.12, lw=0, zorder=1)
         ax.plot(xs, upper * factor, color=g.color, lw=1.0, ls='--', zorder=4)
         ax.plot(xs, lower * factor, color=g.color, lw=1.0, ls='--', zorder=4)
-        inside = np.abs(y[ok] - r) <= k * np.sqrt(max(r, 0) * (1 + max(r, 0)) / np.maximum(x[ok], 1.0))
-        report.stats.append(f'{g.label}: mean ratio {r:.4g}; {100 * inside.mean():.1f}% of particles inside '
+        inside = np.abs(measured[ok] - r) <= k * particle_sigma(n[ok], r)
+        mean_text = (f'mean ratio {r * factor:.4g} (measured {r:.4g}, ×{factor:.5f})'
+                     if abs(factor - 1.0) > 1e-12 else f'mean ratio {r:.4g}')
+        report.stats.append(f'{g.label}: {mean_text}; {100 * inside.mean():.1f}% of particles inside '
                             f'the ±{k:g}σ counting-statistics band')
     ax.set_ylim(y_range)
 
