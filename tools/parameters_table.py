@@ -314,6 +314,9 @@ class ParametersDelegate(QStyledItemDelegate):
         col = index.column()
         self.initStyleOption(option, index)
         rect = option.rect
+        if not isinstance(rect, QRect):
+            super().paint(painter, option, index)
+            return
         d = index.data(Qt.UserRole) or {}
         selected = bool(option.state & QStyle.State_Selected)
 
@@ -403,7 +406,7 @@ class ParametersDelegate(QStyledItemDelegate):
                 return True
 
         if col == COL_WINDOW:
-            if event.type() == QEvent.MouseButtonRelease:
+            if event.type() == QEvent.MouseButtonRelease and isinstance(option.rect, QRect):
                 rel_x = event.position().x() - option.rect.x()
                 if rel_x < 24:
                     d = index.data(Qt.UserRole) or {}
@@ -520,7 +523,10 @@ class ParametersDelegate(QStyledItemDelegate):
             model.setData(index, (use, size), Qt.EditRole)
 
     def updateEditorGeometry(self, editor, option, index):
-        editor.setGeometry(option.rect)
+        if isinstance(option.rect, QRect):
+            editor.setGeometry(option.rect)
+        else:
+            super().updateEditorGeometry(editor, option, index)
 
 
 def _is_cell_disabled(d, col):

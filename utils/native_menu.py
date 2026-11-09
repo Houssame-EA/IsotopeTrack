@@ -29,7 +29,7 @@ import sys
 from dataclasses import dataclass, field
 
 from PySide6.QtCore import QBuffer, QEvent, QIODevice, QObject, QPoint, Qt, QTimer
-from PySide6.QtGui import QGuiApplication, QKeyEvent, QKeySequence
+from PySide6.QtGui import QGuiApplication, QKeyEvent, QKeySequence, QWindow
 from PySide6.QtWidgets import QApplication, QMenu, QMenuBar, QWidgetAction
 
 _log = logging.getLogger("IsotopeTrack.native_menu")
@@ -282,7 +282,7 @@ class AppKitBackend:
             trace("reset: skipped")
             return
         for window in QGuiApplication.topLevelWindows():
-            if not window.isVisible():
+            if not isinstance(window, QWindow) or not window.isVisible():
                 continue
             try:
                 view = self.objc.objc_object(c_void_p=int(window.winId()))
@@ -476,7 +476,7 @@ def release_buttons(menu: QMenu) -> None:
     """
     held = QGuiApplication.mouseButtons()
     window = menu.windowHandle() if menu.isVisible() else None
-    if held == Qt.NoButton or window is None:
+    if held == Qt.NoButton or not isinstance(window, QWindow):
         return
     try:
         from PySide6.QtTest import QTest
