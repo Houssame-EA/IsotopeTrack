@@ -323,3 +323,28 @@ def test_nothing_is_installed_off_macos_without_a_backend(app, monkeypatch):
     monkeypatch.setenv(nm.OPT_OUT, "1")
     assert nm.install_native_menus(app) is False
     assert not nm._INSTALLED
+
+
+def test_menu_rebuilt_while_open_is_closed_without_a_crash(app):
+    """A menu cleared while the system menu is open (its chosen action deleted) just closes."""
+
+    class Rebuilding(FakeBackend):
+        """Clears the Qt menu while the system menu is up, as a panel refreshing it would."""
+
+        def popup(self, entries, pos):
+            chosen = super().popup(entries, pos)
+            self.menu.clear()
+            return chosen
+
+    b = Rebuilding()
+    nm.uninstall_native_menus()
+    assert nm.install_native_menus(app, backend=b)
+    try:
+        menu = QMenu()
+        menu.addAction("Node 1")
+        b.menu = menu
+        b.pick = "Node 1"
+        assert menu.exec(QPoint(5, 5)) is None
+        assert not menu.isVisible()
+    finally:
+        nm.uninstall_native_menus()

@@ -1136,6 +1136,8 @@ class SmartInsightsPanel(QWidget):
         self._node_btn.setToolTip("Search one Single or Multi-Sample node, by the number shown on "
                                   "it; its plots connect straight to that node")
         self._node_menu = QMenu(self._node_btn)
+        self._node_menu_stale = False
+        self._node_menu.aboutToHide.connect(self._refill_node_menu_later)
         self._node_btn.setMenu(self._node_menu)
         self._fill_node_menu()
         types_row = QHBoxLayout()
@@ -1433,8 +1435,8 @@ class SmartInsightsPanel(QWidget):
     def _sync_nodes(self) -> bool:
         """Follow the numbered nodes on the canvas; return whether the searched node changed.
 
-        Until the user picks, the lowest-numbered node is searched. A picked
-        node that is removed hands over to the lowest-numbered one.
+        Until the user picks a node, every node is searched ("All"), also
+        after a node is added. A picked node that is removed hands back to "All".
         """
         entries = self._node_entries()
         numbers = [e[0] for e in entries]
@@ -1442,19 +1444,28 @@ class SmartInsightsPanel(QWidget):
         if self._node_number and self._node_number not in numbers:
             self._node_auto = True
         if self._node_auto:
-            self._node_number = numbers[0] if numbers else 0
+            self._node_number = 0
         if entries != self._node_list or before != self._node_number:
             self._node_list = entries
             self._fill_node_menu()
         return before != self._node_number
 
     def _fill_node_menu(self):
-        """List every numbered node and the choice of searching across them all."""
+        """List "All" (every loaded sample) and every numbered node.
+
+        The menu is not rebuilt while it is open, which would delete the
+        action under the pointer; it is rebuilt as soon as it closes.
+        """
+        if self._node_menu.isVisible():
+            self._node_menu_stale = True
+            self._node_btn.setText(f"Node: {self._node_number or 'all'}  ▾")
+            return
+        self._node_menu_stale = False
         self._node_menu.clear()
         from PySide6.QtGui import QActionGroup
         group = QActionGroup(self._node_menu)
         group.setExclusive(True)
-        every = self._node_menu.addAction("All selector nodes")
+        every = self._node_menu.addAction("All")
         every.setCheckable(True)
         every.setChecked(not self._node_number)
         group.addAction(every)
@@ -1470,6 +1481,11 @@ class SmartInsightsPanel(QWidget):
             action.triggered.connect(lambda _checked=False, k=number: self._pick_node(k))
         self._node_btn.setText(f"Node: {self._node_number or 'all'}  ▾")
         self._node_btn.setVisible(bool(self._node_list))
+
+    def _refill_node_menu_later(self):
+        """Rebuild the node menu once it has closed, if nodes changed while it was open."""
+        if self._node_menu_stale:
+            QTimer.singleShot(0, self._fill_node_menu)
 
     def current_node(self) -> int:
         """Return the number of the node searched, or 0 when searching across all of them."""
@@ -1494,8 +1510,8 @@ class SmartInsightsPanel(QWidget):
         self.set_node(number)
 
     def _resolve(self) -> AnalysisScope:
-        """The scope for the node being searched, or across the canvas."""
-        return resolve_scope(self._scene, self._pw, self._node_number)
+        """The scope for the node being searched, or every loaded sample under "All"."""
+        return resolve_scope(self._scene, self._pw, self._node_number, every=not self._node_number)
 
     def _pick_focus(self, symbol: str):
         """Search around the element picked from the menu, and log the choice."""

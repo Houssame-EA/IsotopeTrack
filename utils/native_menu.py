@@ -450,6 +450,9 @@ class NativeMenus(QObject):
                 trace("run: %d entries, showing at %s", len(entries), menu.pos())
                 if entries:
                     chosen = self.backend.popup(entries, menu.pos())
+                if chosen is not None and not alive(chosen):
+                    trace("run: the chosen action was deleted while the menu was open")
+                    chosen = None
                 trace("run: system menu closed, chosen=%r",
                       chosen.text() if chosen is not None else None)
         except Exception:
@@ -463,6 +466,19 @@ class NativeMenus(QObject):
                 self.busy = False
                 trace("run: done, Qt menu visible=%s, buttons=%s",
                       menu.isVisible(), QGuiApplication.mouseButtons())
+
+
+def alive(obj) -> bool:
+    """Whether a Qt object still exists on the C++ side.
+
+    A menu can be rebuilt while the system menu is open, which deletes the
+    action that was then chosen.
+    """
+    try:
+        from shiboken6 import isValid
+        return bool(isValid(obj))
+    except Exception:
+        return False
 
 
 def release_buttons(menu: QMenu) -> None:
@@ -499,7 +515,7 @@ def deliver(menu: QMenu, chosen) -> None:
     """
     chain = [menu]
     try:
-        if chosen is None or not chosen.isEnabled():
+        if chosen is None or not alive(chosen) or not chosen.isEnabled():
             menu.close()
             return
         if not menu.isVisible():

@@ -1008,7 +1008,7 @@ def canvas_samples(scene) -> tuple[list[str], int]:
     return _dedupe(s for node in nodes for s in checked_samples(node)), len(nodes)
 
 
-def resolve_scope(scene, parent_window, number: int = 0) -> AnalysisScope:
+def resolve_scope(scene, parent_window, number: int = 0, every: bool = False) -> AnalysisScope:
     """Collect the samples to search and work out their replicate groups.
 
     With *number*, the search follows that one selector node as its output
@@ -1026,6 +1026,8 @@ def resolve_scope(scene, parent_window, number: int = 0) -> AnalysisScope:
         parent_window: Main window holding the loaded particle data.
         number: A selector node's number; 0, or a number no node carries,
             searches across the canvas instead.
+        every: Without a node, search every loaded sample, whatever the
+            selector nodes have checked.
 
     Returns:
         The resolved scope, with empty ``sample_names`` when nothing is loaded
@@ -1050,7 +1052,7 @@ def resolve_scope(scene, parent_window, number: int = 0) -> AnalysisScope:
                              len(selector_nodes(scene)), number, node_labels(node))
     checked, selectors = canvas_samples(scene)
     picked = [n for n in names if n in set(checked)]
-    if picked:
+    if picked and not every:
         names, origin = picked, "canvas"
     counts = tuple(len(pool.get(n, ())) for n in names)
     pool_ids = tuple(id(pool.get(n)) for n in names)
