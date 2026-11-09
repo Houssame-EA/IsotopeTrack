@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QCursor, QColor
 from matplotlib.figure import Figure
+from matplotlib.text import Text
 import numpy as np
 import math
 import re
@@ -1382,6 +1383,125 @@ def _cell_spread_value(vals, spread):
     return None
 
 
+def _log_norm(values, vmin=None, vmax=None):
+    """Logarithmic colour scale over the positive *values*, or ``None`` when there are none.
+
+    The colour bar then reads the values themselves (10³, 10⁴ …) rather
+    than their logarithms. A custom range is used when both ends are
+    positive numbers.
+    """
+    from matplotlib.colors import LogNorm
+    finite = values[np.isfinite(values) & (values > 0)]
+    if not finite.size:
+        return None
+    lo, hi = float(finite.min()), float(finite.max())
+    try:
+        if vmin is not None and vmax is not None and 0 < float(vmin) < float(vmax):
+            lo, hi = float(vmin), float(vmax)
+    except (TypeError, ValueError):
+        pass
+    if hi <= lo:
+        hi = lo * 10
+    return LogNorm(vmin=lo, vmax=hi)
+
+
+def _label_log_colorbar(cbar):
+    """Label a log colour bar in the figure's own font.
+
+    Every tick is written by :func:`_log_tick` in plain text, so the top
+    and bottom of the bar read alike. A range under two decades also gets
+    2 and 5 × 10ⁿ so it still has enough labels.
+    """
+    from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
+    lo, hi = cbar.norm.vmin, cbar.norm.vmax
+    if lo and hi and hi / lo < 100:
+        cbar.ax.yaxis.set_major_locator(LogLocator(subs=(1.0, 2.0, 5.0)))
+    cbar.ax.yaxis.set_major_formatter(FuncFormatter(_log_tick))
+    cbar.ax.yaxis.set_minor_formatter(NullFormatter())
+
+
+def _log_tick(value, _pos=None):
+    """A log colour-bar tick: plain for everyday numbers, otherwise a × 10ⁿ.
+
+    The power is set with ``\\mathregular``, which draws it in the tick
+    label's own font, size and weight, like the plain numbers, and works in
+    fonts that have no superscript characters.
+    """
+    if value <= 0:
+        return ''
+    if 1e-3 <= value < 1e4:
+        return f"{value:g}"
+    exponent = int(math.floor(math.log10(value) + 1e-9))
+    mantissa = round(value / 10 ** exponent, 3)
+    power = f"10^{{{exponent}}}"
+    body = power if mantissa == 1 else f"{mantissa:g}\\times{power}"
+    return f"$\\mathregular{{{body}}}$"
+
+
+class _CellTextGroup:
+    """The numbers written in one heatmap's cells, sized together to fit the cells.
+
+    The size is worked out when the figure is drawn, once the cells' size
+    on screen is known: the chosen font size is kept when every number fits
+    its cell, and otherwise all numbers shrink by the same amount, so none
+    runs into the next cell and they stay alike.
+    """
+
+    MIN_SIZE = 5.0
+
+    def __init__(self, ax, size):
+        self.ax = ax
+        self.size = float(size)
+        self.texts = []
+        self._fitted_for = None
+
+    def add(self, text):
+        """Register one cell's text."""
+        self.texts.append(text)
+        return text
+
+    def fit(self, renderer):
+        """Size every cell text for the cells as they are about to be drawn."""
+        (x0, y0), (x1, y1) = self.ax.transData.transform([(0, 0), (1, 1)])
+        cell_w, cell_h = abs(x1 - x0), abs(y1 - y0)
+        key = (round(cell_w, 1), round(cell_h, 1), renderer.dpi)
+        if key == self._fitted_for or cell_w <= 0 or cell_h <= 0:
+            return
+        self._fitted_for = key
+        widest = tallest = 0.0
+        for t in self.texts:
+            t.set_fontsize(self.size)
+            box = t.get_window_extent(renderer)
+            widest, tallest = max(widest, box.width), max(tallest, box.height)
+        scale = 1.0
+        if widest > 0:
+            scale = min(scale, 0.92 * cell_w / widest)
+        if tallest > 0:
+            scale = min(scale, 0.9 * cell_h / tallest)
+        size = max(self.MIN_SIZE, self.size * scale)
+        for t in self.texts:
+            t.set_fontsize(size)
+
+
+class _CellText(Text):
+    """A heatmap cell's text that fits itself and its neighbours to the cells before drawing."""
+
+    def __init__(self, group, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._group = group
+
+    def draw(self, renderer):
+        if self.get_visible():
+            self._group.fit(renderer)
+        super().draw(renderer)
+
+
+def _text_color_on(im, value):
+    """Black or white, whichever reads better on the cell colour of *value*."""
+    r, g, b, _a = im.cmap(im.norm(value))
+    return 'white' if 0.299 * r + 0.587 * g + 0.114 * b < 0.5 else 'black'
+
+
 def _fmt_cell_number(v):
     """Format one numeric cell value with the heatmap's standard precision.
 
@@ -1390,7 +1510,12 @@ def _fmt_cell_number(v):
     in every cell only adds clutter — the sole exception is CV, which is a
     percentage *of the mean* rather than of the data type and so carries its
     own '%' at the call site.
+
+    Positive values under 0.01 keep two significant figures, so a small
+    value in pg or µg never reads 0.00.
     """
+    if 0 < v < 0.01:
+        return f'{v:.2g}'
     if v >= 1000:
         return f'{v:.0f}'
     if v >= 1:
@@ -1762,11 +1887,13 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
     matrix = np.nan_to_num(np.array(matrix), nan=0.0)
 
     plot_matrix = matrix.copy()
-    if log_scale:
-        plot_matrix = np.log10(np.where(plot_matrix > 0, plot_matrix, np.nan))
-
     imshow_kw = dict(cmap=cscale, aspect='auto', interpolation='nearest')
-    if use_custom_range:
+    if log_scale:
+        plot_matrix = np.where(plot_matrix > 0, plot_matrix, np.nan)
+        norm = _log_norm(plot_matrix, vmin_cfg, vmax_cfg)
+        if norm is not None:
+            imshow_kw['norm'] = norm
+    elif use_custom_range:
         imshow_kw['vmin'] = vmin_cfg
         imshow_kw['vmax'] = vmax_cfg
     im = ax.imshow(plot_matrix, **imshow_kw)
@@ -1828,36 +1955,35 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
 
     if show_cbar:
         cbar = fig.colorbar(im, ax=ax, shrink=0.8)
-        cbar_label = dt
         if log_scale:
-            cbar_label = f"log10({dt})"
-        apply_font_to_colorbar_standalone(cbar, cfg, cbar_label)
+            _label_log_colorbar(cbar)
+        apply_font_to_colorbar_standalone(cbar, cfg, dt)
 
     eff_fs = ann_fs if ann_fs else fc['size']
+    cell_texts = _CellTextGroup(ax, eff_fs)
     if show_nums and plot_matrix.size < 1000:
         weight = 'bold' if fc['bold'] else 'normal'
-        mx = np.nanmax(plot_matrix) if not np.all(np.isnan(plot_matrix)) else 1
         for i in range(len(labels)):
             for j in range(len(all_elems)):
                 v = plot_matrix[i, j]
                 v_orig = matrix[i, j]
                 if not np.isnan(v) and v_orig > 0:
-                    tc = 'white' if v > mx * 0.5 else 'black'
+                    tc = _text_color_on(im, v)
                     txt = _fmt_cell_number(v_orig)
                     sp = spread_matrix[i][j]
                     if sp is not None:
-                      
                         if isinstance(sp, tuple) and sp[0] == '%':
-                            txt = f'{txt} ({sp[1]:.0f}%)'
+                            txt = f'{txt}\n({sp[1]:.0f}%)'
                         elif isinstance(sp, tuple):
-                            txt = (f'{txt} ({_fmt_cell_number(sp[0])}'
+                            txt = (f'{txt}\n({_fmt_cell_number(sp[0])}'
                                    f'–{_fmt_cell_number(sp[1])})')
                         else:
-                            txt = f'{txt} ± {_fmt_cell_number(sp)}'
-                    ax.text(j, i, txt, ha='center', va='center',
-                            color=tc, fontsize=eff_fs,
-                            fontfamily=fc['family'], weight=weight,
-                            style='italic' if fc['italic'] else 'normal')
+                            txt = f'{txt}\n± {_fmt_cell_number(sp)}'
+                    cell_texts.add(ax.add_artist(_CellText(
+                        cell_texts, j, i, txt, ha='center', va='center',
+                        multialignment='center', color=tc, fontsize=eff_fs,
+                        fontfamily=fc['family'], weight=weight,
+                        style='italic' if fc['italic'] else 'normal')))
 
     if bucket_legend:
         from matplotlib.patches import Patch

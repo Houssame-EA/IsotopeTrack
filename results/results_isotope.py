@@ -2859,7 +2859,7 @@ class IsotopicRatioDisplayDialog(QDialog):
     def _build_labels(self, cfg, sample_name=None):
         e1 = cfg.get('element1', '')
         e2 = cfg.get('element2', '')
-        x_elem = cfg.get('x_axis_element', e2)
+        x_elem = cfg.get('x_axis_element') or e2
         dt = cfg.get('data_type_display', 'Counts')
         lm = cfg.get('label_mode', 'Symbol')
 

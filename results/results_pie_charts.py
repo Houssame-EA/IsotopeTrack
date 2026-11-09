@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 
 from results.shared_plot_utils import copy_figure_to_clipboard
 from results.shared_plot_utils import (
-    FontSettingsGroup, get_display_name, LABEL_MODES,
+    FontSettingsGroup, get_display_name, LABEL_MODES, declutter_pie_labels,
     format_element_label, format_combination_label, Renderer, per_ml_active,
     per_ml_factor, conc_meta_available, single_sample_name, format_per_ml,
     pick_color_hex, seed_suggested_element_colors,
@@ -577,6 +577,7 @@ class MplPieCanvas(QWidget):
         saved      = cfg.get('label_positions', {}).get(sp_key, {})
 
         anns: dict = {}
+        placed = []
         for wedge, label, text in zip(wedges, labels, texts):
             theta = np.radians((wedge.theta1 + wedge.theta2) / 2)
             exp   = explode_d.get(label, 0.0)
@@ -586,15 +587,17 @@ class MplPieCanvas(QWidget):
 
             if label in saved:
                 lx, ly = saved[label]
+                ha = 'center'
             else:
                 lx = label_dist * (1.0 + exp) * np.cos(theta)
                 ly = label_dist * (1.0 + exp) * np.sin(theta)
+                ha = 'left' if lx >= 0 else 'right'
 
             ann = ax.annotate(
                 text,
                 xy=(tip_x, tip_y),
                 xytext=(lx, ly),
-                ha='center', va='center',
+                ha=ha, va='center',
                 fontsize=fs, color=fc, fontfamily=ff,
                 fontweight=fw, fontstyle=fst,
                 arrowprops=dict(
@@ -614,7 +617,10 @@ class MplPieCanvas(QWidget):
             except AttributeError:
                 _itk_log.exception("Handled exception in _draw_one")
             anns[label] = ann
+            if label not in saved:
+                placed.append(ann)
 
+        declutter_pie_labels(ax, placed)
         self._anns[sp_key] = anns
 
         # â"€â"€ Legend â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€

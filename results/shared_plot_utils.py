@@ -2151,6 +2151,133 @@ def get_display_name(original_name: str, config: dict) -> str:
     return config.get('sample_name_mappings', {}).get(original_name, original_name)
 
 
+def declutter_pie_labels(ax, annotations, pad=0.03):
+    """Keep pie labels apart so none overlaps another, measured as drawn.
+
+    Each label keeps its side of the pie; on each side, labels are pushed
+    down one after another until their drawn boxes no longer touch, which
+    is what small slices bunched together need, and moved out beside the
+    pie so they never sit on a slice. When the labels of one side are taller
+    together than the plot, their font is made smaller until they fit. The
+    labels are placed again whenever the figure is resized, since their
+    size on screen does not change with it.
+
+    Args:
+        ax: The pie's axes.
+        annotations: The labels' annotations; labels the user placed by hand
+            should be left out.
+        pad: Smallest gap kept between two labels, in pie radii.
+    """
+    anns = [a for a in annotations if a is not None]
+    if not anns:
+        return
+    for a in anns:
+        a._itk_home = tuple(a.xyann)
+        a._itk_size = a.get_fontsize()
+    ax._itk_pie_lims = (ax.get_xlim(), ax.get_ylim())
+    ax._itk_pie_labels = anns
+    ax._itk_pie_pad = pad
+    _place_pie_labels(ax)
+    fig = ax.figure
+    if getattr(fig, '_itk_pie_resize', None) is None:
+        try:
+            fig._itk_pie_resize = fig.canvas.mpl_connect('resize_event', lambda _e, f=fig: _replace_pie_labels(f))
+        except Exception:
+            fig._itk_pie_resize = None
+
+
+def _spread_centres(targets, heights):
+    """Centres closest to *targets* (top to bottom) with no two boxes overlapping.
+
+    Boxes that would touch are joined into one block, stacked in order and
+    centred on the mean of their targets, so each label moves as little as
+    it can from its own slice.
+    """
+    blocks = []
+    for k, (t, h) in enumerate(zip(targets, heights)):
+        blocks.append({'items': [k], 'offsets': [0.0], 'height': h, 'aim': [t + h / 2.0]})
+        while len(blocks) > 1:
+            upper, lower = blocks[-2], blocks[-1]
+            upper_bottom = _block_top(upper) - upper['height']
+            if _block_top(lower) <= upper_bottom + 1e-12:
+                break
+            shift = upper['height']
+            upper['items'] += lower['items']
+            upper['offsets'] += [o + shift for o in lower['offsets']]
+            upper['aim'] += lower['aim']
+            upper['height'] += lower['height']
+            blocks.pop()
+    out = [0.0] * len(targets)
+    for b in blocks:
+        top = _block_top(b)
+        for k, o in zip(b['items'], b['offsets']):
+            out[k] = top - o - heights[k] / 2.0
+    return out
+
+
+def _block_top(block):
+    """Top of a block of stacked boxes placed so their centres sit nearest their aims."""
+    return float(np.mean([a + o for a, o in zip(block['aim'], block['offsets'])]))
+
+
+def _replace_pie_labels(fig):
+    """Place the labels of every pie of *fig* again, after a resize."""
+    for ax in fig.axes:
+        if getattr(ax, '_itk_pie_labels', None):
+            _place_pie_labels(ax)
+
+
+def _place_pie_labels(ax):
+    """One placement of the labels set up by :func:`declutter_pie_labels`."""
+    anns = ax._itk_pie_labels
+    try:
+        renderer = ax.figure.canvas.get_renderer()
+    except Exception:
+        return
+    xlim, ylim = ax._itk_pie_lims
+    ax.set_xlim(*xlim)
+    ax.set_ylim(*ylim)
+    for a in anns:
+        a.xyann = a._itk_home
+        a.set_fontsize(a._itk_size)
+    room = ax.get_window_extent(renderer).height * 0.92
+    for side in (1, -1):
+        group = [a for a in anns if (a.xyann[0] >= 0) == (side > 0)]
+        tall = sum(a.get_window_extent(renderer).height for a in group) * 1.15
+        if group and room > 0 and tall > room:
+            for a in group:
+                a.set_fontsize(max(5.0, a.get_fontsize() * room / tall))
+    for _ in range(6):
+        inv = ax.transData.inverted()
+        items = []
+        for a in anns:
+            bb = a.get_window_extent(renderer)
+            (_x0, y0), (_x1, y1) = inv.transform([(bb.x0, bb.y0), (bb.x1, bb.y1)])
+            x, y = a.xyann
+            items.append([a, float(x), float(y), abs(float(y1) - float(y0))])
+        pad = max(ax._itk_pie_pad, 0.25 * float(np.median([i[3] for i in items])))
+        moved = False
+        for side in (1, -1):
+            group = sorted((i for i in items if (i[1] >= 0) == (side > 0)),
+                           key=lambda i: -i[0]._itk_home[1])
+            targets = [i[0]._itk_home[1] for i in group]
+            placed = _spread_centres(targets, [i[3] + pad for i in group])
+            for i, y in zip(group, placed):
+                if abs(i[2] - y) > 1e-9:
+                    moved = True
+                i[2] = y
+        for a, x, y, h in items:
+            reach = max(abs(y) - h / 2.0, 0.0)
+            clear = float(np.sqrt(max(1.12 ** 2 - reach ** 2, 0.0)))
+            a.xyann = (float(np.sign(x) or 1.0) * max(abs(x), clear), y)
+        lo, hi = ax.get_ylim()
+        new = (min(lo, min(i[2] - i[3] / 2.0 for i in items) - pad),
+               max(hi, max(i[2] + i[3] / 2.0 for i in items) + pad))
+        ax.set_ylim(*new)
+        if not moved and np.allclose(new, (lo, hi)):
+            break
+
+
 def make_viridis_colormap():
     """Create a viridis-like PyQtGraph ColorMap."""
     return pg.ColorMap(VIRIDIS_POSITIONS, VIRIDIS_COLORS)
@@ -4015,7 +4142,8 @@ def _add_det_limit_v(plot_item, cfg: dict):
     """Vertical detection limit line (for histogram / molar ratio plots)."""
     if not cfg.get('show_det_limit', False):
         return
-    val = float(cfg.get('det_limit_value', 1.0))
+    val = float(app_units.setting_for(cfg.get('det_limit_value', 1.0),
+                                      cfg.get('data_type_display', 'Counts')))
     log_x = cfg.get('log_x', False)
     pos = float(np.log10(max(val, 1e-12))) if log_x else val
     color = cfg.get('det_limit_color', '#DC2626')
@@ -4035,7 +4163,8 @@ def _add_det_limit_h(plot_item, cfg: dict):
     """Horizontal detection limit line (for box plot / scatter plots)."""
     if not cfg.get('show_det_limit', False):
         return
-    val = float(cfg.get('det_limit_value', 1.0))
+    val = float(app_units.setting_for(cfg.get('det_limit_value', 1.0),
+                                      cfg.get('data_type_display', 'Counts')))
     color = cfg.get('det_limit_color', '#DC2626')
     style = _QT_LINE.get(cfg.get('det_limit_style', 'dash'), _Qt.DashLine)
     width = int(cfg.get('det_limit_width', 2))

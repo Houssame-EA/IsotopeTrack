@@ -386,6 +386,31 @@ class AppUnits(QObject):
         kind = kind_of(label)
         return self.current.convert(value, kind) if kind else value
 
+    def setting_for(self, value, data_type):
+        """A number typed for a figure of *data_type*, saved in the base unit, in the chosen unit.
+
+        Bin widths, axis ranges and limit lines are saved in fg, fmol or nm
+        like the data, so projects stay the same whatever units are chosen.
+        Counts and other unit-free numbers come back unchanged.
+        """
+        kind = kind_of(data_type)
+        if not kind or value is None:
+            return value
+        try:
+            return self.current.convert(float(value), kind)
+        except (TypeError, ValueError):
+            return value
+
+    def saved_for(self, value, data_type):
+        """The reverse of :meth:`setting_for`: a number shown in the chosen unit, to save."""
+        kind = kind_of(data_type)
+        if not kind or value is None:
+            return value
+        try:
+            return self.current.to_base(float(value), kind)
+        except (TypeError, ValueError):
+            return value
+
     def base_label(self, text):
         """*text* with the chosen units put back to the base units.
 

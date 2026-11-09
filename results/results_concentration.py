@@ -734,12 +734,16 @@ class ConcentrationDisplayDialog(QDialog):
         ax.grid(axis='x', linestyle='--', alpha=0.35, zorder=1)
         ax.set_axisbelow(True)
 
-        if show_vals and n_grp:
-            extra = 0.04 + n_grp * 0.08
-            ax.set_position([ax.get_position().x0,
-                             ax.get_position().y0,
-                             ax.get_position().width * (1 - extra),
-                             ax.get_position().height])
+        engine = ax.figure.get_layout_engine()
+        if engine is not None and hasattr(engine, 'set'):
+            room = 0.0
+            if show_vals and n_grp:
+                inches = (8 + n_grp * 60 + 50) / 72.0
+                room = min(0.4, inches / max(ax.figure.get_figwidth(), 1.0))
+            try:
+                engine.set(rect=(0, 0, 1 - room, 1))
+            except TypeError:
+                pass
 
         apply_font_to_matplotlib(ax, cfg)
 

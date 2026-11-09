@@ -23,7 +23,7 @@ from collections import defaultdict
 
 from results.shared_plot_utils import copy_figure_to_clipboard
 from results.shared_plot_utils import (
-    make_font_properties, apply_font_to_matplotlib,
+    make_font_properties, apply_font_to_matplotlib, declutter_pie_labels,
     FontSettingsGroup, LegendGroup, ExportSettingsGroup,
     MplDraggableCanvas, get_display_name, download_matplotlib_figure, LABEL_MODES,
     format_combination_label, Renderer,
@@ -1208,7 +1208,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
                 self._update_stats(ad)
                 self._update_table(ad)
 
-            self.fig.tight_layout()
+            self.fig.tight_layout(rect=(0, 0, 1, 0.97))
             self.canvas.draw()
             self.canvas.snapshot_positions()
         except Exception as e:
@@ -1439,6 +1439,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
         fc = cfg.get('font_color', '#000000')
 
         anns: dict = {}
+        placed = []
         for wedge, text, combo_key in zip(wedges, texts, combo_keys):
             theta = np.radians((wedge.theta1 + wedge.theta2) / 2)
 
@@ -1447,15 +1448,17 @@ class SingleMultipleElementDisplayDialog(QDialog):
 
             if combo_key in saved:
                 lx, ly = saved[combo_key]
+                ha = 'center'
             else:
                 lx = label_d * (1.0 + exp_amt) * np.cos(theta)
                 ly = label_d * (1.0 + exp_amt) * np.sin(theta)
+                ha = 'left' if lx >= 0 else 'right'
 
             ann = ax.annotate(
                 text,
                 xy=(tip_x, tip_y),
                 xytext=(lx, ly),
-                ha='center', va='center',
+                ha=ha, va='center',
                 fontproperties=fp, color=fc,
                 arrowprops=dict(
                     arrowstyle='-',
@@ -1474,7 +1477,10 @@ class SingleMultipleElementDisplayDialog(QDialog):
             except AttributeError:
                 _itk_log.exception("Handled exception in _pie_one")
             anns[combo_key] = ann
+            if combo_key not in saved:
+                placed.append(ann)
 
+        declutter_pie_labels(ax, placed)
         if sp_key:
             self._anns[sp_key] = anns
 

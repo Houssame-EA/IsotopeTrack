@@ -139,18 +139,13 @@ def _stats_line(x, y, cfg) -> str:
 
 
 def _tidy_axes(pi):
-    """Plain tick numbers and room between tick labels on both axes.
+    """Plain tick numbers on both axes and room for the y title.
 
-    Values are never rescaled with an SI factor such as ``×1e+12``, and on
-    log axes fewer in-between values are written so they do not run into
-    each other.
+    Values are never rescaled with an SI factor such as ``×1e+12``; log
+    tick labels are thinned app-wide (see ``utils.pyqtgraph_patches``).
     """
     for side in ('bottom', 'left'):
-        axis = pi.getAxis(side)
-        axis.enableAutoSIPrefix(False)
-        if not getattr(axis, '_itk_thinned', False):
-            axis.logTickStrings = _thinned(axis.logTickStrings)
-            axis._itk_thinned = True
+        pi.getAxis(side).enableAutoSIPrefix(False)
     left = pi.getAxis('left')
     if not getattr(left, '_itk_room', False):
         left._updateWidth = _with_label_room(left, left._updateWidth)
@@ -171,21 +166,6 @@ def _with_label_room(axis, update_width):
             axis.setMaximumWidth(w)
             axis.setMinimumWidth(w)
     return update
-
-
-def _thinned(log_strings):
-    """Log tick labels keeping only 1, 2 and 5 × 10ⁿ when many share a decade."""
-    def strings(values, scale, spacing):
-        out = log_strings(values, scale, spacing)
-        if len(values) <= 3:
-            return out
-        kept = []
-        for v, s in zip(values, out):
-            mantissa = 10 ** (float(v) % 1.0)
-            keep = any(abs(mantissa - k) < 0.05 * k for k in (1, 2, 5, 10))
-            kept.append(s if keep else '')
-        return kept
-    return strings
 
 
 def _matrix_with_counts(particles, data_key):

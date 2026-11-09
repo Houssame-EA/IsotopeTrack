@@ -2135,7 +2135,7 @@ class TriangleDisplayDialog(QDialog):
                     # Clamp inter-subplot gaps — tight_layout is over-generous
                     # with ternary axis label room
                     if cfg.get('display_mode', '') == 'Individual Subplots':
-                        self.figure.subplots_adjust(hspace=0.15, wspace=0.08)
+                        self.figure.subplots_adjust(hspace=0.5, wspace=0.08)
                     self._last_layout_key = layout_key
                 if pending is not None:
                     self._pending_shared_cbar = None
