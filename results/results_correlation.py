@@ -14,16 +14,18 @@ from results.shared_plot_utils import copy_figure_to_clipboard, equalize_panels
 from results.shared_plot_utils import (
     FONT_FAMILIES, FontSettingsGroup, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING, get_font_config,
     apply_font_to_pyqtgraph, set_axis_labels, LABEL_MODES, format_label_text_tokens,
-    Renderer, build_axis_labels, apply_saturation_filter,
+    Renderer, apply_saturation_filter,
     apply_zero_filter, apply_log_transform,
     evaluate_equation_array, build_element_matrix, find_top_correlations,
     create_single_color_scatter, create_color_mapped_scatter, add_trend_line,
-    add_correlation_text, CustomColorBar,
+    CustomColorBar, make_viridis_colormap,
     get_sample_color, get_display_name,
     download_pyqtgraph_figure, pick_color_hex, _QT_LINE,
-    _apply_box,
+    _apply_box, parse_element_label,
 )
 from results import trend_selection as _sel
+from utils.unit import units
+from widget.unit_combo import UnitComboBox
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_correlation")
 
@@ -67,6 +69,115 @@ def _log_user_action(description: str, context: dict | None = None):
         return
     if ual is not None:
         ual.log_action("CLICK", description, context or {})
+
+
+STATS_MAX_LINES = 6
+"""Samples listed in one plot's statistics box before the rest are counted."""
+
+QUANTITY_NAMES = {
+    'Counts': 'counts',
+    'Element Mass (fg)': 'mass (fg)',
+    'Particle Mass (fg)': 'particle mass (fg)',
+    'Element Moles (fmol)': 'moles (fmol)',
+    'Particle Moles (fmol)': 'particle moles (fmol)',
+    'Element Diameter (nm)': 'diameter (nm)',
+    'Particle Diameter (nm)': 'particle diameter (nm)',
+}
+"""How each data type reads after an element name, as in the Figure Builder."""
+
+
+def quantity_name(data_type: str) -> str:
+    """Quantity and unit written after an element, e.g. ``mass (fg)`` for Element Mass (fg)."""
+    return QUANTITY_NAMES.get(data_type, data_type.lower())
+
+
+def _num(value: float) -> str:
+    """A fitted coefficient with three significant figures, large or small ones as a × 10ⁿ."""
+    if value == 0 or 1e-3 <= abs(value) < 1e4:
+        return f"{value:.3g}"
+    mantissa, exponent = f"{value:.2e}".split('e')
+    return f"{float(mantissa):.3g}×10<sup>{int(exponent)}</sup>"
+
+
+def line_equation_html(slope: float, intercept: float, log_x: bool, log_y: bool) -> str:
+    """The fitted line written in the data's own terms, as the Figure Builder writes it.
+
+    The line is fitted in plotted space. With both axes logarithmic it is the
+    power law ``y = A·x^b``; with one log axis the matching semi-log form.
+    """
+    sign = '+' if intercept >= 0 else '−'
+    if log_x and log_y:
+        return f"y = {_num(10 ** intercept)}·x<sup>{_num(slope)}</sup>"
+    if log_y:
+        return f"log y = {_num(slope)}x {sign} {_num(abs(intercept))}"
+    if log_x:
+        return f"y = {_num(slope)}·log x {sign} {_num(abs(intercept))}"
+    return f"y = {_num(slope)}x {sign} {_num(abs(intercept))}"
+
+
+def _stats_line(x, y, cfg) -> str:
+    """Fitted line, Pearson r and particle count of one series, for the statistics box.
+
+    The equation follows the trend-line toggle and r the correlation toggle;
+    r is the same Pearson coefficient as before, on the plotted values.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    parts = []
+    if cfg.get('show_trendline', True) and len(x) > 1 and np.ptp(x) > 0:
+        slope, intercept = np.polyfit(x, y, 1)
+        parts.append(line_equation_html(float(slope), float(intercept),
+                                        bool(cfg.get('log_x')), bool(cfg.get('log_y'))))
+    if cfg.get('show_correlation', True):
+        r = float(np.corrcoef(x, y)[0, 1])
+        if np.isfinite(r):
+            parts.append(f"r = {r:.3f}")
+    if not parts:
+        return ''
+    parts.append(f"n = {len(x):,}")
+    return ' &nbsp;·&nbsp; '.join(parts)
+
+
+def _tidy_axes(pi):
+    """Plain tick numbers on both axes and room for the y title.
+
+    Values are never rescaled with an SI factor such as ``×1e+12``; log
+    tick labels are thinned app-wide (see ``utils.pyqtgraph_patches``).
+    """
+    for side in ('bottom', 'left'):
+        pi.getAxis(side).enableAutoSIPrefix(False)
+    left = pi.getAxis('left')
+    if not getattr(left, '_itk_room', False):
+        left._updateWidth = _with_label_room(left, left._updateWidth)
+        left._itk_room = True
+        left._updateWidth()
+
+
+def _with_label_room(axis, update_width):
+    """Widen a left axis so its title never sits on top of the tick numbers.
+
+    PyQtGraph leaves room for only 80 % of the title's height, which a large
+    title font overflows.
+    """
+    def update():
+        update_width()
+        if axis.fixedWidth is None and axis.label.isVisible():
+            w = axis.maximumWidth() + axis.label.boundingRect().height() * 0.5 + 6
+            axis.setMaximumWidth(w)
+            axis.setMinimumWidth(w)
+    return update
+
+
+def _matrix_with_counts(particles, data_key):
+    """Particles × elements table of *data_key*, carrying the counts for the saturation check.
+
+    Saturation is a detector limit in counts, so the particles' counts ride
+    along in ``attrs['counts']`` whatever quantity is plotted.
+    """
+    df = build_element_matrix(particles, data_key)
+    if df is not None and data_key != 'elements':
+        df.attrs['counts'] = build_element_matrix(particles, 'elements')
+    return df
 
 
 def _fit_trend_lines(x, y, cfg):
@@ -382,7 +493,7 @@ class CorrelationSettingsDialog(QDialog):
 
         g = QGroupBox("Data Type")
         fl = QFormLayout(g)
-        self.data_type = QComboBox(); self.data_type.addItems(DATA_TYPE_OPTIONS)
+        self.data_type = UnitComboBox(); self.data_type.addItems(DATA_TYPE_OPTIONS)
         self.data_type.setCurrentText(self._config.get('data_type_display', 'Counts'))
         fl.addRow("Data Type:", self.data_type)
         layout.addWidget(g)
@@ -1664,6 +1775,9 @@ class CorrelationPlotDisplayDialog(QDialog):
             if not frames:
                 return
             df = pandas.concat(frames, ignore_index=True)
+            counts = [f.attrs.get('counts') for f in frames]
+            if all(c is not None for c in counts):
+                df.attrs['counts'] = pandas.concat(counts, ignore_index=True)
         else:
             df = pd_data.get('element_data')
 
@@ -1722,6 +1836,7 @@ class CorrelationPlotDisplayDialog(QDialog):
             self._subplot_context_by_plotitem = {}
             self._points_by_plot = {}
             self._plot_keys = {}
+            self._stats_by_plot = {}
             self._lasso = None
 
             self.plot_widget.clear()
@@ -1768,6 +1883,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                     primary_plot = pi
 
             if plot_data:
+                self._draw_stats_boxes(self.node.config)
                 self._draw_selections(self.node.config)
             self._primary_plot_item = primary_plot
             self._suppress_native_plot_menus()
@@ -1876,10 +1992,8 @@ class CorrelationPlotDisplayDialog(QDialog):
         mode = cfg.get('mode', 'Simple Element Correlation')
         if (mode == 'Simple Element Correlation' and c is not None
                 and cfg.get('color_element', 'None') != 'None'):
-            scatter = create_color_mapped_scatter(
-                pi, x, y, c, cfg, color,
-                element_name=cfg.get('color_element'),
-                active_color_bars=self.active_color_bars)
+            scatter = create_color_mapped_scatter(pi, x, y, c, cfg, color)
+            self._add_color_bar(pi, cfg, c)
         else:
             scatter = create_single_color_scatter(pi, x, y, cfg, color)
             if scatter is not None:
@@ -1923,41 +2037,10 @@ class CorrelationPlotDisplayDialog(QDialog):
 
         if trends is not None and len(trends.lines) > 1:
             pass
-        elif cfg.get('show_correlation', True) and len(x) > 1 and show_r:
-            if correlation_label:
-                try:
-                    r = float(np.corrcoef(x, y)[0, 1])
-                    if np.isfinite(r):
-                        fc = get_font_config(cfg)
-                        vr = pi.getViewBox().state['viewRange']
-                        x_pos = vr[0][0] + 0.05 * (vr[0][1] - vr[0][0])
-                        base_y = vr[1][0] + 0.95 * (vr[1][1] - vr[1][0])
-                        step = 0.055 * (vr[1][1] - vr[1][0])
-                        max_lines = 6
-                        if correlation_index < max_lines:
-                            y_pos = base_y - (correlation_index * step)
-                            txt = pg.TextItem(
-                                f"{correlation_label}: r = {r:.3f}",
-                                anchor=(0, 1),
-                                color=color if color else fc['color'],
-                            )
-                            pi.addItem(txt)
-                            txt.setPos(x_pos, y_pos)
-                        elif correlation_index == max_lines:
-                            hidden_count = max(correlation_count - max_lines, 0)
-                            if hidden_count > 0:
-                                y_pos = base_y - (max_lines * step)
-                                txt = pg.TextItem(
-                                    f"+{hidden_count} more",
-                                    anchor=(0, 1),
-                                    color=fc['color'],
-                                )
-                                pi.addItem(txt)
-                                txt.setPos(x_pos, y_pos)
-                except Exception:
-                    _itk_log.exception("Handled exception in _plot_scatter")
-            else:
-                add_correlation_text(pi, x, y, cfg)
+        elif show_r and len(x) > 1:
+            line = _stats_line(x, y, cfg)
+            if line:
+                self._stats_by_plot.setdefault(pi, []).append((correlation_label, color, line))
 
         if cfg.get('show_ref_line', False) and len(x) > 0:
             try:
@@ -1988,13 +2071,18 @@ class CorrelationPlotDisplayDialog(QDialog):
         return scatter
 
     def _apply_labels(self, pi, cfg):
+        """Name both axes like the Figure Builder: element, quantity and unit.
+
+        On a log axis the ticks already read as powers of ten, so the name
+        carries no ``log`` of its own.
+        """
         if cfg.get('mode') != 'Simple Element Correlation':
-            x_lbl = cfg.get('x_label', '') or cfg.get('x_equation', 'X-axis')
-            y_lbl = cfg.get('y_label', '') or cfg.get('y_equation', 'Y-axis')
-            xl = f"log({x_lbl})" if cfg.get('log_x') else x_lbl
-            yl = f"log({y_lbl})" if cfg.get('log_y') else y_lbl
+            xl = cfg.get('x_label', '') or cfg.get('x_equation', 'X-axis')
+            yl = cfg.get('y_label', '') or cfg.get('y_equation', 'Y-axis')
         else:
-            xl, yl = build_axis_labels(cfg)
+            noun = quantity_name(cfg.get('data_type_display', 'Counts'))
+            xl = f"{cfg.get('x_element', 'X')} {noun}"
+            yl = f"{cfg.get('y_element', 'Y')} {noun}"
             lm = cfg.get('label_mode', 'Symbol')
             xl = format_label_text_tokens(xl, lm, Renderer.HTML)
             yl = format_label_text_tokens(yl, lm, Renderer.HTML)
@@ -2002,6 +2090,7 @@ class CorrelationPlotDisplayDialog(QDialog):
 
         pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', False)))
         pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
+        _tidy_axes(pi)
 
         if not cfg.get('auto_x', True):
             pi.setXRange(cfg.get('x_min', 0), cfg.get('x_max', 1000), padding=0)
@@ -2079,6 +2168,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                 pi.getAxis('left').setStyle(showValues=False)
                 pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', False)))
                 pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
+                _tidy_axes(pi)
                 if not cfg.get('auto_x', True):
                     pi.setXRange(cfg.get('x_min', 0), cfg.get('x_max', 1000), padding=0)
             apply_font_to_pyqtgraph(pi, cfg)
@@ -2124,10 +2214,67 @@ class CorrelationPlotDisplayDialog(QDialog):
             legend_items.append((scatter, sample_label))
 
         self._apply_labels(pi, cfg)
-        if legend_items:
+        if legend_items and not self._stats_by_plot.get(pi):
             leg = pi.addLegend()
             for item, name in legend_items:
                 leg.addItem(item, name)
+
+    def _add_color_bar(self, pi, cfg, c):
+        """Colour scale of the colouring element, in the top-right corner of the plot.
+
+        It is pinned to the corner of the plot area, so zooming or resizing
+        never moves it over the points or out of view.
+        """
+        from results.results_isotope import InsetColorBarItem
+        values = np.asarray(c, dtype=float)
+        values = values[np.isfinite(values)]
+        if not values.size or np.nanmin(values) == np.nanmax(values):
+            return
+        noun = quantity_name(cfg.get('data_type_display', 'Counts'))
+        element = cfg.get('color_element', '')
+        if cfg.get('label_mode', 'Symbol') == 'Symbol':
+            element = parse_element_label(element)[0] or element
+        name = f"{element} {noun}"
+        cmap = make_viridis_colormap()
+        stops = [(p, tuple(int(v) for v in col[:3])) for p, col in zip(*cmap.getStops('byte'))]
+        bar = InsetColorBarItem(units.relabel(name), vmin=float(values.min()),
+                                vmax=float(values.max()), log=False, stops=stops)
+        bar.setParentItem(pi.vb)
+
+        def place(*_):
+            rect = pi.vb.boundingRect()
+            bar.setPos(max(0.0, rect.width() - bar.boxWidth() - 10), 10)
+
+        pi.vb.sigResized.connect(place)
+        place()
+
+    def _draw_stats_boxes(self, cfg):
+        """Write each plot's fitted line, r and particle count in a box, top left.
+
+        The box is pinned to the corner of the plot area like the Figure
+        Builder's legend, so it stays readable whatever the axis range. With
+        several samples in one plot, each gets a line in its own colour.
+        """
+        fc = get_font_config(cfg)
+        size = max(int(fc.get('size', 12)) - 4, 8)
+        for pi, rows in self._stats_by_plot.items():
+            shown = rows[:STATS_MAX_LINES]
+            html = []
+            for label, color, line in shown:
+                if label:
+                    html.append(f"<span style='color:{color}'>&#9632;</span> "
+                                f"<b>{label}</b>&nbsp; {line}")
+                else:
+                    html.append(line)
+            if len(rows) > len(shown):
+                html.append(f"+{len(rows) - len(shown)} more")
+            box = pg.TextItem(anchor=(0, 0), fill=pg.mkBrush(255, 255, 255, 225),
+                              border=pg.mkPen('#CBD5E1', width=1))
+            box.setHtml(f"<div style='font-family:{fc.get('family', 'Arial')}; "
+                        f"font-size:{size}pt; color:#1f2937'>{'<br>'.join(html)}</div>")
+            box.setZValue(90)
+            box.setParentItem(pi.vb)
+            box.setPos(10, 10)
 
     def _add_no_valid_data_message(self, pi, text: str = "No valid paired data after filtering."):
         """Show a centered non-modal empty-data message in the given PlotItem."""
@@ -2228,6 +2375,7 @@ class CorrelationPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         # Classifier support is NOT shipped for this node type (see
         # classifier_view.CLASSIFIER_WIP_NODE_TYPES). Undo the
         # classifier's destructive composition collapse and its
@@ -2261,7 +2409,7 @@ class CorrelationPlotNode(QObject):
 
         if itype == 'sample_data':
             particles = self.input_data.get('particle_data')
-            df = build_element_matrix(particles, dk) if particles else None
+            df = _matrix_with_counts(particles, dk) if particles else None
             return {'element_data': df} if df is not None else None
 
         elif itype == 'multiple_sample_data':
@@ -2276,7 +2424,7 @@ class CorrelationPlotNode(QObject):
                     grouped[src].append(p)
             result = {}
             for sn, plist in grouped.items():
-                df = build_element_matrix(plist, dk)
+                df = _matrix_with_counts(plist, dk)
                 if df is not None:
                     result[sn] = {'element_data': df}
             return result or None

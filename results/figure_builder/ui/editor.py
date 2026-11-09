@@ -77,13 +77,14 @@ from results.figure_builder.charts.overlays import (
     ELLIPSES, INSET_LOCS, MARGINAL_UNITS, MARGINALS, TRENDS)
 from results.figure_builder.core import styles as S
 from results.figure_builder.core.common import BANDS, GROUP_SORTS, HATCHES, SHAPE_TYPES, TICK_FORMATS
+from utils.unit import units
 from results.figure_builder.core.expressions import (
     DATA_TYPES, QUANTITY_PREFIXES, split_list, validate)
 from results.figure_builder.ui.widgets import (
     ColorButton, ExpressionEdit, GroupsTable, RowTable, mono_font)
 
 PLOTS = {'scatter', 'line', 'histogram', 'box', 'violin', 'bar', 'density', 'hexbin', 'contour', 'strip',
-         'ecdf', 'timeline', 'lollipop'}
+         'ecdf', 'timeline', 'lollipop', 'spectrum'}
 XY = {'scatter', 'density', 'hexbin', 'contour'}
 XLINE = XY | {'line'}
 DIST = {'box', 'violin'}
@@ -102,6 +103,8 @@ TESTABLE = {'histogram', 'box', 'violin', 'bar', 'strip', 'ridgeline'}
 GROUPING = {'scatter', 'line', 'histogram', 'box', 'violin', 'bar', 'pie', 'ternary', 'code',
             'strip', 'ridgeline', 'contour', 'hexbin', 'ecdf', 'timeline'} | ITEMS
 ALL = set(E.PANEL_KINDS)
+STORED = {'text', 'spectrum'}
+"""Kinds drawn from what the panel itself stores, not from the particles."""
 MARKED = {'scatter', 'ternary', 'line', 'pairs', 'strip', 'timeline', 'lollipop'}
 LEGENDED = ALL - {'text', 'code', 'box', 'violin', 'density', 'hexbin', 'strip', 'ridgeline'} - MATRIX
 SHAPED = set(E.SHAPE_KINDS)
@@ -164,7 +167,7 @@ MASS_BIAS = {'scatter', 'histogram', 'box', 'violin', 'strip', 'bar', 'line', 'e
 
 FIELDS = [
     ('Data', 'Chart', 'kind', 'Chart type', 'combo', ALL, E.PANEL_KINDS),
-    ('Data', 'Chart', 'data_type', 'Quantity (unit)', 'combo', ALL - {'text'},
+    ('Data', 'Chart', 'data_type', 'Quantity (unit)', 'combo', ALL - STORED,
      {'': 'Figure default', **{k: k for k in DATA_TYPES}}),
     ('Data', 'Chart', 'title', 'Panel title', 'text', ALL, 'optional'),
     ('Data', 'What to plot', 'x', 'X', 'expr', XLINE, 'e.g. Fe   or   log(Ag)'),
@@ -231,12 +234,12 @@ FIELDS = [
     ('Data', 'What to plot', 'parallel_scale', 'Axes', 'combo', {'parallel'},
      {'log': 'Log, scaled 0–1', 'minmax': 'Linear, scaled 0–1', 'raw': 'Raw values'}),
     ('Data', 'What to plot', 'max_lines', 'Max lines per group', 'int', {'parallel'}, (20, 100000)),
-    ('Data', 'Which particles', 'filter', 'Only where', 'mask', ALL - {'text'},
+    ('Data', 'Which particles', 'filter', 'Only where', 'mask', ALL - STORED,
      'e.g. Ag > 0 and Au > 0'),
-    ('Data', 'Which particles', 'type_only', 'Only particle type', 'text', ALL - {'text', 'code'},
+    ('Data', 'Which particles', 'type_only', 'Only particle type', 'text', ALL - STORED - {'code'},
      'name of an Insights particle type'),
     ('Data', 'Which particles', 'saturation', 'Drop saturated particles (counts ≥, 0 = off)', 'float',
-     ALL - {'text', 'code'}, (0, 1e9, 1000)),
+     ALL - STORED - {'code'}, (0, 1e9, 1000)),
     ('Data', 'Which particles', 'trim_pct', 'Trim outliers: keep up to percentile (0 = off)', 'float',
      VALUED - {'pie'} | {'scatter'}, (0, 99.9, 0.5)),
     ('Data', 'Which particles', 'min_count', 'Hide groups / rows with fewer particles than', 'int',
@@ -244,18 +247,20 @@ FIELDS = [
     ('Data', 'Which particles', 'drop_zeros', 'Hide zero values', 'check',
      XLINE | VALUED - {'pie'} | {'corr_matrix', 'heatmap', 'pairs'}, None),
     ('Data', 'Extra series on this plot', 'series', '', 'series', {'scatter'}, None),
+    ('Data', 'Spectrum', 'spec_normalise', 'Scale each sample to its highest point', 'check',
+     {'spectrum'}, None),
     ('Data', 'Text', 'text', '', 'longtext', {'text'}, None),
     ('Data', 'Text', 'text_size', 'Text size (0 = auto)', 'float', {'text'}, (0, 72, 1)),
     ('Data', 'Python', 'code', '', 'code', {'code'}, None),
     ('Groups', 'Grouping', 'group_by', 'Group / colour by', 'combo', GROUPING, E.GROUP_MODES),
     ('Groups', 'Grouping', 'color', 'Colour', 'color', PLOTS | {'ternary', 'network'}, None),
     ('Groups', 'Grouping', 'sort_groups', 'Order groups', 'combo', SORTABLE, GROUP_SORTS),
-    ('Groups', 'One small plot per group', 'facet', 'Layout', 'combo', ALL - {'text', 'code', 'pairs'},
+    ('Groups', 'One small plot per group', 'facet', 'Layout', 'combo', ALL - STORED - {'code', 'pairs'},
      {'none': 'All groups together', 'groups': 'One small plot per group'}),
     ('Groups', 'One small plot per group', 'facet_cols', 'Columns (0 = auto)', 'int',
-     ALL - {'text', 'code', 'pairs'}, (0, 12)),
+     ALL - STORED - {'code', 'pairs'}, (0, 12)),
     ('Groups', 'One small plot per group', 'facet_share', 'Same axis ranges', 'check',
-     ALL - {'text', 'code', 'pairs'}, None),
+     ALL - STORED - {'code', 'pairs'}, None),
     ('Groups', 'Rules (first match wins)', 'rules', '', 'rules', set(), None),
     ('Groups', 'Rules (first match wins)', 'show_other', 'Show the rest', 'check', set(), None),
     ('Groups', 'Rules (first match wins)', 'other_label', 'Name for the rest', 'text', set(), None),
@@ -296,7 +301,7 @@ FIELDS = [
     ('Style', 'Colour bar', 'c_max', 'Colour range to', 'text', CBAR, 'auto'),
     ('Style', 'Colour scale', 'y2_color', 'Right axis colour', 'color', {'scatter'}, None),
     ('Style', 'Lines', 'line_width', 'Line width', 'float',
-     {'scatter', 'line', 'histogram', 'radar', 'ecdf', 'lollipop', 'timeline'}, (0.2, 8, 0.2)),
+     {'scatter', 'line', 'histogram', 'radar', 'ecdf', 'lollipop', 'timeline', 'spectrum'}, (0.2, 8, 0.2)),
     ('Style', 'Lines', 'line_style', 'Line style', 'combo', {'scatter', 'line', 'histogram'}, S.LINE_STYLES),
     ('Style', 'Chart options', 'annotate', 'Show values', 'check',
      MATRIX | {'composition', 'combinations', 'lollipop'}, None),
@@ -381,7 +386,7 @@ FIELDS = [
     ('Style', 'Chart options', 'stacked', 'Stack the values', 'check', {'bar'}, None),
     ('Style', 'Chart options', 'donut', 'Donut', 'check', {'pie'}, None),
     ('Style', 'Background', 'panel_bg', 'Panel background', 'color', ALL - {'pairs'}, None),
-    ('Axes', 'Labels', 'x_label', 'X label', 'text', XLINE | {'histogram', 'heatmap', 'combinations', 'composition', 'ridgeline'}, 'automatic'),
+    ('Axes', 'Labels', 'x_label', 'X label', 'text', XLINE | {'spectrum', 'histogram', 'heatmap', 'combinations', 'composition', 'ridgeline'}, 'automatic'),
     ('Axes', 'Labels', 'y_label', 'Y label', 'text', PLOTS | {'heatmap', 'combinations', 'composition', 'parallel'}, 'automatic'),
     ('Axes', 'Labels', 'y2_label', 'Right Y label', 'text', {'scatter'}, 'automatic'),
     ('Axes', 'Labels', 'a_label', 'Top corner', 'text', {'ternary'}, 'automatic'),
@@ -393,8 +398,8 @@ FIELDS = [
     ('Axes', 'Scale', 'log_x', 'Log X', 'check', XLINE | {'histogram', 'ridgeline', 'ecdf'}, None),
     ('Axes', 'Scale', 'log_y', 'Log Y', 'check', PLOTS - {'ecdf'} | {'combinations'}, None),
     ('Axes', 'Scale', 'log_y2', 'Log right Y', 'check', {'scatter'}, None),
-    ('Axes', 'Range', 'x_min', 'X from', 'text', XLINE | {'histogram'}, 'auto'),
-    ('Axes', 'Range', 'x_max', 'X to', 'text', XLINE | {'histogram'}, 'auto'),
+    ('Axes', 'Range', 'x_min', 'X from', 'text', XLINE | {'histogram', 'spectrum'}, 'auto'),
+    ('Axes', 'Range', 'x_max', 'X to', 'text', XLINE | {'histogram', 'spectrum'}, 'auto'),
     ('Axes', 'Range', 'y_min', 'Y from', 'text', PLOTS, 'auto'),
     ('Axes', 'Range', 'y_max', 'Y to', 'text', PLOTS, 'auto'),
     ('Axes', 'Ticks and frame', 'frame', 'Frame', 'combo', PLOTS,
@@ -618,7 +623,7 @@ class PanelEditor(QWidget):
         if kind == 'combo':
             w = QComboBox()
             for k, label in opts.items():
-                w.addItem(label, k)
+                w.addItem(units.relabel(label) if key in ('data_type', 'heat_quantity', 'marginals_unit') else label, k)
             w.currentIndexChanged.connect(lambda _i, k=key, ww=w: self._set(k, ww.currentData()))
         elif kind in ('expr', 'mask'):
             w = ExpressionEdit()
@@ -722,7 +727,7 @@ class PanelEditor(QWidget):
         for prefix, (_key, human, unit) in QUANTITY_PREFIXES.items():
             if prefix == table.default_prefix:
                 continue
-            sub = m.addMenu(f'{(human or prefix).capitalize()} ({unit})')
+            sub = m.addMenu(f'{(human or prefix).capitalize()} ({units.relabel(unit)})')
             for name in iso_names:
                 sub.addAction(f'{prefix}:{name}', lambda n=f'{prefix}:{name}': self._insert_chip(n))
         if table.variables:

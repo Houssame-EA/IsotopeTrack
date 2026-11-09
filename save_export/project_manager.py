@@ -1129,7 +1129,7 @@ Terminal=false
             'sample_results_data', 'isotope_method_preferences', 'sample_particle_data',
             'sample_analysis_dates', 'sample_to_folder_map', 'element_thresholds',
             'element_limits', 'sample_run_info', 'sample_method_info', 'sample_tuning_info',
-            'sample_raw_spectrum',
+            'sample_raw_spectrum', '_interference_by_sample',
             'sample_dilutions'
         ]
         
@@ -1160,6 +1160,7 @@ Terminal=false
         self.main_window.detected_peaks = {}
         self.main_window.all_masses = None
         self.main_window.sample_reserve_masses = {}
+        self.main_window.session_reserve = {}
         
         self.main_window.overlap_threshold_percentage = 50.0
         self.main_window._global_sigma = 0.55

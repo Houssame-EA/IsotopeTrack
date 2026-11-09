@@ -1,4 +1,4 @@
-"""Special panels: ternary diagrams, free text and user Python code."""
+"""Special panels: ternary diagrams, free text, user Python code and stored mass spectra."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import numpy as np
 
 from results.figure_builder.core.common import (
     add_colorbar, add_legend, cmap_name, edge_kwargs, float_or_none, ink, label_n, panel_palette,
-    resolve_groups)
+    resolve_groups, style_axes)
 from results.figure_builder.core.expressions import ExpressionError, evaluate, plain, pretty
 
 
@@ -223,3 +223,69 @@ def draw_code(fig, ax, panel, table, report, style):
     }
     exec(compile(code, f'<panel {panel["id"]}>', 'exec'), ns)
     report.counts[panel['id']] = len(df)
+
+
+SPECTRUM_MARK_COLOR = '#d62728'
+"""Colour of the lines marking possible interfering species."""
+
+
+def isotope_text(label: str) -> str:
+    """Write ``"56Fe"`` with a superscript mass number for matplotlib."""
+    import re
+    m = re.match(r'^(\d+)([A-Za-z]+)$', str(label or ''))
+    return f'$^{{{m.group(1)}}}${m.group(2)}' if m else str(label or '')
+
+
+def draw_spectrum(fig, ax, panel, table, report, style):
+    """Zoomed resolved mass spectrum that an Insights spectrum card stored in the panel.
+
+    One line per sample, the integration window shaded, the isotope's exact
+    mass as a solid grey line and each possible interfering species as a
+    dashed red one. With ``spec_normalise`` every sample is scaled to its highest point,
+    so samples measured with different amounts of signal compare by shape.
+    """
+    traces = panel.get('spectra') or {}
+    names = [n for n in traces if (traces[n] or {}).get('mz')]
+    if not names:
+        raise ExpressionError('This panel shows a spectrum stored by an Insights spectrum card; '
+                              'add it from that card')
+    pal = panel_palette(panel)
+    normalise = bool(panel.get('spec_normalise'))
+    lw = float(panel.get('line_width') or 1.4)
+    window = panel.get('spec_window') or []
+    if len(window) == 2:
+        ax.axvspan(float(window[0]), float(window[1]), color=pal[0], alpha=0.12, lw=0, zorder=0,
+                   label='Integration window')
+    lo, hi = np.inf, -np.inf
+    for i, name in enumerate(names):
+        mz = np.asarray(traces[name]['mz'], dtype=float)
+        y = np.asarray(traces[name]['y'], dtype=float)
+        if normalise and y.size and y.max() > 0:
+            y = y / y.max()
+        color = (panel.get('color') or pal[0]) if len(names) == 1 else pal[i % len(pal)]
+        ax.plot(mz, y, color=color, lw=lw, zorder=3, label=name if len(names) > 1 else None)
+        if mz.size:
+            lo, hi = min(lo, float(mz.min())), max(hi, float(mz.max()))
+    exact = float_or_none(panel.get('spec_exact'))
+    if exact is not None:
+        ax.axvline(exact, color=ink('#374151'), lw=1.1, zorder=2,
+                   label=f"{isotope_text(panel.get('spec_label'))} {exact:.3f}".strip())
+    for mark in panel.get('spec_marks') or []:
+        mz = float_or_none(mark.get('mz'))
+        if mz is not None:
+            ax.axvline(mz, color=SPECTRUM_MARK_COLOR, lw=1.1, ls='--', zorder=2,
+                       label=f"{mark.get('label', '')} {mz:.3f}".strip())
+    if np.isfinite(lo):
+        ax.set_xlim(lo, hi)
+    if panel.get('log_y'):
+        ax.set_yscale('log')
+    else:
+        ax.set_ylim(bottom=0)
+    report.counts[panel['id']] = len(names)
+    style_axes(ax, panel, table, style, '', '')
+    if not panel.get('x_label'):
+        ax.set_xlabel('m/z')
+    if not panel.get('y_label'):
+        ax.set_ylabel('Scaled to highest point' if normalise
+                      else (panel.get('spec_units') or 'Intensity'))
+    add_legend(ax, panel, min_items=1)

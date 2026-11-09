@@ -26,12 +26,14 @@ from results.shared_plot_utils import (
     LABEL_MODES, Renderer, HtmlAxisItem,
     SHADE_TYPES,
     _apply_box, _add_hband, _add_det_limit_h, apply_plot_title_style,
-    apply_axis_label_style,
+    apply_axis_label_style, get_font_config,
 )
 from results.utils_sort import (
     sort_elements_by_mass,
     element_alphabetical_key,
 )
+from utils.unit import units
+from widget.unit_combo import UnitComboBox
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_box_plot")
 
@@ -177,8 +179,7 @@ _DISPLAY_MODE_ALIASES = {
 # ── Helpers ────────────────────────────────────────────────────────────
 
 def _y_label(cfg):
-    base = BOX_LABEL_MAP.get(cfg.get('data_type_display', 'Counts'), 'Values')
-    return BOX_LABEL_MAP.get(cfg.get('data_type_display', 'Counts'), 'Values')
+    return units.relabel(BOX_LABEL_MAP.get(cfg.get('data_type_display', 'Counts'), 'Values'))
 
 
 def _element_color(element, index, cfg):
@@ -489,7 +490,7 @@ class BoxPlotSettingsDialog(QDialog):
         if self._scope in ('all', 'quantities'):
             g2 = QGroupBox("Data Type")
             f2 = QFormLayout(g2)
-            self.dtype_combo = QComboBox()
+            self.dtype_combo = UnitComboBox()
             self.dtype_combo.addItems(BOX_DATA_TYPES)
             self.dtype_combo.setCurrentText(
                 self._cfg.get('data_type_display', BOX_DATA_TYPES[0]))
@@ -664,8 +665,9 @@ class BoxPlotSettingsDialog(QDialog):
             self.show_det_cb.setChecked(self._cfg.get('show_det_limit', False))
             f_ov.addRow("Detection Limit Line:", self.show_det_cb)
             self.det_val = QDoubleSpinBox()
-            self.det_val.setRange(0.0, 999999999); self.det_val.setDecimals(4)
-            self.det_val.setValue(self._cfg.get('det_limit_value', 1.0))
+            self.det_val.setDecimals(6); self.det_val.setRange(0.0, 999999999)
+            self.det_val.setValue(units.setting_for(self._cfg.get('det_limit_value', 1.0),
+                                                    self._cfg.get('data_type_display', 'Counts')))
             f_ov.addRow("DL Value:", self.det_val)
             self.det_label_edit = QLineEdit(self._cfg.get('det_limit_label', ''))
             self.det_label_edit.setPlaceholderText("Auto  (e.g.  DL: 1.0)")
@@ -828,7 +830,8 @@ class BoxPlotSettingsDialog(QDialog):
             d['shade_min'] = self._shade_min.value()
             d['shade_max'] = self._shade_max.value()
             d['show_det_limit'] = self.show_det_cb.isChecked()
-            d['det_limit_value'] = self.det_val.value()
+            d['det_limit_value'] = units.saved_for(self.det_val.value(),
+                                                   self._cfg.get('data_type_display', 'Counts'))
             d['det_limit_label'] = self.det_label_edit.text().strip()
         if self.mode_combo is not None:
             d['display_mode'] = _normalize_box_display_mode(
@@ -866,6 +869,24 @@ def _tag_box_color_identity(item, cfg):
         setattr(item, '_color_identity_key', key)
     else:
         setattr(item, '_raw_element_key', key)
+
+
+def _fit_tick_labels(labels, width_px, char_px=7.5):
+    """Shorten each line of crowded tick labels so neighbours do not run into each other.
+
+    Lines longer than one category's share of the axis width end in ``…``;
+    labels that already fit are left as they are.
+    """
+    if not labels:
+        return labels
+    room = max(3, int(width_px / max(len(labels), 1) / char_px) - 1)
+    out = []
+    for text in labels:
+        lines = []
+        for line in str(text).split('\n'):
+            lines.append(line if len(line) <= room else line[:max(room - 1, 2)] + '…')
+        out.append('\n'.join(lines))
+    return out
 
 
 def _draw_box(plot_item, x, values, color, alpha, width, cfg):
@@ -1118,7 +1139,7 @@ def _add_stats_text(plot_item, plot_data, cfg):
             lines.append(f"{el}: {n} particles")
             lines.append(f"  Mean: {mu:.1f}±{sd:.1f}, Median: {med:.1f} (Q1:{q1:.1f}, Q3:{q3:.1f})")
 
-    txt = pg.TextItem('\n'.join(lines), anchor=(0, 1),
+    txt = pg.TextItem(units.relabel('\n'.join(lines)), anchor=(0, 1),
                       border=pg.mkPen('black', width=1),
                       fill=pg.mkBrush(255, 255, 255, 200))
     plot_item.addItem(txt)
@@ -1913,7 +1934,12 @@ class BoxPlotDisplayDialog(QDialog):
             xl.append(record['display_label'])
             x += 1
         if xp:
+            width = self.plot_widget.width() if hasattr(self, 'plot_widget') else 1200
+            font_px = float(get_font_config(cfg).get('size', 12)) * 1.33
+            xl = _fit_tick_labels(xl, width, char_px=font_px * 0.55)
             pi.getAxis('bottom').setTicks([list(zip(xp, xl))])
+            if any('\n' in t for t in xl):
+                pi.getAxis('bottom').setHeight(int(font_px * 4.4))
         self._apply_effective_axis_labels(
             pi,
             self._title_key_for_combined_plot(True),
@@ -2208,6 +2234,7 @@ class BoxPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         self.input_data = input_data
         self.configuration_changed.emit()
 

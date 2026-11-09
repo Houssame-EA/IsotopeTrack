@@ -303,6 +303,25 @@ def build_metadata(mw: MainWindow):
     return metadata
 
 
+def _read_spectrum(folder_path):
+    """Read a sample's resolved spectrum from its run folder, or None when out of reach.
+
+    Args:
+        folder_path (str | Path | None): The sample's raw data folder.
+
+    Returns:
+        dict | None: ``{'spectrum', 'n_snapshots'}`` as the main window keeps it.
+    """
+    if not folder_path:
+        return None
+    try:
+        from loading.nu_raw_spectrum import read_nu_raw_spectrum
+        return read_nu_raw_spectrum(folder_path)
+    except Exception:
+        logger.exception(f"Could not read the resolved spectrum from {folder_path}")
+        return None
+
+
 def save_project_v2(filepath, mw: MainWindow, progress_callback=None, include_reserve=True):
     """
     Save project in optimized v2 format.
@@ -310,14 +329,17 @@ def save_project_v2(filepath, mw: MainWindow, progress_callback=None, include_re
     Uses ZIP archive with separate numpy files per sample, lz4-compressed
     pickle for metadata, and columnar particle storage. Unless disabled, the
     mass channels that are not selected are also kept, compressed, in the
-    ``reserve/`` folder of the archive (see ``isotope_reserve``).
+    ``reserve/`` folder of the archive (see ``isotope_reserve``), and every
+    sample's resolved spectrum is stored, read from its run folder when it
+    was not opened during the session.
 
     Args:
         filepath (str or Path): Output file path (.itproj)
         mw: MainWindow instance with all data attributes
         progress_callback (callable, optional): func(percent, message) for progress updates
-        include_reserve (bool): Write the reserve of unselected isotopes. Autosave
-            passes False to keep its snapshots small and fast.
+        include_reserve (bool): Write the reserve of unselected isotopes and read
+            the spectra not yet in memory. Autosave passes False to keep its
+            snapshots small and fast; it still stores the spectra in memory.
 
     Returns:
         bool: True on success
@@ -408,6 +430,9 @@ def save_project_v2(filepath, mw: MainWindow, progress_callback=None, include_re
             raw_spectra = {}
             for sample_name in sample_names:
                 entry = (getattr(mw, 'sample_raw_spectrum', None) or {}).get(sample_name)
+                if (not entry or entry.get('spectrum') is None) and include_reserve:
+                    _progress(54, f"Saving resolved spectrum: {sample_name}")
+                    entry = _read_spectrum(mw.sample_to_folder_map.get(sample_name))
                 if not entry or entry.get('spectrum') is None:
                     continue
                 buf = io.BytesIO()
@@ -442,7 +467,8 @@ def save_project_v2(filepath, mw: MainWindow, progress_callback=None, include_re
                         selected = list(mw.data_by_sample.get(sample_name, {}).keys())
                         try:
                             written, origin = write_sample_reserve(
-                                zf, sample_name, selected, folder_path, source
+                                zf, sample_name, selected, folder_path, source,
+                                kept=(getattr(mw, 'session_reserve', None) or {}).get(sample_name)
                             )
                         except Exception:
                             logger.exception(f"Could not save unselected isotopes for {sample_name}")
@@ -525,6 +551,7 @@ def load_project_v2(filepath, mw: MainWindow, progress_callback=None):
             name: [float(m) for m in masses]
             for name, masses in (manifest.get('reserve') or {}).items()
         }
+        mw.session_reserve = {}
         mw._ionic_saved_entries = dict(manifest.get('ionic_entries') or {})
         mw._te_saved_index = dict(manifest.get('te_entries') or {})
 
@@ -594,6 +621,7 @@ def load_project_v2(filepath, mw: MainWindow, progress_callback=None):
 
         mw.sample_raw_spectrum = {}
         mw._raw_spectrum_missing = set()
+        mw._interference_by_sample = {}
         names = set(zf.namelist())
         for sample_name, n_snapshots in (manifest.get('raw_spectra') or {}).items():
             safe_name = sample_name.replace('/', '_').replace('\\', '_')

@@ -157,6 +157,19 @@ def integration_window(run_info, target_mass):
     }
 
 
+def integration_windows(run_info):
+    """Return the integration window of every measured mass.
+
+    Args:
+        run_info (dict): Nu run.info.
+
+    Returns:
+        list: ``(start, end)`` in m/z, one per integration region.
+    """
+    return [(float(_time_to_mass(run_info, r['Start'])), float(_time_to_mass(run_info, r['End'])))
+            for r in run_info.get('IntegrationRegions') or []]
+
+
 def peak_check(masses, spectrum, target_mass, window=None, half_width=ZOOM_HALF_WIDTH,
                single_ion_area=None):
     """Measure the peak nearest a mass in a resolved spectrum.

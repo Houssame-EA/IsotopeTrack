@@ -31,6 +31,8 @@ from results.shared_plot_utils import (
     pick_color_hex,
 )
 from results.utils_sort import sort_elements_by_mass
+from utils.unit import units
+from widget.unit_combo import UnitComboBox
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_concentration")
 
@@ -186,7 +188,7 @@ class ConcentrationSettingsDialog(QDialog):
             # Data quantities
             g1 = QGroupBox("Data")
             f1 = QFormLayout(g1)
-            self.dtype_combo = QComboBox()
+            self.dtype_combo = UnitComboBox()
             self.dtype_combo.addItems(CONC_DATA_TYPES)
             self.dtype_combo.setCurrentText(self._cfg.get('data_type_display', 'Counts'))
             f1.addRow("Data Type:", self.dtype_combo)
@@ -732,12 +734,16 @@ class ConcentrationDisplayDialog(QDialog):
         ax.grid(axis='x', linestyle='--', alpha=0.35, zorder=1)
         ax.set_axisbelow(True)
 
-        if show_vals and n_grp:
-            extra = 0.04 + n_grp * 0.08
-            ax.set_position([ax.get_position().x0,
-                             ax.get_position().y0,
-                             ax.get_position().width * (1 - extra),
-                             ax.get_position().height])
+        engine = ax.figure.get_layout_engine()
+        if engine is not None and hasattr(engine, 'set'):
+            room = 0.0
+            if show_vals and n_grp:
+                inches = (8 + n_grp * 60 + 50) / 72.0
+                room = min(0.4, inches / max(ax.figure.get_figwidth(), 1.0))
+            try:
+                engine.set(rect=(0, 0, 1 - room, 1))
+            except TypeError:
+                pass
 
         apply_font_to_matplotlib(ax, cfg)
 
@@ -775,6 +781,7 @@ class ConcentrationComparisonNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         # Classifier support is NOT shipped for this node type (see
         # classifier_view.CLASSIFIER_WIP_NODE_TYPES). Undo the
         # classifier's destructive composition collapse and its
@@ -802,8 +809,8 @@ class ConcentrationComparisonNode(QObject):
         data_key   = CONC_DATA_KEY_MAP.get(
             self.config.get('data_type_display', 'Counts'), 'elements')
         agg_method = self.config.get('aggregation', 'Mean')
-        unit       = CONC_LABEL_MAP.get(
-            self.config.get('data_type_display', 'Counts'), '')
+        unit       = units.relabel(CONC_LABEL_MAP.get(
+            self.config.get('data_type_display', 'Counts'), ''))
         itype      = self.input_data.get('type')
         elements   = self._get_elements()
         if not elements:

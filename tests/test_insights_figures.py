@@ -29,9 +29,10 @@ def app():
 
 
 def emitted_explain_keys() -> set[str]:
-    """Every literal explain key written by a detector in the engine and discovery modules."""
+    """Every literal explain key written by a detector in the engine, discovery and spectrum modules."""
     keys = set()
-    for path in ("results/insights/engine.py", "results/insights/discovery.py"):
+    for path in ("results/insights/engine.py", "results/insights/discovery.py",
+                 "results/insights/spectrum.py"):
         tree = ast.parse((ROOT / path).read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.keyword) and node.arg == "explain_key":
@@ -116,8 +117,12 @@ ELEMENTS = {
 TYPE_KEYS = ("types_overview", "particle_type")
 """Stories drawn from a type card's own definition, tested in test_insights_types."""
 
+SPECTRUM_KEYS = ("spectrum_shift", "spectrum_neighbour", "spectrum_share")
+"""Stories drawn from the spectra a card stores, tested in test_insights_spectrum."""
 
-@pytest.mark.parametrize("key", sorted(k for k in F.DESIGNS if k not in TYPE_KEYS))
+
+@pytest.mark.parametrize("key", sorted(k for k in F.DESIGNS
+                                       if k not in TYPE_KEYS + SPECTRUM_KEYS))
 def test_every_design_draws(app, stream, key):
     """Each story draws without a panel error and ends with its legend."""
     from results.insights.discovery import _figure_spec
@@ -368,7 +373,7 @@ def test_filter_shows_exactly_the_picked_type(app):
         assert panel.current_filter() == node_type
     panel._all_action.trigger()
     assert len(panel._suggestions) == everything
-    assert all(a.isEnabled() == bool(len([s for s in panel._found if s.node_type == k]))
+    assert all(a.isEnabled() == bool(len([s for s in panel._found if rr.shows_in(s, k)]))
                for k, a in panel._type_actions.items())
     panel._teardown()
 

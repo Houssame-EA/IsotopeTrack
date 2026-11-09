@@ -118,23 +118,48 @@ def panel(canvas):
     p.deleteLater()
 
 
-def test_panel_searches_the_lowest_node_until_told_otherwise(canvas, panel):
-    """Node 1 is searched first; picking 2 or all switches, and the button says which."""
+def test_panel_searches_all_nodes_until_told_otherwise(canvas, panel):
+    """Every node is searched first; picking 1, 2 or all switches, and the button says which."""
     _app, _dlg, sc, multi, single, owner = canvas
     panel.scan(force=True)
+    assert panel.current_node() == 0 and panel._scope.origin == "all"
+    assert panel._node_btn.text().startswith("Node: all")
+    assert [a.text() for a in panel._node_menu.actions() if a.text()][0] == "All"
+    panel.set_node(1)
     assert panel.current_node() == 1 and panel._scope.node_number == 1
     assert panel._node_btn.text().startswith("Node: 1")
     panel.set_node(2)
     assert panel._scope.sample_names == ("C",)
     panel.set_node(0)
-    assert panel._scope.origin == "canvas"
+    assert panel._scope.origin == "all"
     assert panel._node_btn.text().startswith("Node: all")
 
 
+def test_all_searches_every_loaded_sample(canvas, panel):
+    """"All" covers every loaded sample, also the ones no node has checked."""
+    panel.set_node(0)
+    assert set(panel._scope.sample_names) == {"A_1", "A_2", "B_1", "B_2", "C"}
+
+
+def test_node_menu_is_not_rebuilt_while_open(canvas, panel):
+    """Nodes changing while the menu is open rebuild it only after it closes."""
+    app = canvas[0]
+    panel.set_node(0)
+    panel._node_menu.popup(panel.mapToGlobal(panel.rect().center()))
+    app.processEvents()
+    first = panel._node_menu.actions()[0]
+    panel._fill_node_menu()
+    assert panel._node_menu.actions()[0] is first and panel._node_menu_stale
+    panel._node_menu.hide()
+    for _ in range(5):
+        app.processEvents()
+    assert not panel._node_menu_stale
+
+
 def test_add_connects_straight_to_the_node(canvas, panel):
-    """A card's plot hangs off node 1 itself; no new selector is created."""
+    """With node 1 picked, a card's plot hangs off node 1 itself; no new selector is created."""
     _app, _dlg, sc, multi, single, owner = canvas
-    panel.scan(force=True)
+    panel.set_node(1)
     before = len(sc.workflow_nodes)
     s = rr.Suggestion("Fe by group", "r", "comparison", 0.8, "box_plot", elements=("56Fe",))
     panel._add_suggestion(s)
@@ -147,7 +172,7 @@ def test_add_connects_straight_to_the_node(canvas, panel):
 def test_replicate_findings_still_get_their_own_selector(canvas, panel):
     """A replicate check needs the replicates apart, so it keeps a selector of its own."""
     _app, _dlg, sc, multi, single, owner = canvas
-    panel.scan(force=True)
+    panel.set_node(1)
     before = len(sc.workflow_nodes)
     s = rr.Suggestion("A replicates", "r", "replicate", 0.8, "box_plot", elements=("56Fe",),
                       samples=("A_1", "A_2"))

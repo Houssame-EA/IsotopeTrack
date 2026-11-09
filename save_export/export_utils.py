@@ -15,7 +15,7 @@ import math
 import time
 
 from tools.theme import theme, dialog_qss
-from utils.unit import ExportUnits, load_units
+from utils.unit import ExportUnits, units
 from tools.unit import show_advanced_dialog
 from utils.app_version import __version__ as APP_VERSION
 from utils.numeric_format import as_scalar as _as_scalar, fmt as _fmt
@@ -382,14 +382,14 @@ def export_data(main_window: MainWindow):
     layout.addWidget(export_group)
 
     # ---- Buttons --------------------------------------------------------
-    export_units_state = {"units": load_units()}
+    export_units_state = {"units": units.current}
 
     button_row = QHBoxLayout()
     button_row.setContentsMargins(0, 0, 0, 0)
     button_row.setSpacing(8)
 
-    advanced_btn = QPushButton("Advanced…")
-    advanced_btn.setToolTip("Change units (mass, moles, diameter) and number format")
+    advanced_btn = QPushButton("Units…")
+    advanced_btn.setToolTip("Change the units of the whole app (mass, moles, diameter, concentration) and the number format")
 
     def _open_advanced():
         new_units = show_advanced_dialog(export_dialog, export_units_state["units"])

@@ -29,7 +29,7 @@ import sys
 from dataclasses import dataclass, field
 
 from PySide6.QtCore import QBuffer, QEvent, QIODevice, QObject, QPoint, Qt, QTimer
-from PySide6.QtGui import QGuiApplication, QKeyEvent, QKeySequence
+from PySide6.QtGui import QGuiApplication, QKeyEvent, QKeySequence, QWindow
 from PySide6.QtWidgets import QApplication, QMenu, QMenuBar, QWidgetAction
 
 _log = logging.getLogger("IsotopeTrack.native_menu")
@@ -282,7 +282,7 @@ class AppKitBackend:
             trace("reset: skipped")
             return
         for window in QGuiApplication.topLevelWindows():
-            if not window.isVisible():
+            if not isinstance(window, QWindow) or not window.isVisible():
                 continue
             try:
                 view = self.objc.objc_object(c_void_p=int(window.winId()))
@@ -450,6 +450,9 @@ class NativeMenus(QObject):
                 trace("run: %d entries, showing at %s", len(entries), menu.pos())
                 if entries:
                     chosen = self.backend.popup(entries, menu.pos())
+                if chosen is not None and not alive(chosen):
+                    trace("run: the chosen action was deleted while the menu was open")
+                    chosen = None
                 trace("run: system menu closed, chosen=%r",
                       chosen.text() if chosen is not None else None)
         except Exception:
@@ -465,6 +468,19 @@ class NativeMenus(QObject):
                       menu.isVisible(), QGuiApplication.mouseButtons())
 
 
+def alive(obj) -> bool:
+    """Whether a Qt object still exists on the C++ side.
+
+    A menu can be rebuilt while the system menu is open, which deletes the
+    action that was then chosen.
+    """
+    try:
+        from shiboken6 import isValid
+        return bool(isValid(obj))
+    except Exception:
+        return False
+
+
 def release_buttons(menu: QMenu) -> None:
     """Let Qt know the mouse buttons are up again, without anyone seeing a click.
 
@@ -476,7 +492,7 @@ def release_buttons(menu: QMenu) -> None:
     """
     held = QGuiApplication.mouseButtons()
     window = menu.windowHandle() if menu.isVisible() else None
-    if held == Qt.NoButton or window is None:
+    if held == Qt.NoButton or not isinstance(window, QWindow):
         return
     try:
         from PySide6.QtTest import QTest
@@ -499,7 +515,7 @@ def deliver(menu: QMenu, chosen) -> None:
     """
     chain = [menu]
     try:
-        if chosen is None or not chosen.isEnabled():
+        if chosen is None or not alive(chosen) or not chosen.isEnabled():
             menu.close()
             return
         if not menu.isVisible():

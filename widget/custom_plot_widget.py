@@ -3083,6 +3083,8 @@ class SpectrumPlotWidget(pg.PlotWidget):
         self._target = None
         self._full = False
         self._info_rows = []
+        self._markers = []
+        self._marker_items = []
 
         vb = pi.getViewBox()
         self._info = pg.TextItem(anchor=(1, 0))
@@ -3164,6 +3166,7 @@ class SpectrumPlotWidget(pg.PlotWidget):
                 self._curve_default_color = QColor(p.accent).name()
                 self._curve.setPen(pg.mkPen(p.accent, width=1.5))
         self._render_info()
+        self._render_markers()
         self._message.setColor(QColor(p.text_secondary))
 
     def open_plot_settings(self):
@@ -3208,13 +3211,17 @@ class SpectrumPlotWidget(pg.PlotWidget):
         self._curve = self.plot(self._masses, self._y, pen=pen, antialias=True)
         self._sample_key = key
 
-    def set_isotope(self, target, windows, rows):
+    def set_isotope(self, target, windows, rows, markers=None):
         """Mark the selected isotope and zoom onto its peak.
 
         Args:
             target (float | None): m/z of the isotope; None shows the full spectrum.
             windows (list): ``(lo, hi, kind)`` regions, kind is 'window' or 'baseline'.
-            rows (list): ``(name, value, alert)`` rows of the peak check box.
+            rows (list): ``(name, value, alert)`` rows of the peak check box. A
+                row whose value is None is a section title; a row with an empty
+                name is a centred verdict. ``alert`` is False, True or 'warn'.
+            markers (list | None): ``(m/z, label, kind)`` vertical lines, kind is
+                'expected' or 'interferer'.
         """
         p = _app_theme.palette
         for region in self._regions:
@@ -3231,7 +3238,9 @@ class SpectrumPlotWidget(pg.PlotWidget):
             self._regions.append(region)
         self._target = target
         self._info_rows = list(rows or [])
+        self._markers = list(markers or [])
         self._render_info()
+        self._render_markers()
         if target is None:
             self.show_full_spectrum()
         else:
@@ -3274,6 +3283,8 @@ class SpectrumPlotWidget(pg.PlotWidget):
         self._masses = self._y = None
         self._target = None
         self._info_rows = []
+        self._markers = []
+        self._render_markers()
         self._info.hide()
         self.getPlotItem().setRange(xRange=(0, 1), yRange=(0, 1), padding=0)
         self.getPlotItem().hideAxis('left')
@@ -3292,11 +3303,8 @@ class SpectrumPlotWidget(pg.PlotWidget):
             self._info.hide()
             return
         p = _app_theme.palette
-        cells = "".join(
-            f"<tr><td style='color:{p.text_secondary}; padding:1px 14px 1px 0;'>{name}</td>"
-            f"<td align='right' style='color:{p.danger if alert else p.plot_fg};"
-            f" font-weight:bold;'>{value}</td></tr>"
-            for name, value, alert in self._info_rows)
+        cells = "".join(self._info_row_html(p, name, value, alert)
+                        for name, value, alert in self._info_rows)
         self._info.setHtml(
             "<div style=\"font-family:'Times New Roman'; font-size:13pt;\">"
             f"<div style='color:{p.plot_fg}; font-weight:bold; font-size:14pt;'>Peak check</div>"
@@ -3308,6 +3316,47 @@ class SpectrumPlotWidget(pg.PlotWidget):
         self._info.update()
         self._info.show()
         self._place_overlays()
+
+    @staticmethod
+    def _alert_color(p, alert, default):
+        """Return the colour of a value: danger, warning or the default."""
+        if alert == 'warn':
+            return p.warning
+        return p.danger if alert else default
+
+    def _info_row_html(self, p, name, value, alert):
+        """Return one table row of the peak check box."""
+        if value is None:
+            return (f"<tr><td colspan='2' style='color:{p.plot_fg}; font-weight:bold;"
+                    f" font-size:14pt; padding:10px 0 1px 0;'>{name}</td></tr>")
+        if not name:
+            color = self._alert_color(p, alert, p.success)
+            return (f"<tr><td colspan='2' align='center' style='color:{color}; font-weight:bold;"
+                    f" padding:6px 0 1px 0;'>{value}</td></tr>")
+        return (f"<tr><td style='color:{p.text_secondary}; padding:1px 14px 1px 0;'>{name}</td>"
+                f"<td align='right' style='color:{self._alert_color(p, alert, p.plot_fg)};"
+                f" font-weight:bold;'>{value}</td></tr>")
+
+    def _render_markers(self):
+        """Draw the expected and interfering m/z as labelled vertical lines."""
+        for item in self._marker_items:
+            self.removeItem(item)
+        self._marker_items = []
+        p = _app_theme.palette
+        for mz, label, kind in self._markers:
+            color = p.danger if kind == 'interferer' else p.plot_fg
+            style = Qt.DashLine if kind == 'interferer' else Qt.DotLine
+            line = pg.InfiniteLine(
+                pos=mz, angle=90, movable=False, pen=pg.mkPen(color, width=1.6, style=style),
+                label=label,
+                labelOpts={'position': 0.55 if kind == 'interferer' else 0.75, 'color': color,
+                           'rotateAxis': (1, 0), 'fill': pg.mkBrush(QColor(p.plot_bg)),
+                           'anchors': [(1, 0.5), (1, 0.5)] if kind == 'interferer'
+                           else [(0, 0.5), (0, 0.5)]})
+            line.label.setFont(QFont('Times New Roman', 12, QFont.Bold))
+            line.setZValue(20)
+            self.addItem(line)
+            self._marker_items.append(line)
 
     def _place_overlays(self, *args):
         """Keep the peak check box in the top-right corner and the message centred."""

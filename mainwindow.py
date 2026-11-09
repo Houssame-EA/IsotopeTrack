@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QWidget, QFrame, QStackedWidget
 import tools.dilution_utils
 import utils.dilution
 import utils.signal_stats
+from utils.unit import units
 import json
 from calibration_methods.ionic_CAL import IonicCalibrationWindow
 from tools.periodic_table_utils.periodic_table_info import PeriodicTableInfo
@@ -30,8 +31,9 @@ from widget.custom_plot_widget import (EnhancedPlotWidget, MzBarPlotWidget, Spec
 from calibration_methods.TE import TransportRateCalibrationWindow
 from loading.nu_tuning import read_nu_tuning
 from loading.nu_raw_spectrum import (
-    read_nu_raw_spectrum, spectrum_masses, integration_window, peak_check,
+    read_nu_raw_spectrum, spectrum_masses, integration_window, integration_windows, peak_check,
 )
+import utils.interference_detection as interference_detection
 from calibration_methods import calibration_registry
 from widget.numeric_table import NumericTableWidgetItem
 from widget.results_table_view import ResultsTableView
@@ -314,6 +316,8 @@ class MainWindow(QMainWindow):
         self.sample_tuning_info = {}
         self.sample_raw_spectrum = {}
         self._raw_spectrum_missing = set()
+        self._interference_by_sample = {}
+        self.session_reserve = {}
         self._view_fitted_samples = set()
         self.sample_to_folder_map = {}
         self.transport_rate_methods = calibration_registry.default_transport_labels()
@@ -335,6 +339,7 @@ class MainWindow(QMainWindow):
         self.create_status_bar()
         theme.themeChanged.connect(self.apply_theme)
         self.apply_theme()
+        units.unitsChanged.connect(self._on_units_changed)
 
         self._init_ui_enhancements()
 
@@ -525,6 +530,7 @@ class MainWindow(QMainWindow):
         self.selected_isotopes = {}
         self.data_by_sample = {}
         self.sample_reserve_masses = {}
+        self.session_reserve = {}
         self._ionic_saved_state = None
         self._ionic_saved_entries = {}
         self._ionic_saved_fingerprint = None
@@ -557,6 +563,8 @@ class MainWindow(QMainWindow):
         self.sample_tuning_info = {}
         self.sample_raw_spectrum = {}
         self._raw_spectrum_missing = set()
+        self._interference_by_sample = {}
+        self.session_reserve = {}
         self._view_fitted_samples = set()
 
         self.mass_fraction_service.reset()
@@ -1111,6 +1119,10 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(dilution_action)
 
         tools_menu.addSeparator()
+        units_action = _ma('fa6s.ruler', "Units…", self.open_units_dialog,
+                           shortcut=QKeySequence(QKeySequence.StandardKey.Preferences))
+        units_action.setMenuRole(QAction.MenuRole.NoRole)
+        tools_menu.addAction(units_action)
         autosave_action = _ma('fa6s.clock', "Auto Save Settings",
                               self.open_autosave_settings, shortcut="Ctrl+Shift+S")
         tools_menu.addAction(autosave_action)
@@ -2786,6 +2798,9 @@ class MainWindow(QMainWindow):
             self.sample_to_folder_map.clear()
             self.data_by_sample.clear()
             self.time_array_by_sample.clear()
+            self.sample_raw_spectrum.clear()
+            self._raw_spectrum_missing.clear()
+            self._interference_by_sample.clear()
             self.current_sample = None
             self.all_masses = None
         self.progress_bar.setVisible(True)
@@ -2822,6 +2837,10 @@ class MainWindow(QMainWindow):
                         self.folder_paths.append(path)
                         self.sample_to_folder_map[sample_name] = path
                         newly_added_samples.append(sample_name)
+                        try:
+                            self._raw_spectrum_for(sample_name)
+                        except Exception:
+                            _itk_log.exception("Could not read the resolved spectrum of %s", sample_name)
 
                         self.status_label.setText(f"Successfully loaded {sample_name} ({i + 1}/{total_paths})")
 
@@ -3584,6 +3603,8 @@ class MainWindow(QMainWindow):
                 ('sample_method_info', self.sample_method_info),
                 ('sample_tuning_info', self.sample_tuning_info),
                 ('sample_raw_spectrum', self.sample_raw_spectrum),
+                ('_interference_by_sample', self._interference_by_sample),
+                ('session_reserve', self.session_reserve),
                 ('saturation_filtered_peaks', self.saturation_filtered_peaks),
                 ('saturation_filtered_multi', self.saturation_filtered_multi),
                 ('saturation_windows', self.saturation_windows),
@@ -3744,8 +3765,9 @@ class MainWindow(QMainWindow):
         """Add newly selected isotopes without going back to the raw data when possible.
 
         For every sample, each new isotope is taken from a channel already in
-        memory when one lies within 0.5 Da (isobars such as 58Fe/58Ni), otherwise
-        from the reserve stored in the open project file.
+        memory when one lies within 0.5 Da (isobars such as 58Fe/58Ni), then
+        from a channel deselected earlier in this session, otherwise from the
+        reserve stored in the open project file.
 
         Args:
             newly_added (set): (element, isotope) pairs that were just selected.
@@ -3778,6 +3800,11 @@ class MainWindow(QMainWindow):
                 new_data[target] = sample_data[mass]
 
             still = [t for t in targets if t not in new_data]
+            kept = self.session_reserve.get(sample_name) or {}
+            if still and kept:
+                for target, mass in match_reserve_masses(list(kept.keys()), still).items():
+                    new_data[target] = kept.pop(mass)
+                still = [t for t in targets if t not in new_data]
             stored = reserve.get(sample_name, [])
             if still and project_path and stored:
                 mapping = match_reserve_masses(stored, still)
@@ -3844,6 +3871,7 @@ class MainWindow(QMainWindow):
 
                 for sample_name in self.data_by_sample:
                     sample_data = self.data_by_sample[sample_name]
+                    kept = self.session_reserve.setdefault(sample_name, {})
                     for element, isotope in removed_isotopes:
                         mass_to_remove = None
                         for mass in list(sample_data.keys()):
@@ -3851,7 +3879,7 @@ class MainWindow(QMainWindow):
                                 mass_to_remove = mass
                                 break
                         if mass_to_remove is not None:
-                            del sample_data[mass_to_remove]
+                            kept[mass_to_remove] = sample_data.pop(mass_to_remove)
 
                     if sample_name in self.sample_detected_peaks:
                         peaks_to_remove = [(e, i)
@@ -4071,6 +4099,7 @@ class MainWindow(QMainWindow):
 
                 for sample_name in self.data_by_sample:
                     sample_data = self.data_by_sample[sample_name]
+                    kept = self.session_reserve.setdefault(sample_name, {})
                     for element, isotope in removed_isotopes:
                         mass_to_remove = None
                         for mass in list(sample_data.keys()):
@@ -4078,7 +4107,7 @@ class MainWindow(QMainWindow):
                                 mass_to_remove = mass
                                 break
                         if mass_to_remove is not None:
-                            del sample_data[mass_to_remove]
+                            kept[mass_to_remove] = sample_data.pop(mass_to_remove)
 
                     if sample_name in self.sample_detected_peaks:
                         peaks_to_remove = [(e, i)
@@ -4389,13 +4418,23 @@ class MainWindow(QMainWindow):
         return cache
 
     def _update_periodic_table_selections(self):
-        """Update periodic table with current isotope selections."""
+        """Update periodic table with current isotope selections.
+
+        Every selected isotope of an element is marked, not only the last
+        one: the first is selected on its own, the others are added to it.
+        """
         for element_symbol, isotopes in self.selected_isotopes.items():
             if element_symbol in self.periodic_table_widget.buttons:
                 button = self.periodic_table_widget.buttons[element_symbol]
-                if button.isotope_display:
-                    for isotope in isotopes:
-                        button.isotope_display.select_preferred_isotope(isotope)
+                display = button.isotope_display
+                if not display:
+                    continue
+                for n, isotope in enumerate(isotopes):
+                    if n == 0:
+                        display.select_preferred_isotope(isotope)
+                    elif ((element_symbol, isotope) not in display.selected_isotopes
+                          and isotope in display.mass_labels):
+                        display.on_isotope_clicked(display.mass_labels[isotope], isotope)
 
                         # ----------------------------------------------------------------------------------------------------------
 
@@ -5667,6 +5706,7 @@ class MainWindow(QMainWindow):
         percentage_of_all = (
                 particle_count / total_particles_all_elements * 100) if total_particles_all_elements > 0 else 0.00000
 
+        mass_unit = units.unit('mass')
         summary_html = f"""
         <style>{html_table_css(theme.palette)}</style>
         <table>
@@ -5677,9 +5717,9 @@ class MainWindow(QMainWindow):
                 <th>Total Counts</th>
                 <th>Mean Counts</th>
                 <th>Median Counts</th>
-                <th>Total Mass (fg)</th>
-                <th>Mean Mass (fg)</th>
-                <th>Median Mass (fg)</th>
+                <th>Total Mass ({mass_unit})</th>
+                <th>Mean Mass ({mass_unit})</th>
+                <th>Median Mass ({mass_unit})</th>
                 <th>Mean Signal (counts)</th>
                 <th>Background (counts)</th>
                 <th>Threshold (counts)</th>
@@ -5692,9 +5732,9 @@ class MainWindow(QMainWindow):
                 <td>{total_counts:.5f}</td>
                 <td>{mean_counts:.5f}</td>
                 <td>{median_counts:.5f}</td>
-                <td>{total_mass_fg:.5f}</td>
-                <td>{mean_mass_fg:.5f}</td>
-                <td>{median_mass_fg:.5f}</td>
+                <td>{units.convert(total_mass_fg, 'mass'):.5f}</td>
+                <td>{units.convert(mean_mass_fg, 'mass'):.5f}</td>
+                <td>{units.convert(median_mass_fg, 'mass'):.5f}</td>
                 <td>{overall_mean_signal:.5f}</td>
                 <td>{background_signal:.5f}</td>
                 <td>{threshold_counts:.5f}</td>
@@ -6157,7 +6197,113 @@ class MainWindow(QMainWindow):
             if check['ions'] is not None:
                 rows.append(("Ions in peak", f"{check['ions']:,.0f}", False))
         rows.append(snapshots)
-        plot.set_isotope(target, regions, rows)
+        markers = []
+        symbol = next((el for el, iso in isotopes if abs(iso - target) < 1e-6), None)
+        if symbol:
+            try:
+                ident, blank = self._interference_identification(
+                    sample, masses, spectrum, run_info, single_ion_area)
+                result = interference_detection.check_isotope(
+                    symbol, target, ident, self._interference_elements(),
+                    raw=(masses, spectrum, single_ion_area))
+                rows.append(("Interference check", None, False))
+                if blank:
+                    blank_text = blank
+                elif interference_detection.is_blank_name(sample):
+                    blank_text = "this sample is a blank"
+                else:
+                    blank_text = "no blank loaded"
+                rows.append(("Compared with blank", blank_text, False))
+                rows.extend(result['rows'])
+                if result['verdict']:
+                    alert = {'clean': False, 'minor': 'warn', 'major': True}.get(
+                        result['severity'], 'warn')
+                    rows.append(("", result['verdict'], alert))
+                markers = result['markers']
+            except Exception:
+                self.logger.exception("Interference check failed")
+        plot.set_isotope(target, regions, rows, markers)
+
+    def _interference_elements(self):
+        """Return the element data the interference check uses, read once."""
+        if getattr(self, '_interference_element_data', None) is None:
+            self._interference_element_data = PeriodicTableWidget.create_elements_data()
+        return self._interference_element_data
+
+    def _interference_identification(self, sample, masses, spectrum, run_info, single_ion_area):
+        """Identify the elements of a sample from its resolved spectrum, once per sample.
+
+        When a blank run is loaded, the sample is compared with the blank
+        closest in time (see ``interference_detection.pick_blank``). The
+        Insights spectrum cards reuse this result.
+
+        Args:
+            sample (str): Sample name.
+            masses (np.ndarray): m/z of every spectrum point.
+            spectrum (np.ndarray): Summed raw signal.
+            run_info (dict): Nu run.info of the sample.
+            single_ion_area (float | None): Area of one ion.
+
+        Returns:
+            tuple: ``(Identification | None, blank name | None)``.
+        """
+        cache = self._interference_by_sample
+        if sample not in cache:
+            if getattr(self, '_interference_reference', None) is None:
+                self._interference_reference = interference_detection.load_reference()
+            candidates = {n: self.sample_run_info.get(n) for n in self.sample_to_folder_map
+                          if self.sample_run_info.get(n)}
+            candidates[sample] = run_info
+            blank_name = interference_detection.pick_blank(sample, candidates)
+            blank_entry = self._raw_spectrum_for(blank_name) if blank_name else None
+            if not blank_entry:
+                blank_name = None
+            ident = interference_detection.identify_run(
+                self._raw_spectrum_for(sample), run_info, self._interference_elements(),
+                self._interference_reference, blank_entry,
+                self.sample_run_info.get(blank_name) if blank_name else None)
+            cache[sample] = (ident, blank_name)
+        return cache[sample]
+
+    def show_spectrum_for(self, sample_name, label):
+        """Show the Spectrum view of one sample, zoomed onto one isotope.
+
+        Used by the Insights spectrum cards. Selects the sample and the
+        isotope as a click in the sample and parameter tables would.
+
+        Args:
+            sample_name (str): Sample to show.
+            label (str): Isotope label, e.g. ``"56Fe"``.
+
+        Returns:
+            bool: False when the sample is not loaded.
+        """
+        table = getattr(self, 'sample_table', None)
+        if not sample_name or table is None:
+            return False
+        item = next((table.item(r, 0) for r in range(table.rowCount())
+                     if table.item(r, 0) and table.item(r, 0).text() == sample_name), None)
+        if item is None:
+            return False
+        if sample_name != self.current_sample:
+            table.setCurrentCell(item.row(), 0)
+            self.on_sample_selected(item)
+        target = next(((el, iso) for el, isos in (self.selected_isotopes or {}).items()
+                       for iso in isos
+                       if self.get_formatted_label(f"{el}-{iso:.4f}") == label), None)
+        if target is not None:
+            row = next((r for r in range(self.parameters_table.rowCount())
+                        if self.parameters_table.item(r, 0) is not None
+                        and self._display_label_to_element.get(
+                            self.parameters_table.item(r, 0).text(), (None, None))[:2] == target),
+                       None)
+            if row is not None:
+                self.parameters_table.setCurrentCell(row, 0)
+                self.parameters_table_clicked(row, 0)
+            else:
+                self.current_element, self.current_isotope = target
+        self.switch_plot_view('spectrum')
+        return True
 
     def show_mass_spectrum_popup(self):
         """Open a floating window showing the mean signal intensity for every
@@ -6788,50 +6934,6 @@ class MainWindow(QMainWindow):
             self.plot_widget.setYRange(y_min, y_max, padding=0)
         else:
             self.plot_widget.enableAutoRange()
-
-        if element_data:
-            info_lines = [
-                f"<b>Particle #{particle_number} Composition</b>",
-                f"<b>Duration:</b> {particle_duration * 1000:.2f} ms",
-                "",
-            ]
-
-            sorted_elements = sorted(element_data.items(), key=lambda x: x[1]['counts'], reverse=True)
-
-            for label, data in sorted_elements:
-                info_lines.append(
-                    f"<span style='color: {data['color']}; font-weight: bold;'>●</span> "
-                    f"<b>{superscript_mass(label)}:</b> {data['counts']:.0f} counts"
-                )
-
-            info_text = "<br>".join(info_lines)
-
-            _tp = theme.palette
-            info_label = pg.TextItem(
-                html=f"""
-                <div style='
-                    background: {_tp.bg_secondary};
-                    color: {_tp.text_primary};
-                    padding: 12px 15px;
-                    border: 1px solid {_tp.border};
-                    border-radius: 8px;
-                    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
-                    font-family: "Segoe UI", Arial, sans-serif;
-                    font-size: 11px;
-                    line-height: 1.4;
-                '>
-                    {info_text}
-                </div>
-                """,
-                anchor=(0, 0)
-            )
-
-            info_x = view_start + 0.02 * (view_end - view_start)
-            info_y = (y_min + 0.6 * (y_max - y_min)
-                      if 'y_max' in locals() and 'y_min' in locals()
-                      else min_signal + 0.6 * (max_signal - min_signal))
-            info_label.setPos(info_x, info_y)
-            self.plot_widget.addItem(info_label)
 
         self.plot_widget.showGrid(x=False, y=False)
         self.plot_widget.setLabel('left', 'Counts')
@@ -7473,6 +7575,21 @@ class MainWindow(QMainWindow):
         """Open the per sample dilution factor editor dialog."""
         tools.dilution_utils.open_dilution_factor_dialog(self)
         self._mark_results_changed()
+
+    def _on_units_changed(self, *_):
+        """Show the element summary again in the newly chosen units."""
+        last_args = getattr(self, '_last_summary_args', None)
+        if last_args is None:
+            return
+        try:
+            self.update_element_summary(*last_args)
+        except Exception:
+            _itk_log.exception("Could not refresh the summary in the new units")
+
+    def open_units_dialog(self):
+        """Open the Units dialog; the choice applies to every window of the app."""
+        from tools.unit import show_units_dialog
+        show_units_dialog(self)
 
     def open_autosave_settings(self):
         """Open the Auto Save Settings dialog."""
@@ -8507,6 +8624,10 @@ class MainWindow(QMainWindow):
 
         try:
             theme.themeChanged.disconnect(self.apply_theme)
+        except (RuntimeError, TypeError):
+            _itk_log.exception("Handled exception in closeEvent")
+        try:
+            units.unitsChanged.disconnect(self._on_units_changed)
         except (RuntimeError, TypeError):
             _itk_log.exception("Handled exception in closeEvent")
 

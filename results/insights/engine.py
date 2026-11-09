@@ -40,9 +40,11 @@ from PySide6.QtCore import QThread, Signal
 
 from results.insights import discovery as _disc
 from results.insights import robustness as _robustness
+from results.insights import spectrum as _spectrum
 from results.insights.replicates import (
     ReplicateGroup, describe_grouping, resolve_groups, user_group_map,
 )
+from utils.unit import units
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.insights")
 
@@ -61,6 +63,7 @@ _CAT_META: dict[str, dict] = {
     "signature":    {"icon": "⌘", "label": "Signature"},
     "outlier":      {"icon": "↑", "label": "Outlier"},
     "interference": {"icon": "⚡", "label": "Interference"},
+    "spectrum":     {"icon": "⚡", "label": "Spectrum"},
     "stoichiometry": {"icon": "⚖", "label": "Stoichiometry"},
     "cooccurrence": {"icon": "⊕", "label": "Co-occurrence"},
     "ratio_split":  {"icon": "⇅", "label": "Ratio split"},
@@ -92,14 +95,36 @@ NODE_TYPE_META: dict[str, str] = {
     "triangle_plot": "Ternary",
     "single_multiple_element_plot": "Single vs multiple",
     "figure_builder": "Figure Builder",
+    "interference": "Interference",
 }
 """Plot nodes Insights can propose, in the order the panel lists them.
+
+``interference`` is not a node: it gathers every interference finding, from
+the particles (whose cards add a correlation plot) and from the resolved
+spectrum (whose cards open the main window's Spectrum view); see
+:data:`FILTER_CATEGORIES`.
 
 The Clustering node is not proposed. Particle types are found inside Insights
 with strict checks (see :func:`results.insights.discovery.find_particle_types`)
 and shown in a Figure Builder figure; exploring them further is the
 Clustering node's job.
 """
+
+FILTER_CATEGORIES: dict[str, frozenset] = {
+    "interference": frozenset({"interference", "spectrum"}),
+}
+"""List entries that gather cards by kind of finding as well as by plot node."""
+
+
+def shows_in(s, key: str) -> bool:
+    """Whether a card belongs under the list entry *key*.
+
+    Args:
+        s: The card's :class:`Suggestion`.
+        key: A key of :data:`NODE_TYPE_META`.
+    """
+    return s.node_type == key or s.category in FILTER_CATEGORIES.get(key, ())
+
 
 MIN_CORR_OVERLAP = 25
 """Co-detected particles a pair needs before its correlation is reported."""
@@ -143,6 +168,15 @@ _DATA_KEY_UNITS: dict[str, str] = {
     "particle_diameter_nm": "nm",
 }
 """Short unit suffixes for writing measured values into card text."""
+
+
+def shown_unit(data_key: str) -> str:
+    """Unit to write after a value of *data_key* in card text: the app's chosen one.
+
+    Values are measured in the base units; convert them with
+    ``units.convert_for(value, data_key)`` before writing them next to this.
+    """
+    return units.relabel(_DATA_KEY_UNITS.get(data_key, ""))
 
 _DATA_KEY_NOUNS: dict[str, str] = {
     "elements": "intensity",
@@ -984,7 +1018,7 @@ def canvas_samples(scene) -> tuple[list[str], int]:
     return _dedupe(s for node in nodes for s in checked_samples(node)), len(nodes)
 
 
-def resolve_scope(scene, parent_window, number: int = 0) -> AnalysisScope:
+def resolve_scope(scene, parent_window, number: int = 0, every: bool = False) -> AnalysisScope:
     """Collect the samples to search and work out their replicate groups.
 
     With *number*, the search follows that one selector node as its output
@@ -1002,6 +1036,8 @@ def resolve_scope(scene, parent_window, number: int = 0) -> AnalysisScope:
         parent_window: Main window holding the loaded particle data.
         number: A selector node's number; 0, or a number no node carries,
             searches across the canvas instead.
+        every: Without a node, search every loaded sample, whatever the
+            selector nodes have checked.
 
     Returns:
         The resolved scope, with empty ``sample_names`` when nothing is loaded
@@ -1026,7 +1062,7 @@ def resolve_scope(scene, parent_window, number: int = 0) -> AnalysisScope:
                              len(selector_nodes(scene)), number, node_labels(node))
     checked, selectors = canvas_samples(scene)
     picked = [n for n in names if n in set(checked)]
-    if picked:
+    if picked and not every:
         names, origin = picked, "canvas"
     counts = tuple(len(pool.get(n, ())) for n in names)
     pool_ids = tuple(id(pool.get(n)) for n in names)
@@ -1590,14 +1626,15 @@ def _scan_bimodality(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
                 findings.append((el, split))
 
         findings.sort(key=lambda f: -(f[1]["valley_depth"] * f[1]["minor_share"]))
-        unit = _DATA_KEY_UNITS.get(data_key, "")
+        unit = shown_unit(data_key)
         label = _DATA_KEY_LABELS.get(data_key, "Counts")
 
         for el, split in findings:
             if len(out) >= ctx.cap(MAX_BIMODALITY_CARDS):
                 break
             reported.add(el)
-            low, high = split["modes"]
+            low, high = (units.convert_for(v, data_key) for v in split["modes"])
+            split = dict(split, split=units.convert_for(split["split"], data_key))
             out.append(Suggestion(
                 title=f"Two {noun} populations: {el}",
                 reasoning=(
@@ -2305,7 +2342,8 @@ def _analyse_anomaly(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
 
 
 _REGISTRY = (
-    ("interference", _disc.analyse_interference, "within", {"correlation_plot"}),
+    ("interference", _disc.analyse_interference, "within", {"interference", "correlation_plot"}),
+    ("spectrum", _spectrum.analyse, "across", {"interference"}),
     ("isotope", _analyse_isotope, "within", {"isotopic_ratio_plot"}),
     ("isotope_groups", _disc.analyse_isotope_groups, "across", {"isotopic_ratio_plot"}),
     ("comparison", _analyse_comparison, "across", {"concentration_comparison"}),
@@ -2376,6 +2414,7 @@ _NODE_TYPE_CARD_LIMITS: dict[str, int] = {
     "heatmap_plot": 3,
     "concentration_comparison": 4,
     "figure_builder": 4,
+    "interference": 6,
     "isotopic_ratio_plot": 3,
     "molar_ratio_plot": 3,
     "box_plot": 2,
@@ -2570,8 +2609,7 @@ def analyse(ctx: AnalysisContext, categories=None, progress=None,
     if should_stop is not None and should_stop():
         return []
     if node_types is not None:
-        wanted = set(node_types)
-        found = [s for s in found if s.node_type in wanted]
+        found = [s for s in found if any(shows_in(s, k) for k in node_types)]
     return _dedupe_suggestions(found, per_type_limit) if dedupe else found
 
 
@@ -2660,7 +2698,7 @@ class _AnalysisWorker(QThread):
 
     def __init__(self, scope: AnalysisScope, particles: list[dict],
                  sample_idx: np.ndarray, categories=None, node_types=None,
-                 dedupe: bool = True, focus: str = ""):
+                 dedupe: bool = True, focus: str = "", spectra: dict | None = None):
         """Prepare an analysis run.
 
         Args:
@@ -2674,6 +2712,9 @@ class _AnalysisWorker(QThread):
             focus: Element symbol to search around, e.g. ``"Fe"``; every
                 detector then looks only at findings naming it and keeps
                 many more of them. Empty searches everything.
+            spectra: Spectrum sources for the spectrum check, ``{"samples":
+                [SpectrumSource], "isotopes": [(label, exact mass)]}``
+                (see :mod:`results.insights.spectrum`).
         """
         super().__init__()
         self._scope = scope
@@ -2683,6 +2724,7 @@ class _AnalysisWorker(QThread):
         self._node_types = tuple(node_types) if node_types is not None else None
         self._dedupe = dedupe
         self._focus = focus
+        self._spectra = spectra or {}
         self._abort = False
 
     def cancel(self) -> None:
@@ -2714,6 +2756,7 @@ class _AnalysisWorker(QThread):
 
         self.progress.emit("Building element matrix…")
         ctx = build_context_from(self._scope, self._particles, self._sample_idx)
+        ctx.cache[_spectrum.SOURCES_KEY] = self._spectra
         if self._focus:
             ctx = focused(ctx, self._focus)
 

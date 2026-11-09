@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QColor, QBrush
 from PySide6.QtCore import Qt
 from tools.theme import theme
+from utils.unit import units
 from calibration_methods import calibration_registry
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.widget.calibration_info")
@@ -36,6 +37,7 @@ class CalibrationInfoDialog(QDialog):
 
         theme.themeChanged.connect(self.apply_theme)
         self.apply_theme()
+        units.unitsChanged.connect(self._on_units_changed)
 
     def apply_theme(self):
         """Apply the currently active theme palette to this dialog."""
@@ -44,9 +46,19 @@ class CalibrationInfoDialog(QDialog):
         self._refresh_summary_line()
         self._refresh_avg_rate_style()
 
+    def _on_units_changed(self, *_):
+        """Show the detection limits again in the newly chosen units."""
+        self.ionic_calibration_table.setHorizontalHeaderLabels(self._ionic_headers())
+        self.populate_ionic_calibration_table()
+        self.filter_ionic_table()
+
     def closeEvent(self, event):
         try:
             theme.themeChanged.disconnect(self.apply_theme)
+        except (TypeError, RuntimeError):
+            _itk_log.exception("Handled exception in closeEvent")
+        try:
+            units.unitsChanged.disconnect(self._on_units_changed)
         except (TypeError, RuntimeError):
             _itk_log.exception("Handled exception in closeEvent")
         super().closeEvent(event)
@@ -438,14 +450,17 @@ class CalibrationInfoDialog(QDialog):
 
         self.tab_widget.addTab(ionic_widget, "Ionic Calibration")
 
-    def setup_ionic_table(self):
-        self.ionic_calibration_table.setColumnCount(16)
-        headers = [
+    @staticmethod
+    def _ionic_headers():
+        """Column titles of the ionic calibration table, in the chosen units."""
+        return [
             "Isotope", "Method", "Slope\n(cps/conc)", "BEC", "LOD", "LOQ",
             "R²", "Quality", "Density\n(g/cm³)", "Threshold\n(counts)", "LOD_MDL\n(counts)",
-            "MDL\n(fg)", "MQL\n(fg)", "SDL\n(nm)", "SQL\n(nm)", "Status"
-        ]
-        self.ionic_calibration_table.setHorizontalHeaderLabels(headers)
+        ] + [units.relabel(h) for h in ("MDL\n(fg)", "MQL\n(fg)", "SDL\n(nm)", "SQL\n(nm)")] + ["Status"]
+
+    def setup_ionic_table(self):
+        self.ionic_calibration_table.setColumnCount(16)
+        self.ionic_calibration_table.setHorizontalHeaderLabels(self._ionic_headers())
 
         self.ionic_calibration_table.setAlternatingRowColors(False)
         self.ionic_calibration_table.setSortingEnabled(True)
@@ -625,13 +640,14 @@ class CalibrationInfoDialog(QDialog):
             items.append(self.create_decimal_item(threshold_data.get('LOD_counts'), 2))
             items.append(self.create_decimal_item(threshold_data.get('LOD_MDL'), 2))
 
+            size_dec = 1 if units.unit('diameter') == 'nm' else 4
             limit_key = self.find_matching_limit_key(formatted_isotope, element_limits)
             limit_data = element_limits.get(limit_key, {}) if limit_key else {}
             items.extend([
-                self.create_scientific_item(limit_data.get('MDL')),
-                self.create_scientific_item(limit_data.get('MQL')),
-                self.create_decimal_item(limit_data.get('SDL'), 1),
-                self.create_decimal_item(limit_data.get('SQL'), 1),
+                self.create_scientific_item(self._in_units(limit_data.get('MDL'), 'mass')),
+                self.create_scientific_item(self._in_units(limit_data.get('MQL'), 'mass')),
+                self.create_decimal_item(self._in_units(limit_data.get('SDL'), 'diameter'), size_dec),
+                self.create_decimal_item(self._in_units(limit_data.get('SQL'), 'diameter'), size_dec),
             ])
 
             items.append(self.create_status_item(r_squared, method_data, limit_data))
@@ -696,6 +712,14 @@ class CalibrationInfoDialog(QDialog):
         if not editable:
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
         return item
+
+    @staticmethod
+    def _in_units(value, kind):
+        """*value* in the chosen unit of *kind*; missing or text values pass through."""
+        try:
+            return units.convert(float(value), kind)
+        except (TypeError, ValueError):
+            return value
 
     def create_scientific_item(self, value):
         if value is None or value == 'N/A':

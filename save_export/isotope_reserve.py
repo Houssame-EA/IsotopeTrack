@@ -31,6 +31,7 @@ MAX_MASS_DIFF = 0.5
 SOURCE_PROJECT = "project"
 SOURCE_RAW = "raw"
 SOURCE_NONE = "none"
+SOURCE_SESSION = "session"
 
 
 def safe_sample_name(sample_name):
@@ -297,8 +298,12 @@ class ReserveSource:
             self._zf = None
 
 
-def write_sample_reserve(zf, sample_name, selected_masses, folder_path, source):
+def write_sample_reserve(zf, sample_name, selected_masses, folder_path, source, kept=None):
     """Write the reserve of one sample into a project archive being saved.
+
+    Channels deselected during the session (*kept*) are written too, so an
+    isotope that was selected when the project was last saved and has since
+    been deselected is not lost when the raw data is out of reach.
 
     Args:
         zf (zipfile.ZipFile): Destination archive opened for writing.
@@ -306,13 +311,29 @@ def write_sample_reserve(zf, sample_name, selected_masses, folder_path, source):
         selected_masses (iterable): Isotope masses currently selected for the sample.
         folder_path (str | Path | None): Raw data source of the sample.
         source (ReserveSource): Reserve of the currently open project.
+        kept (dict | None): ``{mass: signal}`` deselected in this session.
 
     Returns:
         tuple[list[float], str]: Masses written and where they came from
-        (``'project'``, ``'raw'`` or ``'none'``).
+        (``'project'``, ``'raw'``, ``'session'`` or ``'none'``).
     """
     selected_masses = [float(m) for m in selected_masses]
+    written, origin = _write_stored_reserve(zf, sample_name, selected_masses, folder_path, source)
+    extra = {float(m): v for m, v in (kept or {}).items()}
+    taken = closest_channel_indices(list(extra), selected_masses + [float(m) for m in written],
+                                    max_diff=0.001)
+    for idx, (mass, signal) in enumerate(extra.items()):
+        if idx in taken:
+            continue
+        _write_channel(zf, sample_name, mass, _array_to_npy_bytes(np.asarray(signal)))
+        written.append(mass)
+        if origin == SOURCE_NONE:
+            origin = SOURCE_SESSION
+    return written, origin
 
+
+def _write_stored_reserve(zf, sample_name, selected_masses, folder_path, source):
+    """Write the reserve kept in the open project, or else read from the raw data."""
     stored = source.masses_for(sample_name, folder_path)
     if stored:
         used = closest_channel_indices(stored, selected_masses)

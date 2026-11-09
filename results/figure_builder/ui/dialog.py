@@ -41,6 +41,8 @@ from results.figure_builder.core.recipes import RECIPES, recipe_panel
 from results.figure_builder.ui.sketch import LayoutSketch
 from results.figure_builder.ui.widgets import ColorButton, RowTable
 
+from utils.unit import units
+from widget.unit_combo import UnitComboBox
 import logging
 
 _log = logging.getLogger('IsotopeTrack.results.figure_builder')
@@ -88,6 +90,7 @@ class FigureBuilderNode(QObject):
         """Receive the upstream stream and fill empty axes with the first isotopes."""
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         self.input_data = input_data
         self.config = E.normalise_spec(self.config)
         table = ParticleTable.from_input(input_data, self.config.get('data_type', 'Counts'))
@@ -923,7 +926,7 @@ class FigureBuilderDialog(QDialog):
         bar.addSpacing(12)
         self._quantity_label = QLabel('Quantity')
         bar.addWidget(self._quantity_label)
-        self.data_type = QComboBox()
+        self.data_type = UnitComboBox()
         for k in DATA_TYPES:
             self.data_type.addItem(k, k)
         self.data_type.setCurrentIndex(max(0, self.data_type.findData(self.spec.get('data_type', 'Counts'))))

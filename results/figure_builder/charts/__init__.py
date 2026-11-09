@@ -15,7 +15,8 @@ from results.figure_builder.charts.extra import (
 from results.figure_builder.charts.more import (
     draw_ecdf, draw_lollipop, draw_timeline, draw_treemap)
 from results.figure_builder.charts.network import draw_network, draw_pca
-from results.figure_builder.charts.special import draw_code, draw_ternary, draw_text
+from results.figure_builder.charts.special import (
+    draw_code, draw_spectrum, draw_ternary, draw_text)
 from results.figure_builder.charts.xy import draw_density, draw_line, draw_scatter
 
 DRAWERS = {
@@ -48,4 +49,5 @@ DRAWERS = {
     'pca': draw_pca,
     'text': draw_text,
     'code': draw_code,
+    'spectrum': draw_spectrum,
 }

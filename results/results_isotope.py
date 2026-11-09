@@ -26,6 +26,8 @@ from results.shared_plot_utils import (
     _add_det_limit_h,
     apply_plot_title_style, apply_axis_label_style,
 )
+from utils.unit import units
+from widget.unit_combo import UnitComboBox
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_isotope")
 
@@ -130,10 +132,11 @@ class InsetColorBarItem(pg.GraphicsWidget):
     BAR_HEIGHT = 14
     MIN_WIDTH = 180
 
-    def __init__(self, label_text, parent=None, vmin=None, vmax=None, log=True):
+    def __init__(self, label_text, parent=None, vmin=None, vmax=None, log=True, stops=None):
         super().__init__(parent)
         self.label_text = label_text
         self.vmin, self.vmax, self.log = vmin, vmax, log
+        self._stops = stops if stops is not None else list(zip(JET_POSITIONS, JET_COLORS))
         title = QFont()
         title.setPointSize(self.TITLE_SIZE)
         title.setBold(True)
@@ -173,8 +176,8 @@ class InsetColorBarItem(pg.GraphicsWidget):
         left, right = self.PAD, self._w - self.PAD
         top = self._title_h
         grad = QLinearGradient(left, top, right, top)
-        for pos, color in zip(JET_POSITIONS, JET_COLORS):
-            grad.setColorAt(pos, QColor(*color))
+        for pos, color in self._stops:
+            grad.setColorAt(float(pos), QColor(*[int(v) for v in color]))
         p.setBrush(QBrush(grad))
         p.setPen(pg.mkPen('k', width=1))
         p.drawRect(QRectF(left, top, right - left, self.BAR_HEIGHT))
@@ -798,7 +801,7 @@ class IsotopeSettingsDialog(QDialog):
 
         g = QGroupBox("Data Type")
         fl = QFormLayout(g)
-        self.data_type = QComboBox()
+        self.data_type = UnitComboBox()
         self.data_type.addItems(DATA_TYPE_OPTIONS)
         self.data_type.setCurrentText(self._cfg.get('data_type_display', 'Counts'))
         fl.addRow("Data:", self.data_type)
@@ -2537,6 +2540,9 @@ class IsotopicRatioDisplayDialog(QDialog):
                      if c in ('_source_sample', '_original_sample') or str(c).startswith(COUNTS_PREFIX)]
         meta_data = element_data[meta_cols]
         numeric_data = element_data.drop(columns=meta_cols)
+        counts_cols = [c for c in meta_cols if str(c).startswith(COUNTS_PREFIX)]
+        if counts_cols:
+            numeric_data.attrs['counts'] = element_data[counts_cols]
 
         df = apply_saturation_filter(numeric_data, cfg)
         if df.empty:
@@ -2853,7 +2859,7 @@ class IsotopicRatioDisplayDialog(QDialog):
     def _build_labels(self, cfg, sample_name=None):
         e1 = cfg.get('element1', '')
         e2 = cfg.get('element2', '')
-        x_elem = cfg.get('x_axis_element', e2)
+        x_elem = cfg.get('x_axis_element') or e2
         dt = cfg.get('data_type_display', 'Counts')
         lm = cfg.get('label_mode', 'Symbol')
 
@@ -2930,7 +2936,7 @@ class IsotopicRatioDisplayDialog(QDialog):
         color_elem = cfg.get('color_element', '')
         dt = cfg.get('data_type_display', 'Counts')
         
-        label_text = f"log10 {color_elem} ({dt})"
+        label_text = units.relabel(f"log10 {color_elem} ({dt})")
         
         cbar = InsetColorBarItem(label_text, vmin=vmin, vmax=vmax, log=True)
         cbar.setParentItem(pi.vb)
@@ -3395,6 +3401,7 @@ class IsotopicRatioPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
+        input_data = units.convert_input(input_data)
         # Classifier support is NOT shipped for this node type (see
         # classifier_view.CLASSIFIER_WIP_NODE_TYPES). Undo the
         # classifier's destructive composition collapse and its
