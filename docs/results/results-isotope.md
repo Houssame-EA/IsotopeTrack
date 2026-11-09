@@ -26,7 +26,7 @@ both ends of the colour scale are written under the bar.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, label_text, parent=None, vmin=None, vmax=None, log=True)` |  |
+| `__init__` | `(self, label_text, parent=None, vmin=None, vmax=None, log=True, stops=` |  |
 | `_has_values` | `(self)` |  |
 | `_value_text` | `(self, v)` |  |
 | `boxWidth` | `(self)` | Width of the colour bar box, in pixels. |

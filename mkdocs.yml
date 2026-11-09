@@ -169,6 +169,7 @@ nav:
     - "panel.py": insights/panel.md
     - "replicates.py": insights/replicates.md
     - "robustness.py": insights/robustness.md
+    - "spectrum.py": insights/spectrum.md
 - Clustering:
     - Overview: cluster/index.md
     - "detail.py": cluster/detail.md
@@ -217,6 +218,7 @@ nav:
     - "periodic_table_widget.py": widgets_ui/periodic-table-widget.md
     - "results_table_view.py": widgets_ui/results-table-view.md
     - "theme_switch.py": widgets_ui/theme-switch.md
+    - "unit_combo.py": widgets_ui/unit-combo.md
     - "help_dialogs.py": widgets_ui/help-dialogs.md
     - "tutorial.py": widgets_ui/tutorial.md
     - "element_picker.py": widgets_ui/element-picker.md
@@ -266,6 +268,7 @@ nav:
     - "dialog_chrome.py": utils/dialog-chrome.md
     - "dilution.py": utils/dilution.md
     - "file_dialog_memory.py": utils/file-dialog-memory.md
+    - "interference_detection.py": utils/interference-detection.md
     - "isobaric_correction.py": utils/isobaric-correction.md
     - "native_menu.py": utils/native-menu.md
     - "numba_guard.py": utils/numba-guard.md

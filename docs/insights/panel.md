@@ -69,6 +69,7 @@ it is, and a button naming the plot it adds.
 |--------|-----------|-------------|
 | `__init__` | `(self, s: Suggestion, on_add, samples_text: str='', on_figure=None, pa` | Build a card for one suggestion. |
 | `_build` | `(self)` | Lay out the card's contents. |
+| `shows_spectrum` | `(self) → bool` | Whether the card is a spectrum finding, opened in the Spectrum view. |
 | `_build_details` | `(self, explanation) → QWidget` | Build the hidden details section: key numbers, then the explanation. |
 | `_toggle_details` | `(self)` | Show or hide the details section. |
 | `_figure_clicked` | `(self)` | Add the explained figure, and confirm on the button. |
@@ -111,13 +112,15 @@ instantiating this directly.
 | `_pick_filter` | `(self, node_type: str \| None)` | Show the plot type picked from the menu, and log the choice. |
 | `_node_entries` | `(self) → tuple` | ``(number, title, checked samples)`` of every numbered selector node on the canvas. |
 | `_sync_nodes` | `(self) → bool` | Follow the numbered nodes on the canvas; return whether the searched node changed. |
-| `_fill_node_menu` | `(self)` | List every numbered node and the choice of searching across them all. |
+| `_fill_node_menu` | `(self)` | List "All" (every loaded sample) and every numbered node. |
+| `_refill_node_menu_later` | `(self)` | Rebuild the node menu once it has closed, if nodes changed while it was open. |
 | `current_node` | `(self) → int` | Return the number of the node searched, or 0 when searching across all of them. |
 | `set_node` | `(self, number: int)` | Search one numbered selector node, or every one when *number* is 0. |
 | `_pick_node` | `(self, number: int)` | Search the node picked from the menu, and log the choice. |
-| `_resolve` | `(self) → AnalysisScope` | The scope for the node being searched, or across the canvas. |
+| `_resolve` | `(self) → AnalysisScope` | The scope for the node being searched, or every loaded sample under "All". |
 | `_pick_focus` | `(self, symbol: str)` | Search around the element picked from the menu, and log the choice. |
 | `_new_bar_clicked` | `(self)` | Show the findings that were held back, and log the click. |
+| `_on_units_changed` | `(self, *_)` | Write the findings again in the newly chosen units. |
 | `refresh` | `(self)` | Search everything again from scratch. |
 | `run_category` | `(self, key: str, force: bool=False)` | Show only the plot types one detector feeds, and search for them. |
 | `_check_scope` | `(self)` | Search again when the loaded samples or replicate groups have changed. |
@@ -143,6 +146,7 @@ instantiating this directly.
 | `_direct_node` | `(self, s: Suggestion)` | The selector node a card's plot connects straight to, or ``None``. |
 | `_card_source` | `(self, s: Suggestion) → str` | The card's line saying which samples, and which node, a finding comes from. |
 | `_add_figure` | `(self, s: Suggestion)` | Add the figure that walks through a finding, panels a to f with a legend. |
+| `_show_spectrum` | `(self, s: Suggestion)` | Open the main window's Spectrum view on a spectrum finding's sample and isotope. |
 | `_add_clustering` | `(self, s: Suggestion)` | Add a Clustering node over a particle-type finding's samples and elements. |
 | `_add_suggestion` | `(self, s: Suggestion, node_type: str \| None=None, config: dict \| None=` | Build the branch a suggestion describes and wire it into the canvas. |
 | `_build_scoped_selector` | `(self, s: Suggestion, factories: dict, narrow_elements: bool=True)` | Create a sample selector holding only what the finding is about. |
@@ -164,6 +168,7 @@ instantiating this directly.
 | `_raw_pool_for` | `(scene, parent_window) → dict` | Every loaded particle by sample, as the engine reads it. |
 | `_isotope_entries` | `(parent_window, scene, labels) → list[dict]` | Resolve element labels into the isotope records a selector expects. |
 | `isotope_markup` | `(text: str) → str` | Write isotope labels in text with a superscript mass number. |
+| `spectrum_sources` | `(parent_window, sample_names) → dict` | Collect, on the GUI thread, what the spectrum check needs for each sample. |
 | `section_of` | `(category: str) → str` | Return the section heading a finding of *category* is listed under. |
 | `strength_label` | `(confidence: float) → tuple[str, int]` | Word and number of filled dots describing how strong a finding is. |
 | `evidence_cells` | `(evidence) → list[tuple[str, str, bool \| None]]` | The evidence strip's cells: ``(heading, value, passed)``. |

@@ -282,6 +282,11 @@ Call .build() to get the QGroupBox, then .collect() to read current values.
 | `get_sample_color` | `(sample_name: str, index: int, config: dict) → str` | Return hex color for a sample, falling back to default palette. |
 | `seed_suggested_element_colors` | `(config: dict, input_data: dict \| None) → None` | Seed default bar/legend colors from an upstream node's suggestions. |
 | `get_display_name` | `(original_name: str, config: dict) → str` | Return custom display name or original. |
+| `declutter_pie_labels` | `(ax, annotations, pad=0.03)` | Keep pie labels apart so none overlaps another, measured as drawn. |
+| `_spread_centres` | `(targets, heights)` | Centres closest to *targets* (top to bottom) with no two boxes overlapping. |
+| `_block_top` | `(block)` | Top of a block of stacked boxes placed so their centres sit nearest their aims. |
+| `_replace_pie_labels` | `(fig)` | Place the labels of every pie of *fig* again, after a resize. |
+| `_place_pie_labels` | `(ax)` | One placement of the labels set up by :func:`declutter_pie_labels`. |
 | `make_viridis_colormap` | `()` | Create a viridis-like PyQtGraph ColorMap. |
 | `conc_meta_available` | `(input_data) → bool` | Report whether any sample in the input carries a usable transport rate. |
 | `per_ml_factor` | `(input_data, sample_name) → float` | Return the multiplier that converts a particle count to particles per mL. |

@@ -28,4 +28,5 @@ integration window can be checked.
 | `_time_to_mass` | `(run_info, time_ns)` | Convert flight time to m/z with the run's mass calibration. |
 | `spectrum_masses` | `(run_info, n_points)` | Return the m/z of every point of a raw spectrum. |
 | `integration_window` | `(run_info, target_mass)` | Return the integration and baseline windows closest to a mass. |
+| `integration_windows` | `(run_info)` | Return the integration window of every measured mass. |
 | `peak_check` | `(masses, spectrum, target_mass, window=None, half_width=ZOOM_HALF_WIDT` | Measure the peak nearest a mass in a resolved spectrum. |

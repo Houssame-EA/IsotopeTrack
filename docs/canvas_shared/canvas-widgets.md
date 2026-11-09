@@ -530,6 +530,7 @@ Thin handle on the right edge of the canvas node list; drag it to resize.
 | `_check_link_allowed` | `(self, src_node, snk_node)` | Temp-aware connectivity check wrapping _direct_link_allowed. |
 | `add_link` | `(self, src_node, src_ch, snk_node, snk_ch)` |  |
 | `_trigger_data_flow` | `(self, wl)` |  |
+| `_on_units_changed` | `(self, *_)` | Send every node's data again so each figure redraws in the new units. |
 | `flush_data_flow` | `(self)` | Push each node's output to its sinks exactly once, sources first. |
 | `_flush_data_flow_inner` | `(self)` | The topological push itself; see :meth:`flush_data_flow`. |
 | `add_node_of_type` | `(self, ntype, scene_pos)` | Create a node of ``ntype`` at ``scene_pos``, snapped to the grid. |

@@ -114,6 +114,7 @@ Main dialog with PyQtGraph plot and right-click context menu.
 | `_sort_box_category_records` | `(records, sort_mode)` | Return Box Plot display records in the requested display order. |
 | `_sort_box_sample_records` | `(records, sort_mode)` | Return ``Subplots by isotope`` sample records in subplot display order. |
 | `_tag_box_color_identity` | `(item, cfg)` | Tag a box rect with its colour identity so double-click edits persist. |
+| `_fit_tick_labels` | `(labels, width_px, char_px=7.5)` | Shorten each line of crowded tick labels so neighbours do not run into each other. |
 | `_draw_box` | `(plot_item, x, values, color, alpha, width, cfg)` |  |
 | `_draw_violin` | `(plot_item, x, values, color, alpha, width, cfg)` |  |
 | `_draw_box_violin` | `(plot_item, x, values, color, alpha, width, cfg)` |  |

@@ -26,6 +26,7 @@ is saved without a reserve.
 | `SOURCE_PROJECT` | `'project'` |
 | `SOURCE_RAW` | `'raw'` |
 | `SOURCE_NONE` | `'none'` |
+| `SOURCE_SESSION` | `'session'` |
 
 ## Classes
 
@@ -56,7 +57,8 @@ reserve forward without touching the raw data.
 | `closest_channel_indices` | `(channel_masses, target_masses, max_diff=MAX_MASS_DIFF)` | Return the indices of the channels the target masses resolve to. |
 | `raw_source_kind` | `(folder_path)` | Return the raw data format of a sample source, or None when unusable. |
 | `iter_raw_channels` | `(folder_path)` | Yield every mass channel of a Nu or TOFWERK acquisition. |
-| `write_sample_reserve` | `(zf, sample_name, selected_masses, folder_path, source)` | Write the reserve of one sample into a project archive being saved. |
+| `write_sample_reserve` | `(zf, sample_name, selected_masses, folder_path, source, kept=None)` | Write the reserve of one sample into a project archive being saved. |
+| `_write_stored_reserve` | `(zf, sample_name, selected_masses, folder_path, source)` | Write the reserve kept in the open project, or else read from the raw data. |
 | `read_reserve_channel` | `(project_path, sample_name, mass)` | Read one channel back from a project's reserve. |
 | `match_reserve_masses` | `(reserve_masses, target_masses, max_diff=MAX_MASS_DIFF)` | Map each target isotope mass to its closest reserve channel. |
 | `read_reserve_channels` | `(project_path, sample_name, masses)` | Read several channels of one sample from a project's reserve. |

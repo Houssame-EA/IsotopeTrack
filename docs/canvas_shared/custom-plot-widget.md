@@ -277,11 +277,14 @@ box in the top-right corner of the plot.
 | `open_plot_settings` | `(self)` | Open the shared Plot Settings dialog (fonts, grid, traces). |
 | `set_units` | `(self, units)` | Set the intensity units, unless the user renamed the left axis. |
 | `set_spectrum` | `(self, key, masses, intensity)` | Show a spectrum; nothing is redrawn when the same sample is shown again. |
-| `set_isotope` | `(self, target, windows, rows)` | Mark the selected isotope and zoom onto its peak. |
+| `set_isotope` | `(self, target, windows, rows, markers=None)` | Mark the selected isotope and zoom onto its peak. |
 | `zoom_to_isotope` | `(self)` | Zoom onto the selected isotope. |
 | `show_full_spectrum` | `(self)` | Show the whole mass range. |
 | `show_message` | `(self, text)` | Clear the plot and show a message in its centre. |
 | `_render_info` | `(self)` | Draw the peak check box from the stored rows. |
+| `_alert_color` | `(p, alert, default)` | Return the colour of a value: danger, warning or the default. |
+| `_info_row_html` | `(self, p, name, value, alert)` | Return one table row of the peak check box. |
+| `_render_markers` | `(self)` | Draw the expected and interfering m/z as labelled vertical lines. |
 | `_place_overlays` | `(self, *args)` | Keep the peak check box in the top-right corner and the message centred. |
 | `mouseDoubleClickEvent` | `(self, event)` | Open the editor for the title, an axis, the trace or the background. |
 

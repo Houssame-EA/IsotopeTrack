@@ -12,7 +12,7 @@ Reusable dialogs, tables, and UI widgets.
 ### [`calibration_info.py`](calibration-info.md)
 
 
-**1** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **33** methods
+**1** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **36** methods
 
 ### [`canvas_layout.py`](canvas-layout.md)
 Automatic layout of the Workflow Builder canvas.
@@ -63,6 +63,11 @@ Fast model/view table for the Single Element and Multi-Element results.
 Sliding light/dark switch for window headers.
 
 **1** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **8** methods
+
+### [`unit_combo.py`](unit-combo.md)
+A combo box of data types that shows them in the app's chosen units.
+
+**1** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **11** methods
 
 ### [`help_dialogs.py`](help-dialogs.md)
 

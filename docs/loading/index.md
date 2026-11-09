@@ -17,7 +17,7 @@ Instrument data readers: Nu Vitesse, TOFWERK, CSV, and background threads.
 ### [`nu_raw_spectrum.py`](nu-raw-spectrum.md)
 Resolved mass spectrum rebuilt from the ``.raw`` snapshots of a Nu run.
 
-**0** classes &nbsp;·&nbsp; **7** functions &nbsp;·&nbsp; **0** methods
+**0** classes &nbsp;·&nbsp; **8** functions &nbsp;·&nbsp; **0** methods
 
 ### [`nu_tuning.py`](nu-tuning.md)
 Reader for the instrument tuning snapshot written by Nu Instruments software.

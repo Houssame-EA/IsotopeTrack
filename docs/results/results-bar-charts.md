@@ -385,6 +385,7 @@ Element particle-count bar chart node with right-click context menu.
 | `_get_element_display_name` | `(element, cfg)` | Get display name for an element (renamed or original). |
 | `_tag_element_color_item` | `(item, raw_element_key, trace_name)` | Attach canonical raw-element identity metadata to a graphics item. |
 | `_get_legend_sample_graphics_item` | `(legend_sample_item)` | Resolve the live swatch graphics item stored in a legend row. |
+| `shown_setting` | `(cfg, key, default)` | A saved bin width, x range or limit, in the units the figure shows. |
 | `_get_xy_labels` | `(cfg)` | Build x/y label strings. |
 | `_is_multi` | `(input_data)` |  |
 | `_sample_names` | `(input_data)` |  |

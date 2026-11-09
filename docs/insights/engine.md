@@ -234,7 +234,9 @@ Signals:
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `shows_in` | `(s, key: str) → bool` | Whether a card belongs under the list entry *key*. |
 | `symbol_of` | `(label: str) → str` | Element symbol of an isotope label such as ``"56Fe"`` or ``"Fe56"``. |
+| `shown_unit` | `(data_key: str) → str` | Unit to write after a value of *data_key* in card text: the app's chosen one. |
 | `_safe_float` | `(v) → float \| None` | Coerce *v* to a positive float, or ``None`` if it is not usable. |
 | `_build_matrix` | `(particles: list[dict], data_key: str='elements') → tuple[dict[str, np` | Build the element matrix in a single sparse pass. |
 | `_correlate_pair` | `(a: np.ndarray, b: np.ndarray, min_overlap: int=MIN_CORR_OVERLAP) → di` | Correlate two element columns both parametrically and by rank. |
@@ -258,7 +260,7 @@ Signals:
 | `find_selector` | `(scene, number: int)` | The selector node carrying *number*, or ``None``. |
 | `node_labels` | `(node) → tuple[str, ...]` | The isotope labels a selector node sends on; empty when it keeps every element. |
 | `canvas_samples` | `(scene) → tuple[list[str], int]` | The samples checked across the canvas's selector nodes. |
-| `resolve_scope` | `(scene, parent_window, number: int=0) → AnalysisScope` | Collect the samples to search and work out their replicate groups. |
+| `resolve_scope` | `(scene, parent_window, number: int=0, every: bool=False) → AnalysisSco` | Collect the samples to search and work out their replicate groups. |
 | `keep_elements` | `(particles: list[dict], labels) → list[dict]` | Particles reduced to the given isotopes, as a selector node sends them on. |
 | `gather_scope_data` | `(scene, parent_window, scope: AnalysisScope) → tuple[list[dict], np.nd` | Collect the particle list for *scope*. |
 | `build_context_from` | `(scope: AnalysisScope, particles: list[dict], sample_idx: np.ndarray) ` | Build an :class:`AnalysisContext`, reusing a cached one when possible. |

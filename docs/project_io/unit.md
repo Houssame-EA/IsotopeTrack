@@ -1,9 +1,10 @@
 # `unit.py`
 
-Advanced Export Options dialog (visual).
+Units dialog (visual): one choice of units for the whole app.
 
-The unit definitions, ``ExportUnits`` value object, formatters, and QSettings
-persistence live in ``utils/unit.py``. This module only builds the dialog.
+The unit definitions, ``ExportUnits`` value object, formatters, persistence
+and the app-wide ``units`` object live in ``utils/unit.py``. This module only
+builds the dialog.
 
 ---
 
@@ -11,4 +12,5 @@ persistence live in ``utils/unit.py``. This module only builds the dialog.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `show_advanced_dialog` | `(parent, current: ExportUnits) → ExportUnits \| None` | Open the Advanced Options dialog and return the updated ExportUnits, |
+| `show_advanced_dialog` | `(parent, current: ExportUnits) → ExportUnits \| None` | Open the Units dialog and return the updated ExportUnits, or None if |
+| `show_units_dialog` | `(parent) → ExportUnits \| None` | Open the Units dialog on the app's current units. |

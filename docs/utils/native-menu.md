@@ -99,6 +99,7 @@ exactly as with Qt's own menus.
 | `key_equivalent` | `(shortcut: str) → tuple[str, int]` | A shortcut as a macOS key equivalent: ``"Ctrl+Shift+C"`` → ``("c", ⌘⇧)``. |
 | `icon_png` | `(icon, points: int=ICON_POINTS) → bytes` | A ``QIcon`` as PNG bytes at twice *points*, sharp on Retina screens. |
 | `_target_class` | `(objc, Foundation)` | The Objective-C class receiving the chosen item, defined once per process. |
+| `alive` | `(obj) → bool` | Whether a Qt object still exists on the C++ side. |
 | `release_buttons` | `(menu: QMenu) → None` | Let Qt know the mouse buttons are up again, without anyone seeing a click. |
 | `deliver` | `(menu: QMenu, chosen) → None` | Hand the choice to the Qt menu, which runs it and closes. |
 | `install_native_menus` | `(app=None, backend=None) → bool` | Make every Qt pop-up menu show as a system menu, where that is possible. |

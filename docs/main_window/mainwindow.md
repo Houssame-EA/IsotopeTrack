@@ -209,6 +209,9 @@ scrolling page the frame grew a little every time the view was switched.
 | `_fit_plot_view` | `(self)` | Fit the time plot to its data now, not at the next repaint. |
 | `_refresh_spectrum_view` | `(self)` | Redraw the Spectrum view when it is shown, after the sample or element changed. |
 | `_update_spectrum_plot` | `(self)` | Show the resolved spectrum of the current sample, zoomed onto the selected isotope. |
+| `_interference_elements` | `(self)` | Return the element data the interference check uses, read once. |
+| `_interference_identification` | `(self, sample, masses, spectrum, run_info, single_ion_area)` | Identify the elements of a sample from its resolved spectrum, once per sample. |
+| `show_spectrum_for` | `(self, sample_name, label)` | Show the Spectrum view of one sample, zoomed onto one isotope. |
 | `show_mass_spectrum_popup` | `(self)` | Open a floating window showing the mean signal intensity for every |
 | `switch_plot_view` | `(self, mode: str)` | Switch the main plot area between the time-domain trace ('time'), |
 | `_update_mz_plot` | `(self)` | " |
@@ -235,6 +238,8 @@ scrolling page the frame grew a little every time the view was switched.
 | `particles_per_ml` | `(self, sample_name, particle_count, element_key=None, apply_dilution=T` | Return the particle number concentration in particles per millilitre. |
 | `has_transport_rate` | `(self)` | Report whether a transport rate calibration is available. |
 | `open_dilution_factor_dialog` | `(self)` | Open the per sample dilution factor editor dialog. |
+| `_on_units_changed` | `(self, *_)` | Show the element summary again in the newly chosen units. |
+| `open_units_dialog` | `(self)` | Open the Units dialog; the choice applies to every window of the app. |
 | `open_autosave_settings` | `(self)` | Open the Auto Save Settings dialog. |
 | `maybe_prompt_dilution` | `(self)` | Show the one time dilution correction prompt when appropriate. |
 | `update_calculations` | `(self)` | Update calculations after transport rate changes. |

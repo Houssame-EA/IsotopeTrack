@@ -152,4 +152,4 @@ Welcome / Home screen for IsotopeTrack.
 ### [`window_glass.py`](window-glass.md)
 Frosted-glass window backdrops for macOS and Windows 11.
 
-**3** classes &nbsp;·&nbsp; **17** functions &nbsp;·&nbsp; **2** methods
+**3** classes &nbsp;·&nbsp; **21** functions &nbsp;·&nbsp; **2** methods

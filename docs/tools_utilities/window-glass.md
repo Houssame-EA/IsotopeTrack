@@ -66,5 +66,9 @@ Runs the glass activation once a window has finished showing.
 | `_apply_mac` | `(widget)` | Put an NSVisualEffectView behind the Qt content and merge the title bar. |
 | `window_buttons_geometry` | `(widget)` | Locate the macOS close/minimise/zoom buttons of a glass window. |
 | `_apply_windows` | `(widget, dark)` | Enable the DWM Acrylic (or Mica) backdrop for the window. |
+| `titlebar_action` | `()` | Return what a title-bar double-click does in the user's macOS settings. |
+| `titlebar_double_click` | `(widget)` | Do what macOS does when the title bar of *widget*'s window is double-clicked. |
+| `in_titlebar` | `(window, global_pos)` | Whether a point lies on the merged title strip of a glass window, off any control. |
+| `_install_titlebar_filter` | `()` | Send double-clicks on the merged title strip of glass windows back to macOS. |
 | `_refresh` | `(widget)` | Re-apply the backdrop after a theme switch (updates Windows dark mode). |
 | `attach` | `(widget, on_active=None)` | Give a top-level window the frosted sidebar treatment. |
