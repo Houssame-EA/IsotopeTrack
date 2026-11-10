@@ -29,9 +29,9 @@ keep this one consistent with them.
 | `CVI_FUNCS` | `{'silhouette_scores': lambda d, l: float(silhouette_score…` |
 | `METRIC_REGISTRY` | `{'Silhouette': {'display': 'Silhouette Score', 'key': 'si…` |
 | `METRICS` | `list(METRIC_REGISTRY.keys())` |
-| `METRIC_KEYS` | `{name: (spec['display'], spec['key']) for name, spec in M…` |
+| `METRIC_KEYS` | `{name: (spec['display'], spec['key']) for (name, spec) in…` |
 | `DEFAULT_METRICS` | `['Silhouette', 'Calinski-Harabasz', 'Davies-Bouldin']` |
-| `METRIC_COLORS` | `{name: spec['color'] for name, spec in METRIC_REGISTRY.it…` |
+| `METRIC_COLORS` | `{name: spec['color'] for (name, spec) in METRIC_REGISTRY.…` |
 | `DENSITY_BASED_ALGOS` | `{'DBSCAN', 'HDBSCAN', 'OPTICS', 'Mean Shift'}` |
 | `DEFAULT_K_RANGE` | `list(range(2, 16))` |
 | `PROGRESS_RESOLUTION` | `1000` |

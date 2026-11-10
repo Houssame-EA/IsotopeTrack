@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate, QTableView, QWidget,
 )
 
+from processing import detection_registry
+
 COL_ELEMENT   = 0
 COL_INCLUDE   = 1
 COL_METHOD    = 2
@@ -38,8 +40,9 @@ _HEADERS = [
 _TOOLTIPS = [
     'element',
     'include in analysis',
-    'detection method',
-    'per-isotope sigma for Compound Poisson LogNormal',
+    'detection method; Automatic uses Gaussian when the background is above '
+    'about 10 counts and CPLN table below',
+    'per-isotope sigma for the Compound Poisson LogNormal methods',
     'manual threshold value (when Manual method selected)',
     'minimum continuous dwell time points above the threshold',
     'Alpha',
@@ -50,7 +53,7 @@ _TOOLTIPS = [
     'valley ratio for watershed',
 ]
 
-METHOD_OPTIONS = ["Manual", "Compound Poisson LogNormal", "CPLN table"]
+METHOD_OPTIONS = detection_registry.selectable_labels()
 INTEG_OPTIONS  = ["Background", "Threshold", "Midpoint"]
 SPLIT_OPTIONS  = ["No Splitting", "1D Watershed"]
 
@@ -266,7 +269,7 @@ def _display(d, col):
 
 def _edit_value(d, col):
     if col == COL_INCLUDE:   return d.get('include', True)
-    if col == COL_METHOD:    return d.get('method', 'CPLN table')
+    if col == COL_METHOD:    return d.get('method', 'Automatic')
     if col == COL_SIGMA:     return d.get('sigma', 0.55)
     if col == COL_THRESHOLD: return d.get('manual_threshold', 10.0)
     if col == COL_MIN_CONT:  return d.get('min_continuous', 1.0)

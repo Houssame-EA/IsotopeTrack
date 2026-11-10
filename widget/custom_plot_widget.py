@@ -3067,6 +3067,7 @@ class SpectrumPlotWidget(pg.PlotWidget):
     """
 
     ZOOM_HALF_WIDTH = 0.5
+    INFO_MAX_SPAN = 2.0
     Y_FLOOR = 1e-3
     DEFAULT_LABELS = {'left': ('Intensity', 'ions / bin'), 'bottom': ('m/z', None)}
 
@@ -3096,6 +3097,7 @@ class SpectrumPlotWidget(pg.PlotWidget):
         self._message.setZValue(100)
         self._message.hide()
         vb.sigResized.connect(self._place_overlays)
+        vb.sigXRangeChanged.connect(self._update_info_visibility)
 
         self._zoom_action = QAction("Zoom to selected isotope", self)
         self._zoom_action.triggered.connect(self.zoom_to_isotope)
@@ -3257,6 +3259,7 @@ class SpectrumPlotWidget(pg.PlotWidget):
         top = float(self._y[near].max()) if near.any() else 1.0
         pi.setXRange(lo, hi, padding=0)
         pi.setYRange(0, max(top, 1e-2) * 1.15, padding=0)
+        self._update_info_visibility()
 
     def show_full_spectrum(self):
         """Show the whole mass range."""
@@ -3266,6 +3269,7 @@ class SpectrumPlotWidget(pg.PlotWidget):
         pi = self.getPlotItem()
         pi.setXRange(float(self._masses[0]), float(self._masses[-1]), padding=0.01)
         pi.setYRange(0, max(float(self._y.max()), 1e-2) * 1.05, padding=0)
+        self._update_info_visibility()
 
     def show_message(self, text):
         """Clear the plot and show a message in its centre.
@@ -3314,8 +3318,16 @@ class SpectrumPlotWidget(pg.PlotWidget):
         self._info.fill = pg.mkBrush(fill)
         self._info.border = pg.mkPen(p.border)
         self._info.update()
-        self._info.show()
+        self._update_info_visibility()
         self._place_overlays()
+
+    def _update_info_visibility(self, *args):
+        """Show the peak check box only while the view is zoomed onto the selected isotope."""
+        visible = False
+        if self._info_rows and self._target is not None:
+            lo, hi = self.getPlotItem().getViewBox().viewRange()[0]
+            visible = lo <= self._target <= hi and (hi - lo) <= self.INFO_MAX_SPAN
+        self._info.setVisible(visible)
 
     @staticmethod
     def _alert_color(p, alert, default):

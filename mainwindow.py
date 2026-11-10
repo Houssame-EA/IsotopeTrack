@@ -34,6 +34,7 @@ from loading.nu_raw_spectrum import (
     read_nu_raw_spectrum, spectrum_masses, integration_window, integration_windows, peak_check,
 )
 import utils.interference_detection as interference_detection
+from processing import detection_registry
 from calibration_methods import calibration_registry
 from widget.numeric_table import NumericTableWidgetItem
 from widget.results_table_view import ResultsTableView
@@ -4518,7 +4519,7 @@ class MainWindow(QMainWindow):
                 'element_label': self.get_formatted_label(element_key),
                 'element_key': element_key,
                 'include': sp.get('include', True),
-                'method': sp.get('method', 'CPLN table'),
+                'method': sp.get('method', 'Automatic'),
                 'sigma': sigma,
                 '_sigma_highlighted': abs(sigma - global_s) > 1e-4,
                 'manual_threshold': sp.get('manual_threshold', 10.0),
@@ -4597,7 +4598,7 @@ class MainWindow(QMainWindow):
         """
         return {
             'include': True,
-            'method': "CPLN table",
+            'method': "Automatic",
             'manual_threshold': 10.0,
             'min_continuous': 1,
             'alpha': 0.000001,
@@ -4655,7 +4656,7 @@ class MainWindow(QMainWindow):
                 continue
             current_params[element_key] = {
                 'include': d.get('include', True),
-                'method': d.get('method', 'CPLN table'),
+                'method': d.get('method', 'Automatic'),
                 'manual_threshold': d.get('manual_threshold', 10.0),
                 'min_continuous': d.get('min_continuous', 1),
                 'alpha': d.get('alpha', 0.000001),
@@ -4680,7 +4681,7 @@ class MainWindow(QMainWindow):
         return {
             'element': d.get('element_label', ''),
             'include': d.get('include', True),
-            'method': d.get('method', 'CPLN table'),
+            'method': d.get('method', 'Automatic'),
             'manual_threshold': d.get('manual_threshold', 10.0),
             'min_continuous': d.get('min_continuous', 1),
             'alpha': d.get('alpha', 0.000001),
@@ -5566,8 +5567,7 @@ class MainWindow(QMainWindow):
         self.particle_results_container.setVisible(checked)
 
         if checked:
-            if hasattr(self, 'multi_element_particles') and self.multi_element_particles:
-                self.update_multi_element_table()
+            self.update_multi_element_table()
 
         self._update_results_tabs()
 
@@ -5609,12 +5609,9 @@ class MainWindow(QMainWindow):
             else:
                 self.results_table.clear_rows()
 
-        if hasattr(self, 'show_particle_results_checkbox') and self.show_particle_results_checkbox.isChecked():
-            if sample_name in self.sample_particle_data:
-                self.multi_element_particles = self.sample_particle_data[sample_name]
-                self.update_multi_element_table()
-            else:
-                self.multi_element_table.clear_rows()
+        self.multi_element_particles = self.sample_particle_data.get(sample_name, [])
+        if hasattr(self, 'show_particle_results_checkbox'):
+            self.update_multi_element_table()
 
     def update_element_summary(self, element, isotope, detected_particles):
         """Update summary statistics for selected element."""
@@ -5644,6 +5641,7 @@ class MainWindow(QMainWindow):
         overall_mean_signal = 0.00000
         background_signal = 0.00000
         threshold_counts = 0.00000
+        method_text = "—"
 
         if isotope_key and isotope_key in self.data:
             overall_mean_signal = utils.signal_stats.mean_signal(
@@ -5656,6 +5654,7 @@ class MainWindow(QMainWindow):
             threshold_counts = threshold_data.get('threshold', 0.00000)
             background_signal = float(np.mean(background_signal))
             threshold_counts = float(np.mean(threshold_counts))
+            method_text = detection_registry.method_text(threshold_data)
         mass_values = []
         if (hasattr(self, 'average_transport_rate') and
                 self.average_transport_rate > 0 and
@@ -5723,6 +5722,7 @@ class MainWindow(QMainWindow):
                 <th>Mean Signal (counts)</th>
                 <th>Background (counts)</th>
                 <th>Threshold (counts)</th>
+                <th>Detection Method</th>
                 <th>% of All Elements</th>
             </tr>
             <tr{' class="no-particles"' if particle_count == 0 else ''}>
@@ -5738,6 +5738,7 @@ class MainWindow(QMainWindow):
                 <td>{overall_mean_signal:.5f}</td>
                 <td>{background_signal:.5f}</td>
                 <td>{threshold_counts:.5f}</td>
+                <td>{method_text}</td>
                 <td>{percentage_of_all:.5f}%</td>
             </tr>
         </table>
@@ -6127,6 +6128,8 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.logger.debug(f"Could not refresh spectrum view: {e}")
 
+    _PEAK_CHECK_ROWS = ("Share of ", "from ", "Best match")
+
     def _update_spectrum_plot(self):
         """Show the resolved spectrum of the current sample, zoomed onto the selected isotope.
 
@@ -6159,7 +6162,6 @@ class MainWindow(QMainWindow):
         target = getattr(self, 'current_isotope', None)
         if target is None or all(abs(iso - target) > 0.5 for _el, iso in isotopes):
             target = isotopes[0][1] if isotopes else None
-        snapshots = ("Snapshots", f"{entry.get('n_snapshots', 0)} (≈1 per s)", False)
         if target is None:
             plot.set_isotope(None, [], [])
             return
@@ -6178,25 +6180,10 @@ class MainWindow(QMainWindow):
         rows = [("Isotope", superscript_mass(label) if label else f"m/z {target:.3f}", False)]
         if check is None:
             rows.append(("Peak centre", "no peak in the snapshots", True))
-        else:
-            rows.append(("Peak centre", f"{check['centre']:.3f}", False))
-            if check['reliable']:
-                rows.append(("Peak width", f"{check['width'] * 1000:.0f} mDa", False))
-                rows.append(("Resolution", f"{check['resolution']:,.0f}", False))
-            else:
-                rows.append(("Peak width", "too few ions", False))
-                rows.append(("Resolution", "too few ions", False))
-        if window:
-            rows.append(("Integration window",
-                         f"{window['window'][0]:.2f} – {window['window'][1]:.2f}", False))
-        if check is not None:
-            if check['inside'] is True:
-                rows.append(("Peak in window", "yes", False))
-            elif check['inside'] is False:
-                rows.append(("Peak in window", "NO — check the window", True))
-            if check['ions'] is not None:
-                rows.append(("Ions in peak", f"{check['ions']:,.0f}", False))
-        rows.append(snapshots)
+        elif check['inside'] is True:
+            rows.append(("Peak in window", "yes", False))
+        elif check['inside'] is False:
+            rows.append(("Peak in window", "NO — check the window", True))
         markers = []
         symbol = next((el for el, iso in isotopes if abs(iso - target) < 1e-6), None)
         if symbol:
@@ -6206,15 +6193,8 @@ class MainWindow(QMainWindow):
                 result = interference_detection.check_isotope(
                     symbol, target, ident, self._interference_elements(),
                     raw=(masses, spectrum, single_ion_area))
-                rows.append(("Interference check", None, False))
-                if blank:
-                    blank_text = blank
-                elif interference_detection.is_blank_name(sample):
-                    blank_text = "this sample is a blank"
-                else:
-                    blank_text = "no blank loaded"
-                rows.append(("Compared with blank", blank_text, False))
-                rows.extend(result['rows'])
+                rows.extend(row for row in result['rows']
+                            if row[2] or row[0].startswith(self._PEAK_CHECK_ROWS))
                 if result['verdict']:
                     alert = {'clean': False, 'minor': 'warn', 'major': True}.get(
                         result['severity'], 'warn')
@@ -6234,8 +6214,7 @@ class MainWindow(QMainWindow):
         """Identify the elements of a sample from its resolved spectrum, once per sample.
 
         When a blank run is loaded, the sample is compared with the blank
-        closest in time (see ``interference_detection.pick_blank``). The
-        Insights spectrum cards reuse this result.
+        closest in time (see ``interference_detection.pick_blank``).
 
         Args:
             sample (str): Sample name.
@@ -6264,46 +6243,6 @@ class MainWindow(QMainWindow):
                 self.sample_run_info.get(blank_name) if blank_name else None)
             cache[sample] = (ident, blank_name)
         return cache[sample]
-
-    def show_spectrum_for(self, sample_name, label):
-        """Show the Spectrum view of one sample, zoomed onto one isotope.
-
-        Used by the Insights spectrum cards. Selects the sample and the
-        isotope as a click in the sample and parameter tables would.
-
-        Args:
-            sample_name (str): Sample to show.
-            label (str): Isotope label, e.g. ``"56Fe"``.
-
-        Returns:
-            bool: False when the sample is not loaded.
-        """
-        table = getattr(self, 'sample_table', None)
-        if not sample_name or table is None:
-            return False
-        item = next((table.item(r, 0) for r in range(table.rowCount())
-                     if table.item(r, 0) and table.item(r, 0).text() == sample_name), None)
-        if item is None:
-            return False
-        if sample_name != self.current_sample:
-            table.setCurrentCell(item.row(), 0)
-            self.on_sample_selected(item)
-        target = next(((el, iso) for el, isos in (self.selected_isotopes or {}).items()
-                       for iso in isos
-                       if self.get_formatted_label(f"{el}-{iso:.4f}") == label), None)
-        if target is not None:
-            row = next((r for r in range(self.parameters_table.rowCount())
-                        if self.parameters_table.item(r, 0) is not None
-                        and self._display_label_to_element.get(
-                            self.parameters_table.item(r, 0).text(), (None, None))[:2] == target),
-                       None)
-            if row is not None:
-                self.parameters_table.setCurrentCell(row, 0)
-                self.parameters_table_clicked(row, 0)
-            else:
-                self.current_element, self.current_isotope = target
-        self.switch_plot_view('spectrum')
-        return True
 
     def show_mass_spectrum_popup(self):
         """Open a floating window showing the mean signal intensity for every

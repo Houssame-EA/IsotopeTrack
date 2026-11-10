@@ -453,7 +453,7 @@ def export_table_to_csv(table, parent_widget, dialog_title="Export Detection Res
 # ──────────────────────────────────────────────────────────────────────────────
 
 DEFAULT_DETECTION_PARAMS = {
-    "method": "CPLN table",
+    "method": "Automatic",
     "manual_threshold": 10.0,
     "min_continuous": 1,
     "alpha": 0.000001,

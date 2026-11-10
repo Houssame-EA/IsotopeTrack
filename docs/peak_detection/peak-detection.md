@@ -86,8 +86,11 @@ Features:
 - Five peak-splitting methods (see PEAK_SPLIT_METHODS)
 
 Threshold methods:
+  "Automatic"                      - Gaussian when the background is above
+                                     about 10 counts, CPLN table below (default)
+  "Gaussian"                       - Background mean + z standard deviations
   "Compound Poisson LogNormal"     - Analytical CPLN (Fenton-Wilkinson)
-  "CPLN table" - Pre-computed lookup table (default)
+  "CPLN table" - Pre-computed lookup table
                                      Falls back to LogNormal for lambda > 300.
   "Manual"                         - User-specified threshold
 
@@ -106,9 +109,10 @@ Peak splitting methods:
 | `clear_threshold_cache` | `(self) → None` | Reset the lru_cache on ``_cached_threshold_calculation``. |
 | `optimize_data_types` | `(self, signal)` | Optimize signal data types to reduce memory usage. |
 | `prepare_signals_for_processing` | `(self, signals_dict)` | Prepare all signals for processing by optimizing data types. |
-| `_find_particles_numba` | `(raw_signal, threshold, lambda_bkgd, min_continuous_points, integratio` | JIT-compiled particle detection with configurable integration baseline. |
-| `_find_particles_numba_dynamic` | `(raw_signal, threshold_arr, lambda_bkgd_arr, min_continuous_points, in` | JIT-compiled particle detection for dynamic array thresholds (window) |
+| `_find_particles_numba` | `(raw_signal, threshold, region_level, min_continuous_points, integrati` | JIT-compiled particle detection with configurable integration baseline. |
+| `_find_particles_numba_dynamic` | `(raw_signal, threshold_arr, region_level_arr, min_continuous_points, i` | JIT-compiled particle detection for dynamic array thresholds (window) |
 | `calculate_iterative_threshold` | `(self, signal, method, alpha=1e-06, max_iters=4, manual_threshold=10.0` | Calculate threshold using iterative background refinement with |
+| `_gaussian_threshold` | `(self, signal, threshold, alpha, use_window_size, window_size)` | Return the background and Gaussian threshold from the points below a threshold. |
 | `_rolling_background` | `(self, signal, threshold, window_size)` | Calculates a dynamic rolling background excluding peaks above threshold. |
 | `_calculate_array_threshold` | `(self, lambda_bkgd_array, method, alpha, sigma=0.55)` | Fast threshold calculation for moving window arrays. |
 | `_calculate_single_threshold` | `(self, lambda_bkgd, method, alpha, sigma=0.55)` | Calculate threshold for a single background value. |

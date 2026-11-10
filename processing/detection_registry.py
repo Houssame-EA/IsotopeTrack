@@ -18,7 +18,58 @@ PySide6, numba, or scipy.
 """
 from __future__ import annotations
 
+from statistics import NormalDist
+
 import numpy as np
+
+GAUSSIAN_LOW_COUNT = 5.0
+"""Counts at or below which a non-zero point is a low point for the background test."""
+
+GAUSSIAN_LOW_FRACTION = 0.05
+"""Largest share of low points among the non-zero points of a Gaussian background."""
+
+AUTOMATIC_LOW_BACKGROUND_ID = "CPLN table"
+"""Method the Automatic choice uses when the background is not Gaussian."""
+
+
+def gaussian_z(alpha):
+    """Return the one-sided normal quantile of an error rate.
+
+    Args:
+        alpha (float): False-positive rate per point, e.g. 1e-6.
+
+    Returns:
+        float: z such that a normal value exceeds mean + z·sd with probability alpha.
+    """
+    alpha = min(max(float(alpha), 1e-300), 0.5)
+    return -NormalDist().inv_cdf(alpha)
+
+
+def is_gaussian_background(signal):
+    """Tell whether a signal's background is high enough for a Gaussian threshold.
+
+    The background is taken as Gaussian when fewer than 5 % of the non-zero
+    points are at or below 5 counts, which corresponds to a background of
+    about 10 counts.
+
+    Args:
+        signal (np.ndarray): Signal in counts.
+
+    Returns:
+        bool: True when the Gaussian threshold applies.
+    """
+    signal = np.asarray(signal)
+    nonzero = signal > 0
+    n_nonzero = int(np.count_nonzero(nonzero))
+    if n_nonzero == 0:
+        return False
+    n_low = int(np.count_nonzero(nonzero & (signal <= GAUSSIAN_LOW_COUNT)))
+    return n_low / n_nonzero < GAUSSIAN_LOW_FRACTION
+
+
+def _automatic_choice(signal):
+    """Return the method id the Automatic choice uses for a signal."""
+    return "Gaussian" if is_gaussian_background(signal) else AUTOMATIC_LOW_BACKGROUND_ID
 
 
 # ── Shared numeric hooks ──────────────────────────────────────────────────────
@@ -79,16 +130,49 @@ def _cpln_table_single(engine, lam, alpha, sigma):
     return engine.compound_poisson_lognormal_lut.get_threshold(lam, alpha, sigma)
 
 
+def _gaussian_single(engine, lam, alpha, sigma):
+    """Gaussian threshold from the background level alone.
+
+    The detection engine uses the measured standard deviation of the
+    background instead (see ``DetectionMethod.uses_spread``); with only the
+    level known, the Poisson spread sqrt(lambda) stands in for it.
+    """
+    return lam + gaussian_z(alpha) * np.sqrt(max(float(lam), 0.0))
+
+
+def _gaussian_array(method, engine, lam_arr, alpha, sigma):
+    """Gaussian threshold over an array of background levels, with the Poisson spread."""
+    lam_arr = np.asarray(lam_arr, dtype=np.float64)
+    return lam_arr + gaussian_z(alpha) * np.sqrt(np.maximum(lam_arr, 0.0))
+
+
 # ── Method type ───────────────────────────────────────────────────────────────
 class DetectionMethod:
     """One detection method: metadata plus the numeric hooks the engine calls."""
 
     def __init__(self, id, label, *, is_manual=False, user_selectable=True,
-                 single, array):
+                 single, array, uses_spread=False, resolver=None):
+        """Describe one detection method.
+
+        Args:
+            id (str): Stable name stored in projects.
+            label (str): Name shown in the UI.
+            is_manual (bool): The threshold is typed by the user.
+            user_selectable (bool): Offered in the method lists.
+            single (callable): ``(engine, lambda, alpha, sigma) -> threshold``.
+            array (callable): ``(method, engine, lambda array, alpha, sigma) -> thresholds``.
+            uses_spread (bool): The engine computes the threshold from the mean
+                and standard deviation of the background points, not from the
+                background level alone.
+            resolver (callable | None): ``(signal) -> method id`` for a method
+                that stands for another one chosen from the signal.
+        """
         self.id = id
         self.label = label
         self.is_manual = is_manual
         self.user_selectable = user_selectable
+        self.uses_spread = uses_spread
+        self.resolver = resolver
         self._single = single
         self._array = array
 
@@ -129,6 +213,44 @@ def get(name):
     return _BY_ID.get(name, _BY_ID[DEFAULT_METHOD_ID])
 
 
+def resolve(name, signal):
+    """Return the name of the method actually applied to ``signal``.
+
+    A method with a resolver, such as Automatic, stands for another method
+    chosen from the signal; every other name is returned unchanged.
+
+    Args:
+        name (str): Stored method name.
+        signal (np.ndarray): Signal in counts.
+
+    Returns:
+        str: Method name to compute the threshold with.
+    """
+    method = get(name)
+    if method.resolver is None:
+        return name
+    return method.resolver(signal)
+
+
+def method_text(threshold_data):
+    """Return the method a threshold was computed with, for display.
+
+    Args:
+        threshold_data (dict): Result of the threshold calculation.
+
+    Returns:
+        str: The method used, followed by "(automatic)" when the Automatic
+        choice picked it; a dash when unknown.
+    """
+    used = (threshold_data or {}).get('method_used')
+    if not used:
+        return "—"
+    requested = threshold_data.get('method_requested', used)
+    if get(requested).resolver is not None and requested != used:
+        return f"{used} (automatic)"
+    return str(used)
+
+
 def all_methods():
     """All registered methods in registration order."""
     return list(_ORDER)
@@ -139,6 +261,13 @@ def selectable_labels():
     return [m.label for m in _ORDER if m.user_selectable]
 
 
+register(DetectionMethod(
+    "Automatic", "Automatic",
+    user_selectable=True,
+    single=_cpln_table_single,
+    array=_analytic_interp_array,
+    resolver=_automatic_choice,
+))
 register(DetectionMethod(
     "Manual", "Manual",
     is_manual=True, user_selectable=True,
@@ -156,6 +285,13 @@ register(DetectionMethod(
     user_selectable=True,
     single=_cpln_table_single,
     array=_analytic_interp_array,
+))
+register(DetectionMethod(
+    "Gaussian", "Gaussian",
+    user_selectable=True,
+    single=_gaussian_single,
+    array=_gaussian_array,
+    uses_spread=True,
 ))
 register(DetectionMethod(
     "Poisson", "Poisson 3-sigma",

@@ -211,7 +211,6 @@ scrolling page the frame grew a little every time the view was switched.
 | `_update_spectrum_plot` | `(self)` | Show the resolved spectrum of the current sample, zoomed onto the selected isotope. |
 | `_interference_elements` | `(self)` | Return the element data the interference check uses, read once. |
 | `_interference_identification` | `(self, sample, masses, spectrum, run_info, single_ion_area)` | Identify the elements of a sample from its resolved spectrum, once per sample. |
-| `show_spectrum_for` | `(self, sample_name, label)` | Show the Spectrum view of one sample, zoomed onto one isotope. |
 | `show_mass_spectrum_popup` | `(self)` | Open a floating window showing the mean signal intensity for every |
 | `switch_plot_view` | `(self, mode: str)` | Switch the main plot area between the time-domain trace ('time'), |
 | `_update_mz_plot` | `(self)` | " |

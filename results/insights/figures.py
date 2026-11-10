@@ -1564,51 +1564,8 @@ def _particle_type(s, ctx):
     return story
 
 
-def _spectrum(s, ctx):
-    """Spectrum finding: the zoomed spectrum of the worst sample, then every sample."""
-    facts = (s.facts or {}).get("spectrum") or {}
-    traces = facts.get("traces") or {}
-    focus = facts.get("focus") if facts.get("focus") in traces else next(iter(traces), None)
-    if focus is None:
-        return []
-    label = facts.get("label", "")
-    marks = facts.get("marks") or []
-    named = " and ".join(m["label"] for m in marks) or "a second species"
-    base = {"spec_exact": facts.get("exact", ""), "spec_label": label,
-            "spec_window": facts.get("window") or [], "spec_marks": marks,
-            "spec_units": facts.get("units", "")}
-    zoom = facts.get("zoom") or []
-    if len(zoom) == 2:
-        base.update(x_min=f"{zoom[0]:g}", x_max=f"{zoom[1]:g}")
-    kind = facts.get("kind")
-    sentence = {
-        "shift": f"The peak centre sits off the exact mass, toward {named}.",
-        "neighbour": f"A second peak stands next to the {label} peak, near {named}.",
-        "share": (f"The percentages are the share of the signal at this mass that, from the "
-                  f"elements found in the sample, comes from each ion rather than from {label}."),
-    }.get(kind, "")
-    lines = "dashed lines" if len(marks) > 1 else "dashed line"
-    story = [(_panel("spectrum", f"{label} in {focus}", spectra={focus: traces[focus]}, **base),
-              f"Resolved spectrum of {focus} around {label}, summed from the run's raw "
-              "snapshots, with the m/z corrected for the run's mass calibration offset. The "
-              "shaded band is the integration window, the solid line the exact mass of "
-              f"{label} and the {lines} {named}. " + sentence)]
-    if len(traces) > 1:
-        story.append((_panel("spectrum", f"{label} in every sample", spectra=traces,
-                             spec_normalise=True, **base),
-                      f"The same region in the {len(traces)} samples where it is seen, each "
-                      "scaled to its highest point so they compare by shape: the same "
-                      + {"shift": "shift", "neighbour": "second peak"}.get(kind, "interference")
-                      + " in every sample points to the plasma or the matrix rather than one "
-                        "sample."))
-    return story
-
-
 DESIGNS = {
     "interference": _interference,
-    "spectrum_shift": _spectrum,
-    "spectrum_neighbour": _spectrum,
-    "spectrum_share": _spectrum,
     "isotope": _isotope_pair,
     "isotope_abundance": _isotope_pair,
     "isotope_two": _isotope_pair,
@@ -2053,8 +2010,7 @@ def figure_for(s, ctx: FigureContext) -> dict | None:
     story = [(panel, caption) for panel, caption in story if panel][:MAX_PANELS]
     if not story:
         return None
-    names = (group_names(ctx) if design not in (_types_overview, _particle_type, _spectrum)
-             else [])
+    names = group_names(ctx) if design not in (_types_overview, _particle_type) else []
     if names:
         rows = by_groups(story, names, ctx)
         views = [r for r in rows if r[2] == "split"][:GROUP_ROW_VIEWS]
@@ -2067,7 +2023,7 @@ def figure_for(s, ctx: FigureContext) -> dict | None:
     else:
         legend = caption_text(s.title, [c for _p, c in story])
         flat = [panel for panel, _c in story]
-    note = limits_sentence(ctx) if design is not _spectrum else ""
+    note = limits_sentence(ctx)
     if note:
         legend = f"{legend} {note}"
     verdict = ctx.checks.line()

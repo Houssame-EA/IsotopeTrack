@@ -17,7 +17,7 @@ Storage of the sensitivity (ionic) calibration session inside a project file.
 ### [`export_utils.py`](export-utils.md)
 
 
-**1** classes &nbsp;·&nbsp; **6** functions &nbsp;·&nbsp; **4** methods
+**1** classes &nbsp;·&nbsp; **7** functions &nbsp;·&nbsp; **4** methods
 
 ### [`fast_project_io.py`](fast-project-io.md)
 
