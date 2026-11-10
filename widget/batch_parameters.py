@@ -411,7 +411,7 @@ class BatchElementParametersDialog(QDialog):
         params = self.current_parameters[first_key]
 
         self.include_checkbox.setChecked(params.get('include', True))
-        method = params.get('Method', "CPLN table")
+        method = params.get('Method', "Automatic")
         self.method_combo.setCurrentText(method)
         self.manual_threshold.setValue(params.get('manual_threshold', 1000.0))
         self.min_points.setValue(params.get('min_continuous', 1))

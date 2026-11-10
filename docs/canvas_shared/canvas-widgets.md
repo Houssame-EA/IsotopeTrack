@@ -205,6 +205,7 @@ the field is empty.
 |--------|-----------|-------------|
 | `__init__` | `(self, parent_window=None)` |  |
 | `process_data` | `(self, input_data)` |  |
+| `_member_means` | `(self, sample)` | Mean signal of each isotope of one source sample, from the batch or the main window. |
 | `get_output_data` | `(self)` |  |
 | `_get_particles` | `(self)` |  |
 | `_filter` | `(self, particles)` |  |
@@ -219,6 +220,7 @@ the field is empty.
 |--------|-----------|-------------|
 | `__init__` | `(self, parent_window=None)` |  |
 | `process_data` | `(self, input_data)` |  |
+| `_member_means` | `(self, sample)` | Mean signal of each isotope of one source sample, from the batch or the main window. |
 | `get_output_data` | `(self)` |  |
 | `_add_individual` | `(self, name, src, out)` |  |
 | `_add_group` | `(self, gname, members, out)` |  |

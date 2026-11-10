@@ -45,6 +45,8 @@ import re
 
 import numpy as np
 
+from utils.signal_stats import mean_signal_ratio
+
 METHODS = {"none": "None", "exponential": "Exponential law"}
 """Corrections a panel can apply."""
 
@@ -156,14 +158,24 @@ def attach(table, window, scene) -> None:
 
     Sets ``table.node_reference`` from an Isotopic Ratio node on the canvas
     and ``table.ionic_ratio``, a callable ``(sample, num, den) -> ratio``
-    reading each sample's time series from the main window.
+    taking each sample's mean signals from the canvas data, or from the
+    sample's time series in the main window when the canvas data has none.
     """
     try:
         table.node_reference = node_reference(scene) if scene is not None else None
     except Exception:
         table.node_reference = None
-    if window is not None:
-        table.ionic_ratio = lambda sample, num, den: ionic_ratio(window, sample, num, den)
+    means = getattr(table, "mean_signal", None) or {}
+    if window is None and not means:
+        return
+
+    def ratio(sample, num, den):
+        found = mean_signal_ratio(means, sample, num, den)
+        if found is None and window is not None:
+            found = ionic_ratio(window, sample, num, den)
+        return found
+
+    table.ionic_ratio = ratio
 
 
 def parse_pair(text: str) -> tuple[str, str] | None:

@@ -2182,6 +2182,7 @@ class SampleSelectorNode(WorkflowNode):
         self.batch_sample_data = None
         self.batch_available_isotopes = None
         self.batch_concentration_meta = None
+        self.batch_mean_signal = None
 
     def process_data(self, input_data):
         self.input_data = input_data
@@ -2193,6 +2194,13 @@ class SampleSelectorNode(WorkflowNode):
                 self.batch_sample_data = input_data.get('data', {})
                 self.batch_available_isotopes = input_data.get('available_isotopes', {})
                 self.batch_concentration_meta = input_data.get('concentration_meta', {})
+                self.batch_mean_signal = input_data.get('mean_signal', {})
+
+    def _member_means(self, sample):
+        """Mean signal of each isotope of one source sample, from the batch or the main window."""
+        source = (self.batch_mean_signal if self.batch_particle_data is not None
+                  else getattr(self.parent_window, 'sample_mean_signal', None))
+        return dict((source or {}).get(sample) or {})
 
     def get_output_data(self):
         if self.input_data and self.input_data.get('type') != 'batch_sample_list':
@@ -2220,6 +2228,7 @@ class SampleSelectorNode(WorkflowNode):
         else:
             metas = [_sample_concentration_meta(self.parent_window, m) for m in members]
         conc_meta = _combine_concentration_meta(metas, self.dilution_resolution)
+        mean_signal = {m: self._member_means(m) for m in members}
         return {
             'type': 'sample_data', 'sample_name': name,
             'data_types': all_dt, 'data': sd,
@@ -2228,6 +2237,7 @@ class SampleSelectorNode(WorkflowNode):
             'sum_replicates': self.sum_replicates,
             'replicate_samples': self.replicate_samples,
             'concentration_meta': {name: conc_meta},
+            'mean_signal': mean_signal,
             'parent_window': self.parent_window,
         }
 
@@ -2399,6 +2409,7 @@ class MultipleSampleSelectorNode(WorkflowNode):
         self.batch_sample_data = None
         self.batch_available_isotopes = None
         self.batch_concentration_meta = None
+        self.batch_mean_signal = None
 
     def process_data(self, input_data):
         self.input_data = input_data
@@ -2410,6 +2421,13 @@ class MultipleSampleSelectorNode(WorkflowNode):
                 self.batch_sample_data = input_data.get('data', {})
                 self.batch_available_isotopes = input_data.get('available_isotopes', {})
                 self.batch_concentration_meta = input_data.get('concentration_meta', {})
+                self.batch_mean_signal = input_data.get('mean_signal', {})
+
+    def _member_means(self, sample):
+        """Mean signal of each isotope of one source sample, from the batch or the main window."""
+        source = (self.batch_mean_signal if self.batch_particle_data is not None
+                  else getattr(self.parent_window, 'sample_mean_signal', None))
+        return dict((source or {}).get(sample) or {})
 
     def get_output_data(self):
         if self.input_data and self.input_data.get('type') != 'batch_sample_list':
@@ -2488,6 +2506,7 @@ class MultipleSampleSelectorNode(WorkflowNode):
                 [conc_src(m) for m in mem], self.dilution_resolutions.get(nm))
             for nm, mem in name_members.items()
         }
+        mean_signal = {s: self._member_means(s) for s in included}
 
         return {
             'type': 'multiple_sample_data', 'sample_names': names,
@@ -2498,6 +2517,7 @@ class MultipleSampleSelectorNode(WorkflowNode):
             'total_particles': total, 'filtered_particles': len(combined),
             'sum_replicates': self.sum_replicates,
             'concentration_meta': concentration_meta,
+            'mean_signal': mean_signal,
             'parent_window': self.parent_window,
         }
 
@@ -2621,6 +2641,7 @@ class BatchSampleSelectorNode(WorkflowNode):
             return None
         names, particles, data, isos = [], [], {}, {}
         concentration_meta = {}
+        mean_signal = {}
         for w in self.selected_windows:
             num = getattr(w, 'window_number', '?')
             fp = getattr(w, '_project_filepath', None)
@@ -2635,6 +2656,8 @@ class BatchSampleSelectorNode(WorkflowNode):
                     names.append(dn)
                     data[dn] = sd
                     concentration_meta[dn] = _sample_concentration_meta(w, sn)
+                    mean_signal[dn] = dict(
+                        (getattr(w, 'sample_mean_signal', None) or {}).get(sn) or {})
                     if hasattr(w, 'sample_particle_data'):
                         for p in w.sample_particle_data.get(sn, []):
                             pc = p.copy()
@@ -2647,6 +2670,7 @@ class BatchSampleSelectorNode(WorkflowNode):
             'particle_data': particles, 'data': data,
             'available_isotopes': {k: list(v) for k, v in isos.items()},
             'concentration_meta': concentration_meta,
+            'mean_signal': mean_signal,
             'is_batch': True, 'source_windows': len(self.selected_windows),
             'parent_window': self.parent_window,
         }

@@ -44,6 +44,8 @@ Manages project state serialization/deserialization including canvas workflows.
 | `_serialize_canvas_state` | `(self)` | Serialize the current canvas state for saving. |
 | `_serialize_node_config` | `(self, node, node_data)` | Serialize node-specific configuration. |
 | `_serialize_batch_output` | `(self, node, node_data)` | Bake a Batch Windows node's combined output into its saved data. |
+| `_batch_snapshot` | `(self, output)` | Return the part of a Batch Windows output that is stored in a project. |
+| `_old_batch_means` | `(self, arrays, isotopes)` | Return the mean signals of one sample of an older batch snapshot. |
 | `_deserialize_canvas_state` | `(self, canvas_state)` | Recreate the canvas state from saved data. |
 | `_deserialize_node_config` | `(self, workflow_node, node_data)` | Restore node configuration from saved data. |
 | `_reset_data_structures` | `(self)` | Reset all data structures before loading a saved project. |

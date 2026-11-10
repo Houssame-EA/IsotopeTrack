@@ -520,8 +520,7 @@ def identify_run(entry: Optional[dict], run_info: dict, elements: Optional[Seque
                  blank_run_info: Optional[dict] = None) -> Optional[Identification]:
     """Identify the elements of one Nu run from its summed raw snapshots.
 
-    Used by the Spectrum view and the Insights spectrum cards, so both give
-    the same answer.
+    Used by the Spectrum view.
 
     Args:
         entry: ``{'spectrum', 'n_snapshots'}`` of the run.

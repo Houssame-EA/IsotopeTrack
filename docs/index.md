@@ -58,9 +58,10 @@ If you use IsotopeTrack in your research, please cite:
 
 | Method | Description |
 |--------|-------------|
-| **Currie Method** | Classical detection based on Poisson statistics |
-| **Formula C** | MARLAP-based, balances false positives/negatives |
-| **Compound Poisson Log-Normal** | Advanced — accounts for signal distribution |
+| **Automatic** (default) | Gaussian when the background is above about 10 counts, CPLN table below |
+| **Gaussian** | Background mean plus z standard deviations, z from the Alpha error rate; for high backgrounds |
+| **Compound Poisson Log-Normal** | Threshold from the compound Poisson–log-normal distribution of ToF single-ion signals |
+| **CPLN table** | Same quantile drawn from a precomputed λ×σ lookup table for speed and accuracy |
 | **Manual** | User-defined threshold |
 
 ---

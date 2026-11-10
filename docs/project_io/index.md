@@ -17,7 +17,7 @@ Storage of the sensitivity (ionic) calibration session inside a project file.
 ### [`export_utils.py`](export-utils.md)
 
 
-**1** classes &nbsp;·&nbsp; **6** functions &nbsp;·&nbsp; **4** methods
+**1** classes &nbsp;·&nbsp; **7** functions &nbsp;·&nbsp; **4** methods
 
 ### [`fast_project_io.py`](fast-project-io.md)
 
@@ -37,7 +37,7 @@ Reserve of unselected isotopes stored inside an IsotopeTrack project file.
 ### [`project_manager.py`](project-manager.md)
 
 
-**3** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **28** methods
+**3** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **30** methods
 
 ### [`te_store.py`](te-store.md)
 Storage of the transport efficiency (TE) calibration inside a project file.

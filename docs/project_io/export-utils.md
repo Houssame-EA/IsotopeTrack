@@ -32,6 +32,7 @@ Signals:
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `_method_cell` | `(main_window, sample_name, element_key, params)` | Return the detection method of an element for the exported parameters. |
 | `is_pure_element` | `(mass_fraction)` | Check if mass fraction indicates a pure element (effectively 1.0). |
 | `export_data` | `(main_window: MainWindow)` | Export all sample data and summary file in one unified process with mass fraction, |
 | `export_saturation_filter_info` | `(main_window, summary_file, selected_samples)` | Write the detector non-linearity filter status to the summary |

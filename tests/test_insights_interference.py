@@ -216,16 +216,15 @@ def test_too_few_particles_give_no_card(abund):
     assert disc.analyse_interference(context(parts)) == []
 
 
-def test_interference_entry_gathers_particle_and_spectrum_cards(abund):
-    """The list's Interference entry holds the particle cards and the spectrum cards."""
+def test_interference_entry_gathers_the_particle_cards(abund):
+    """The list's Interference entry holds the particle interference cards only."""
     assert rr.NODE_TYPE_META["interference"] == "Interference"
-    assert "spectrum_view" not in rr.NODE_TYPE_META
+    assert "spectrum" not in rr.category_keys()
     particle = disc.analyse_interference(context(tio2(np.random.default_rng(9), abund)))[0]
-    spectrum = rr.Suggestion("t", "r", "spectrum", 0.8, "interference")
     other = rr.Suggestion("t", "r", "correlation", 0.8, "correlation_plot")
-    assert rr.shows_in(particle, "interference") and rr.shows_in(spectrum, "interference")
+    assert rr.shows_in(particle, "interference")
     assert not rr.shows_in(other, "interference")
-    assert set(rr.analysers_for({"interference"})) == {"interference", "spectrum"}
+    assert set(rr.analysers_for({"interference"})) == {"interference"}
 
 
 def test_ten_shared_particles_are_enough(abund):

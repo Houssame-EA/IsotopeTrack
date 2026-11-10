@@ -11,7 +11,7 @@
 | `RETURN_BUTTON_STYLE` | `return_button_style(LIGHT)` |
 | `PLOT_STYLES` | `{'raw_signal': pg.mkPen(color=(30, 144, 255), width=1), '…` |
 | `HISTOGRAM_COLORS` | `[(30, 144, 255, 180), (50, 205, 50, 180), (255, 69, 0, 18…` |
-| `DEFAULT_DETECTION_PARAMS` | `{'method': 'CPLN table', 'manual_threshold': 10.0, 'min_c…` |
+| `DEFAULT_DETECTION_PARAMS` | `{'method': 'Automatic', 'manual_threshold': 10.0, 'min_co…` |
 | `DETECTION_METHODS` | `detection_registry.selectable_labels()` |
 | `REMOVE_SAMPLES_TEXT` | `' Remove Selected Samples'` |
 
