@@ -117,7 +117,7 @@ Simple Particle Classifier dialog, in the shared application look.
 ### [`particle_filter.py`](particle-filter.md)
 Particle Filter node for the Workflow Canvas.
 
-**3** classes &nbsp;·&nbsp; **36** functions &nbsp;·&nbsp; **63** methods
+**3** classes &nbsp;·&nbsp; **37** functions &nbsp;·&nbsp; **63** methods
 
 ### [`periodic_table_info.py`](periodic-table-info.md)
 This file contains a readonly service (info) for periodic table data.

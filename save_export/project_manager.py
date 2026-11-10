@@ -5,6 +5,7 @@ if TYPE_CHECKING:
     from mainwindow import MainWindow
 
 import sys
+import numpy as np
 import pickle
 import gzip
 import datetime
@@ -912,25 +913,77 @@ Terminal=false
         The Batch Windows node aggregates data from other windows, which a
         single-window project file cannot contain. Its computed output is stored
         as a static snapshot so the batch's results survive on their own and are
-        replayed when the project is reopened.
+        replayed when the project is reopened. The raw signals of the windows
+        are not stored a second time: the snapshot keeps the particle results
+        and the mean signal of each isotope, which is what the isotope
+        correction uses. The project's own raw signals are saved as usual.
 
         Args:
             node (object): Workflow node being serialized.
             node_data (dict): Destination dictionary for this node's saved data.
         """
         if not getattr(node, 'selected_windows', None):
+            saved = getattr(node, '_saved_output_snapshot', None)
+            if saved:
+                node_data['batch_output_snapshot'] = self._batch_snapshot(saved)
             return
         if not hasattr(node, 'get_output_data'):
             return
         try:
             out = node.get_output_data()
             if out:
-                node_data['batch_output_snapshot'] = {
-                    k: v for k, v in out.items() if k != 'parent_window'
-                }
+                node_data['batch_output_snapshot'] = self._batch_snapshot(out)
         except Exception:
             _itk_log.exception("Handled exception in _serialize_batch_output")
     
+    def _batch_snapshot(self, output):
+        """Return the part of a Batch Windows output that is stored in a project.
+
+        The window reference and the raw signals are left out. A snapshot from
+        an older project that still holds raw signals but no mean signals gets
+        its means computed from them first.
+
+        Args:
+            output (dict): Output of the node, live or replayed from a snapshot.
+
+        Returns:
+            dict: The output without ``parent_window`` and ``data``, with ``mean_signal``.
+        """
+        snapshot = {k: v for k, v in output.items() if k not in ('parent_window', 'data')}
+        raw = output.get('data') or {}
+        if raw and not snapshot.get('mean_signal'):
+            isotopes = output.get('available_isotopes') or {}
+            snapshot['mean_signal'] = {sample: self._old_batch_means(arrays, isotopes)
+                                       for sample, arrays in raw.items()}
+        return snapshot
+
+    def _old_batch_means(self, arrays, isotopes):
+        """Return the mean signals of one sample of an older batch snapshot.
+
+        The source window is not available, so blanked (non-finite) points are
+        left out but exclusion regions cannot be.
+
+        Args:
+            arrays (dict): Signal arrays keyed by mass.
+            isotopes (dict): ``{element: [isotope masses]}``.
+
+        Returns:
+            dict: ``{isotope label: mean counts}``.
+        """
+        means = {}
+        keys = [k for k in arrays if isinstance(k, (int, float))]
+        for element, masses in isotopes.items():
+            for mass in masses:
+                key = min(keys, key=lambda k: abs(k - mass)) if keys else None
+                if key is None or abs(key - mass) > 0.5:
+                    continue
+                values = np.asarray(arrays[key], dtype=float)
+                values = values[np.isfinite(values)]
+                if values.size:
+                    label = self.main_window.get_formatted_label(f"{element}-{mass:.4f}")
+                    means[label] = float(np.mean(values))
+        return means
+
     def _deserialize_canvas_state(self, canvas_state):
         """Recreate the canvas state from saved data.
 
@@ -1115,7 +1168,8 @@ Terminal=false
             ]
 
         if 'batch_output_snapshot' in node_data:
-            workflow_node._saved_output_snapshot = node_data['batch_output_snapshot']
+            workflow_node._saved_output_snapshot = self._batch_snapshot(
+                node_data['batch_output_snapshot'])
 
     def _reset_data_structures(self):
         """Reset all data structures before loading a saved project.

@@ -204,6 +204,7 @@ scrolling page the frame grew a little every time the view was switched.
 | `update_element_summary` | `(self, element, isotope, detected_particles)` | Update summary statistics for selected element. |
 | `rebuild_particle_data` | `(self, sample_name=None)` | Rebuild the multi-element particle list of a sample from the |
 | `show_results` | `(self)` | Display particle detection results in canvas dialog. |
+| `update_sample_mean_signal` | `(self)` | Store the mean signal of every selected isotope of every sample. |
 | `plot_results` | `(self, mass, signal, particles, lambda_bkgd, threshold, preserve_view_` | Plot detection results with peaks and thresholds. |
 | `_raw_spectrum_for` | `(self, sample_name)` | Return the resolved spectrum of a sample, reading its .raw files once. |
 | `_fit_plot_view` | `(self)` | Fit the time plot to its data now, not at the next repaint. |

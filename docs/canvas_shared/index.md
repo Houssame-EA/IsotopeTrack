@@ -7,7 +7,7 @@ Workflow canvas and shared plotting infrastructure.
 ### [`canvas_widgets.py`](canvas-widgets.md)
 
 
-**35** classes &nbsp;·&nbsp; **19** functions &nbsp;·&nbsp; **316** methods
+**35** classes &nbsp;·&nbsp; **19** functions &nbsp;·&nbsp; **318** methods
 
 ### [`custom_plot_widget.py`](custom-plot-widget.md)
 

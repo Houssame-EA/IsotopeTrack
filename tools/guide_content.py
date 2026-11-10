@@ -2305,6 +2305,12 @@ SECTION_RESULTS = dict(
             intro="""
             <p>Configuration of a <b>Batch Windows</b> node: pull particle
             results from other open IsotopeTrack windows.</p>
+            <p>When the project is saved, the node keeps the particle
+            results and the mean signal of every selected isotope of each
+            sample, not a second copy of the raw signals. The isotope
+            correction uses these mean signals, so it still works when the
+            other windows are closed or the project is reopened on its
+            own.</p>
             """,
             hotspots=[
                 dict(

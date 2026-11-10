@@ -318,6 +318,7 @@ class MainWindow(QMainWindow):
         self.sample_raw_spectrum = {}
         self._raw_spectrum_missing = set()
         self._interference_by_sample = {}
+        self.sample_mean_signal = {}
         self.session_reserve = {}
         self._view_fitted_samples = set()
         self.sample_to_folder_map = {}
@@ -565,6 +566,7 @@ class MainWindow(QMainWindow):
         self.sample_raw_spectrum = {}
         self._raw_spectrum_missing = set()
         self._interference_by_sample = {}
+        self.sample_mean_signal = {}
         self.session_reserve = {}
         self._view_fitted_samples = set()
 
@@ -5849,6 +5851,8 @@ class MainWindow(QMainWindow):
             if progress:
                 progress.close()
 
+        self.update_sample_mean_signal()
+
         if self.canvas_results_dialog is None:
             self.canvas_results_dialog = CanvasResultsDialog(self)
         self.canvas_results_dialog.showMaximized()
@@ -5856,6 +5860,29 @@ class MainWindow(QMainWindow):
         self.canvas_results_dialog.activateWindow()
         self.maybe_prompt_dilution()
         self._set_results_attention(False)
+
+    def update_sample_mean_signal(self):
+        """Store the mean signal of every selected isotope of every sample.
+
+        Uses the same mean as the element summary (exclusion regions and
+        blanked points left out) and keeps it in ``sample_mean_signal``,
+        ``{sample: {isotope label: mean counts}}``, for the results canvas.
+        """
+        means_by_sample = {}
+        for sample_name, data in self.data_by_sample.items():
+            means = {}
+            for element, isotopes in (self.selected_isotopes or {}).items():
+                for isotope in isotopes:
+                    key = self.find_closest_isotope(isotope, data)
+                    if key is None:
+                        continue
+                    element_key = f"{element}-{isotope:.4f}"
+                    value = utils.signal_stats.mean_signal(
+                        self, sample_name, element_key, data[key], default=float('nan'))
+                    if np.isfinite(value):
+                        means[self.get_formatted_label(element_key)] = float(value)
+            means_by_sample[sample_name] = means
+        self.sample_mean_signal = means_by_sample
 
     # ----------------------------------------------------------------------------------------------------------
     # ------------------------------------visualization--------------------------------------------

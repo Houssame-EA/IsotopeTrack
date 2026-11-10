@@ -16,6 +16,7 @@ time rather than poisoning the result.
 Pure logic, no Qt dependency, so it can be unit-tested without a GUI.
 """
 import logging
+import re
 
 import numpy as np
 
@@ -156,3 +157,40 @@ def mean_std_signal(window, sample_name, element_key, signal, ddof=0,
     mean = float(np.mean(kept))
     std = float(np.std(kept, ddof=ddof)) if kept.size > ddof else 0.0
     return mean, std
+
+
+_BATCH_SUFFIX_RE = re.compile(r'\s*\[W\d+(?:\s*\(.*\))?\]\s*$')
+_FILT_SUFFIX_RE = re.compile(r'\s*\(filt x\d+\)\s*$')
+
+
+def mean_signal_ratio(mean_signals, sample_name, num, den):
+    """
+    Ratio of the mean signals of two isotopes in one sample.
+
+    ``mean_signals`` is the ``mean_signal`` entry the results canvas carries,
+    ``{sample: {isotope label: mean}}``, filled from the main window's
+    ``sample_mean_signal``. A sample renamed by a Particle Filter
+    (``"(filt xN)"``) or a Batch Windows node (``"[Wn (project)]"``) is also
+    looked up under its earlier names.
+
+    Args:
+        mean_signals (dict): Mean signals per sample, or None.
+        sample_name (str): Sample identifier.
+        num (str): Numerator isotope label, e.g. ``"205Tl"``.
+        den (str): Denominator isotope label.
+
+    Returns:
+        float | None: The ratio, or None when a mean is missing or not positive.
+    """
+    if not mean_signals:
+        return None
+    name = str(sample_name)
+    base = _FILT_SUFFIX_RE.sub('', name)
+    for candidate in (name, base, _BATCH_SUFFIX_RE.sub('', base)):
+        means = mean_signals.get(candidate)
+        if means:
+            a, b = means.get(num), means.get(den)
+            if a is None or b is None or not (a > 0 and b > 0):
+                return None
+            return float(a) / float(b)
+    return None

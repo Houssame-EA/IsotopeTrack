@@ -37,7 +37,7 @@ Reserve of unselected isotopes stored inside an IsotopeTrack project file.
 ### [`project_manager.py`](project-manager.md)
 
 
-**3** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **28** methods
+**3** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **30** methods
 
 ### [`te_store.py`](te-store.md)
 Storage of the transport efficiency (TE) calibration inside a project file.

@@ -62,7 +62,7 @@ Runtime compatibility patches for third-party libraries.
 ### [`signal_stats.py`](signal-stats.md)
 Exclusion-aware signal statistics (non-visual).
 
-**0** classes &nbsp;·&nbsp; **5** functions &nbsp;·&nbsp; **0** methods
+**0** classes &nbsp;·&nbsp; **6** functions &nbsp;·&nbsp; **0** methods
 
 ### [`unit.py`](unit.md)
 The app's display units: definitions, conversion, formatting and persistence.

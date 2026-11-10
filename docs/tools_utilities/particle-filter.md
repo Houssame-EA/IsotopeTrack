@@ -174,6 +174,7 @@ upstream data is never mutated.
 | `dilution_factors_conflict` | `(members)` | Whether members' dilution factors differ beyond floating-point tolerance. |
 | `resolve_dilution_conflict` | `(parent_window, group_label, members)` | Detect and, if needed, ask the user to resolve a dilution-factor |
 | `merge_single_sources` | `(sources, name, dilution_resolution=None)` | Combine several single-sample source entries into one synthetic one. |
+| `_sources_mean_signal` | `(sources)` | Return the ``mean_signal`` of an output built from source entries. |
 | `_bump_filt_suffix` | `(name)` | Append or increment a ``"(filt xN)"`` provenance suffix on a sample name. |
 | `_retag_copy` | `(p, name)` | Shallow-copy a particle and regroup the copy under ``name``. |
 | `_apply_filt_provenance` | `(out)` | Stamp a filter output dict's sample names with ``"(filt xN)"``. |

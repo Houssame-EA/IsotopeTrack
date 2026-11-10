@@ -220,6 +220,8 @@ class ParticleTable:
         table._single_sample = input_data.get('sample_name')
         meta = input_data.get('concentration_meta')
         table.concentration_meta = dict(meta) if isinstance(meta, dict) else {}
+        means = input_data.get('mean_signal')
+        table.mean_signal = dict(means) if isinstance(means, dict) else {}
         return table
 
     def has_per_ml(self) -> bool:
