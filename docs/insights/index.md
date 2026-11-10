@@ -27,12 +27,12 @@ Plain-language explanations of each kind of finding.
 ### [`figures.py`](figures.md)
 Figures that tell the story behind a finding.
 
-**1** classes &nbsp;·&nbsp; **83** functions &nbsp;·&nbsp; **0** methods
+**1** classes &nbsp;·&nbsp; **82** functions &nbsp;·&nbsp; **0** methods
 
 ### [`panel.py`](panel.md)
 The Insights side panel of the results canvas.
 
-**5** classes &nbsp;·&nbsp; **26** functions &nbsp;·&nbsp; **74** methods
+**5** classes &nbsp;·&nbsp; **25** functions &nbsp;·&nbsp; **72** methods
 
 ### [`replicates.py`](replicates.md)
 Work out which samples are replicates of one another.
@@ -43,8 +43,3 @@ Work out which samples are replicates of one another.
 How well each Insights finding holds up: effect, evidence, replicates, coincidence.
 
 **2** classes &nbsp;·&nbsp; **24** functions &nbsp;·&nbsp; **4** methods
-
-### [`spectrum.py`](spectrum.md)
-Interferences seen in the resolved mass spectrum of Nu runs.
-
-**2** classes &nbsp;·&nbsp; **19** functions &nbsp;·&nbsp; **1** methods

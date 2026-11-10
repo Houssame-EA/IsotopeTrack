@@ -282,6 +282,7 @@ box in the top-right corner of the plot.
 | `show_full_spectrum` | `(self)` | Show the whole mass range. |
 | `show_message` | `(self, text)` | Clear the plot and show a message in its centre. |
 | `_render_info` | `(self)` | Draw the peak check box from the stored rows. |
+| `_update_info_visibility` | `(self, *args)` | Show the peak check box only while the view is zoomed onto the selected isotope. |
 | `_alert_color` | `(p, alert, default)` | Return the colour of a value: danger, warning or the default. |
 | `_info_row_html` | `(self, p, name, value, alert)` | Return one table row of the peak check box. |
 | `_render_markers` | `(self)` | Draw the expected and interfering m/z as labelled vertical lines. |

@@ -23,8 +23,8 @@ IsotopeTrack.
 | `COL_VALLEY` | `11` |
 | `NUM_COLUMNS` | `12` |
 | `_HEADERS` | `['Element', 'Include', 'Detection Method', 'Sigma', 'Manu…` |
-| `_TOOLTIPS` | `['element', 'include in analysis', 'detection method', 'p…` |
-| `METHOD_OPTIONS` | `['Manual', 'Compound Poisson LogNormal', 'CPLN table']` |
+| `_TOOLTIPS` | `['element', 'include in analysis', 'detection method; Aut…` |
+| `METHOD_OPTIONS` | `detection_registry.selectable_labels()` |
 | `INTEG_OPTIONS` | `['Background', 'Threshold', 'Midpoint']` |
 | `SPLIT_OPTIONS` | `['No Splitting', '1D Watershed']` |
 | `_SIGMA_HIGHLIGHT_LIGHT` | `'#FFF3CD'` |

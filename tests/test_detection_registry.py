@@ -134,4 +134,36 @@ def test_manual_flag_only_on_manual():
 
 def test_selectable_labels_unchanged():
     # The UI dropdown must still offer exactly these, in this order.
-    assert reg.selectable_labels() == ["Manual", "Compound Poisson LogNormal", "CPLN table"]
+    assert reg.selectable_labels() == [
+        "Automatic", "Manual", "Compound Poisson LogNormal", "CPLN table", "Gaussian"]
+
+
+def test_gaussian_z_follows_alpha():
+    assert reg.gaussian_z(2.867e-7) == pytest.approx(5.0, abs=1e-3)
+    assert reg.gaussian_z(1e-6) == pytest.approx(4.7534, abs=1e-3)
+    assert np.isfinite(reg.gaussian_z(1e-30))
+
+
+def test_gaussian_background_needs_few_low_points():
+    rng = np.random.default_rng(0)
+    assert reg.is_gaussian_background(rng.poisson(25.0, 20000).astype(float))
+    assert not reg.is_gaussian_background(rng.poisson(1.0, 20000).astype(float))
+    assert not reg.is_gaussian_background(np.zeros(100))
+
+
+def test_automatic_resolves_from_the_signal():
+    rng = np.random.default_rng(1)
+    high = rng.poisson(30.0, 20000).astype(float)
+    low = rng.poisson(0.5, 20000).astype(float)
+    assert reg.resolve("Automatic", high) == "Gaussian"
+    assert reg.resolve("Automatic", low) == "CPLN table"
+    assert reg.resolve("CPLN table", high) == "CPLN table"
+    assert reg.get("Gaussian").uses_spread and not reg.get("Automatic").is_manual
+
+
+def test_method_text_marks_the_automatic_choice():
+    assert reg.method_text({"method_used": "Gaussian", "method_requested": "Automatic"}) \
+        == "Gaussian (automatic)"
+    assert reg.method_text({"method_used": "Gaussian", "method_requested": "Gaussian"}) == "Gaussian"
+    assert reg.method_text({"method_used": "CPLN table"}) == "CPLN table"
+    assert reg.method_text({}) == "—"

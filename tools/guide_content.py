@@ -208,9 +208,13 @@ SECTION_MAIN_WINDOW = dict(
                 <ul>
                   <li><b>Element</b> — the isotope (e.g. ¹⁰⁷Ag).</li>
                   <li><b>Include</b> — enable/disable in the analysis.</li>
-                  <li><b>Detection Method</b> — <i>Manual</i>,
+                  <li><b>Detection Method</b> — <i>Automatic</i> (the
+                      default: <i>Gaussian</i> when the background is above
+                      about 10 counts, <i>CPLN table</i> below),
+                      <i>Gaussian</i>, <i>Manual</i>,
                       <i>Compound Poisson LogNormal</i>, or
-                      <i>CPLN table</i>.</li>
+                      <i>CPLN table</i>. With <i>Automatic</i>, the summary
+                      under the plot shows the method that was applied.</li>
                   <li><b>Sigma</b> — per-isotope CPLN sigma.</li>
                   <li><b>Manual Threshold</b> — counts threshold for the
                       Manual method.</li>
@@ -1208,8 +1212,8 @@ SECTION_DETECTION = dict(
                     rect=(0.099, 0.444, 0.813, 0.144),
                     body="""
                     <p>The shared values: include/exclude the elements in
-                    the analysis, the <b>Detection Method</b> (Manual, CPLN,
-                    CPLN table) and <b>iterative thresholding</b>
+                    the analysis, the <b>Detection Method</b> (Automatic, Manual,
+                    CPLN, CPLN table, Gaussian) and <b>iterative thresholding</b>
                     (recommended).</p>
                     """),
                 dict(
@@ -2301,6 +2305,12 @@ SECTION_RESULTS = dict(
             intro="""
             <p>Configuration of a <b>Batch Windows</b> node: pull particle
             results from other open IsotopeTrack windows.</p>
+            <p>When the project is saved, the node keeps the particle
+            results and the mean signal of every selected isotope of each
+            sample, not a second copy of the raw signals. The isotope
+            correction uses these mean signals, so it still works when the
+            other windows are closed or the project is reopened on its
+            own.</p>
             """,
             hotspots=[
                 dict(

@@ -5,7 +5,7 @@
 **A fast, free, and open-source desktop application for single-particle ICP-ToF-MS data analysis**
 
 [![Docs](https://img.shields.io/badge/docs-readthedocs-blue.svg)](https://isotopetrack.readthedocs.io/en/latest/)
-[![Version](https://img.shields.io/badge/version-1.13.0-blue.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
+[![Version](https://img.shields.io/badge/version-1.13.1-blue.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://python.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
@@ -29,7 +29,7 @@
 ## Key Features
 
 - **Multi-isotope** single-particle detection across all measured elements simultaneously
-- **Three detection methods** — Compound Poisson Log-Normal, CPLN lookup table, and Manual threshold
+- **Five detection methods** — Automatic, Gaussian, Compound Poisson Log-Normal, CPLN lookup table, and Manual threshold
 - **Single-ion distribution (SIA)** support — per-isotope σ fitted from real single-ion data
 - **Detector non-linearity filter** — flat-topped saturated events excluded automatically
 - **Transport rate calibration** — liquid weight, particle number, and particle mass methods
@@ -251,6 +251,8 @@ Example datasets for trying out IsotopeTrack (ionic calibration sets, transport 
 
 | Method | Description |
 |--------|-------------|
+| **Automatic** (default) | Gaussian when the background is above about 10 counts, CPLN table below |
+| **Gaussian** | Background mean plus z standard deviations, z from the Alpha error rate; for high backgrounds |
 | **Compound Poisson Log-Normal** | Threshold from the compound Poisson–log-normal distribution of ToF single-ion signals |
 | **CPLN table** | Same quantile drawn from a precomputed λ×σ lookup table for speed and accuracy |
 | **Manual** | User-defined threshold value |

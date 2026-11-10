@@ -654,8 +654,11 @@ class PeakDetection:
     - Five peak-splitting methods (see PEAK_SPLIT_METHODS)
 
     Threshold methods:
+      "Automatic"                      - Gaussian when the background is above
+                                         about 10 counts, CPLN table below (default)
+      "Gaussian"                       - Background mean + z standard deviations
       "Compound Poisson LogNormal"     - Analytical CPLN (Fenton-Wilkinson)
-      "CPLN table" - Pre-computed lookup table (default)
+      "CPLN table" - Pre-computed lookup table
                                          Falls back to LogNormal for lambda > 300.
       "Manual"                         - User-specified threshold
 
@@ -731,14 +734,14 @@ class PeakDetection:
 
     @staticmethod
     @jit(nopython=True, nogil=True)
-    def _find_particles_numba(raw_signal, threshold, lambda_bkgd, min_continuous_points, integration_level):
+    def _find_particles_numba(raw_signal, threshold, region_level, min_continuous_points, integration_level):
         """
         JIT-compiled particle detection with configurable integration baseline.
 
         Args:
             raw_signal            (ndarray): Raw signal data
             threshold             (float):   Detection threshold
-            lambda_bkgd           (float):   Background level (defines peak region boundaries)
+            region_level          (float):   Level a peak region starts and ends at
             min_continuous_points (int):     Minimum continuous points required
             integration_level     (float):   Baseline for integration
 
@@ -753,9 +756,9 @@ class PeakDetection:
 
         i = 0
         while i < n:
-            if raw_signal[i] > lambda_bkgd:
+            if raw_signal[i] > region_level:
                 start_idx = i
-                while i < n and raw_signal[i] > lambda_bkgd:
+                while i < n and raw_signal[i] > region_level:
                     i += 1
                 end_idx = i - 1
 
@@ -789,10 +792,12 @@ class PeakDetection:
 
     @staticmethod
     @jit(nopython=True, nogil=True)
-    def _find_particles_numba_dynamic(raw_signal, threshold_arr, lambda_bkgd_arr,
+    def _find_particles_numba_dynamic(raw_signal, threshold_arr, region_level_arr,
                                       min_continuous_points, integration_level_arr):
         """JIT-compiled particle detection for dynamic array thresholds (window)
         with configurable integration baseline array.
+
+        ``region_level_arr`` is the level a peak region starts and ends at.
         """
         n = len(raw_signal)
         particles_start = []
@@ -802,9 +807,9 @@ class PeakDetection:
 
         i = 0
         while i < n:
-            if raw_signal[i] > lambda_bkgd_arr[i]:
+            if raw_signal[i] > region_level_arr[i]:
                 start_idx = i
-                while i < n and raw_signal[i] > lambda_bkgd_arr[i]:
+                while i < n and raw_signal[i] > region_level_arr[i]:
                     i += 1
                 end_idx = i - 1
 
@@ -895,6 +900,10 @@ class PeakDetection:
                 'window_size_used': window_size if use_window_size else None,
             }
 
+        requested_method = method
+        method = detection_registry.resolve(method, signal)
+        uses_spread = detection_registry.get(method).uses_spread
+
         if use_window_size:
             kernel = np.ones(window_size) / window_size
             lambda_for_threshold = np.convolve(
@@ -915,13 +924,18 @@ class PeakDetection:
         while iters < max_iters or iters == 0:
             if iters > 0:
                 prev_threshold = threshold
-                if use_window_size:
+                if use_window_size and not uses_spread:
                     lambda_for_threshold = self._rolling_background(signal, threshold, window_size)
-                else:
+                elif not uses_spread:
                     below = signal[signal < threshold]
                     lambda_for_threshold = np.mean(below) if len(below) > 0 else overall_mean_signal
 
-            if use_window_size:
+            if uses_spread:
+                lambda_for_threshold, threshold = self._gaussian_threshold(
+                    signal, threshold, alpha, use_window_size, window_size)
+                thresh_scalar = float(np.mean(threshold))
+                max_diff = np.max(np.abs(prev_threshold - threshold)) if iters > 0 else np.inf
+            elif use_window_size:
                 threshold = self._calculate_array_threshold(lambda_for_threshold, method, alpha, sigma)
                 thresh_scalar = float(np.mean(threshold))
                 max_diff = np.max(np.abs(prev_threshold - threshold)) if iters > 0 else np.inf
@@ -968,9 +982,45 @@ class PeakDetection:
             'iterations': iters,
             'convergence': convergence_tag,
             'method_used': method,
+            'method_requested': requested_method,
             'window_applied': use_window_size,
             'window_size_used': window_size if use_window_size else None,
         }
+
+    def _gaussian_threshold(self, signal, threshold, alpha, use_window_size, window_size):
+        """Return the background and Gaussian threshold from the points below a threshold.
+
+        The threshold is the mean of those points plus z times their standard
+        deviation, z being the one-sided normal quantile of ``alpha``. With a
+        window, the mean and the standard deviation are taken in a rolling
+        window around each point.
+
+        Args:
+            signal (ndarray): Signal data.
+            threshold (float | ndarray): Current threshold; infinite on the first pass.
+            alpha (float): Significance level.
+            use_window_size (bool): Whether to use a rolling window.
+            window_size (int): Window size in points.
+
+        Returns:
+            tuple: ``(background, threshold)``, floats or arrays when windowed.
+        """
+        z = detection_registry.gaussian_z(alpha)
+        valid = signal < threshold
+        if not use_window_size:
+            below = signal[valid]
+            if below.size == 0:
+                below = signal
+            mean = float(np.mean(below, dtype=np.float64))
+            spread = float(np.std(below, dtype=np.float64))
+            return mean, mean + z * spread
+        values = np.where(valid, signal, 0).astype(np.float64)
+        share = uniform_filter1d(valid.astype(np.float64), size=window_size, mode='reflect')
+        share = np.maximum(share, 1.0 / window_size)
+        mean = uniform_filter1d(values, size=window_size, mode='reflect') / share
+        mean_square = uniform_filter1d(values * values, size=window_size, mode='reflect') / share
+        spread = np.sqrt(np.maximum(mean_square - mean * mean, 0.0))
+        return mean, mean + z * spread
 
     def _rolling_background(self, signal, threshold, window_size):
         """Calculates a dynamic rolling background excluding peaks above threshold.
@@ -1407,6 +1457,11 @@ class PeakDetection:
         Threading-safe particle detection with configurable integration method
         and peak splitting.
 
+        A particle region starts and ends where the signal crosses the
+        integration level of the chosen method: the background, the threshold
+        or their midpoint. A region must hold enough points above the
+        threshold to be a particle.
+
         Args:
             time                  (ndarray):        Time array
             raw_signal            (ndarray):        Raw signal
@@ -1433,19 +1488,16 @@ class PeakDetection:
                 starts, ends, heights, counts = self._find_particles_numba(
                     signal_f64,
                     float(threshold),
-                    float(lambda_bkgd),
+                    float(integration_level),
                     min_continuous_points,
                     float(integration_level),
                 )
             else:
-                bkgd_arr = (np.asarray(lambda_bkgd, dtype=np.float64)
-                            if not np.isscalar(lambda_bkgd)
-                            else np.full(len(signal_f64), float(lambda_bkgd), dtype=np.float64))
                 integration_level_arr = np.asarray(integration_level, dtype=np.float64)
                 starts, ends, heights, counts = self._find_particles_numba_dynamic(
                     signal_f64,
                     threshold.astype(np.float64),
-                    bkgd_arr,
+                    integration_level_arr,
                     min_continuous_points,
                     integration_level_arr,
                 )
@@ -1502,10 +1554,10 @@ class PeakDetection:
             lambda_bkgd, threshold, integration_method
         )
 
-        above_bg = raw_signal > (lambda_bkgd
-                                 if np.isscalar(lambda_bkgd)
-                                 else np.asarray(lambda_bkgd))
-        padded = np.concatenate(([False], above_bg, [False]))
+        above_level = raw_signal > (integration_level
+                                    if np.isscalar(integration_level)
+                                    else np.asarray(integration_level))
+        padded = np.concatenate(([False], above_level, [False]))
         changes = np.diff(padded.astype(int))
         starts_arr = np.where(changes == 1)[0]
         ends_arr = np.where(changes == -1)[0]
@@ -1698,7 +1750,8 @@ class PeakDetection:
             alpha             (float):   Significance level (default 1e-6)
             sample_name       (str):     Sample name (unused, kept for API compat)
             element_key       (str):     Element identifier for caching
-            method            (str):     "Compound Poisson LogNormal", "CPLN table", or "Manual"
+            method            (str):     "Automatic", "Gaussian", "Compound Poisson LogNormal",
+                                         "CPLN table", or "Manual"
             manual_threshold  (float):   Threshold value when method == "Manual"
             element_thresholds (dict):   Pre-calculated thresholds (unused here)
             current_sample    (str):     Current sample name (unused, kept for API compat)

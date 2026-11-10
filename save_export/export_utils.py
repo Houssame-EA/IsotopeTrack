@@ -20,8 +20,32 @@ from tools.unit import show_advanced_dialog
 from utils.app_version import __version__ as APP_VERSION
 from utils.numeric_format import as_scalar as _as_scalar, fmt as _fmt
 import utils.signal_stats
+from processing import detection_registry
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.save_export.export_utils")
+
+
+def _method_cell(main_window, sample_name, element_key, params):
+    """Return the detection method of an element for the exported parameters.
+
+    For the Automatic choice the method it applied is added in brackets, e.g.
+    ``Automatic (Gaussian)``.
+
+    Args:
+        main_window: Main window holding the computed thresholds.
+        sample_name (str): Sample name.
+        element_key (str): Element key of the parameters.
+        params (dict): Detection parameters of the element.
+
+    Returns:
+        str: Text for the method column.
+    """
+    method = params.get('method', 'Compound Poisson LogNormal')
+    thresholds = (getattr(main_window, 'element_thresholds', None) or {}).get(sample_name, {})
+    used = (thresholds.get(element_key) or {}).get('method_used')
+    if detection_registry.get(method).resolver is not None and used and used != method:
+        return f"{method} ({used})"
+    return method
 
 
 def is_pure_element(mass_fraction):
@@ -939,7 +963,7 @@ def export_summary_file_with_mass_fractions(main_window: MainWindow, summary_fil
                         sample_name,
                         display_label,
                         str(params.get('include', True)),
-                        params.get('method', 'Compound Poisson LogNormal'),
+                        _method_cell(main_window, sample_name, element_key, params),
                         str(params.get('sigma', getattr(main_window, '_global_sigma', 0.55))),
                         str(params.get('manual_threshold', 10.0)),
                         str(params.get('min_continuous', 1)),
@@ -1309,7 +1333,7 @@ def export_sample_file_with_mass_fractions(main_window: MainWindow, sample_name,
             det_row = [
                 display_label,
                 str(params.get('include', True)),
-                params.get('method', 'Compound Poisson LogNormal'),
+                _method_cell(main_window, sample_name, element_key, params),
                 str(params.get('sigma', global_sigma)),
                 str(params.get('manual_threshold', 10.0)),
                 str(params.get('min_continuous', 1)),

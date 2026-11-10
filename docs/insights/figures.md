@@ -37,7 +37,7 @@ Figure Builder node fed by a selector holding the finding's samples.
 | `LIMIT_UNITS` | `{'counts': 'net counts', 'mass': 'fg', 'd': 'nm'}` |
 | `KINDS` | `{'mass': 'mass', 'd': 'diameter'}` |
 | `LIMIT_SPREAD` | `1.1` |
-| `DESIGNS` | `{'interference': _interference, 'spectrum_shift': _spectr…` |
+| `DESIGNS` | `{'interference': _interference, 'isotope': _isotope_pair,…` |
 | `ISOTOPE_DESIGNS` | `{_isotope_pair, _isotope_track, _isotope_groups}` |
 | `BETWEEN_DESIGNS` | `frozenset({_comparison, _replicates, _signature, _isotope…` |
 | `MAX_PANELS` | `6` |
@@ -143,7 +143,6 @@ Attributes:
 | `_type_panels` | `(s, definition, title)` | The card's own PCA panel, retitled for the story. |
 | `_types_overview` | `(s, ctx)` |  |
 | `_particle_type` | `(s, ctx)` |  |
-| `_spectrum` | `(s, ctx)` | Spectrum finding: the zoomed spectrum of the worst sample, then every sample. |
 | `story_layout` | `(n: int, caption: str='') → tuple[list[list[float]], list[float], floa` | Place *n* panels above a caption sized to its text. |
 | `caption_text` | `(title: str, captions: list[str]) → str` | Write the figure legend: the title, then one sentence per panel letter. |
 | `group_names` | `(ctx: FigureContext) → list[str]` | The groups the figure compares: the samples of its table, when there are two or more. |

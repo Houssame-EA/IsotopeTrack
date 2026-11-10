@@ -40,7 +40,6 @@ from PySide6.QtCore import QThread, Signal
 
 from results.insights import discovery as _disc
 from results.insights import robustness as _robustness
-from results.insights import spectrum as _spectrum
 from results.insights.replicates import (
     ReplicateGroup, describe_grouping, resolve_groups, user_group_map,
 )
@@ -63,7 +62,6 @@ _CAT_META: dict[str, dict] = {
     "signature":    {"icon": "⌘", "label": "Signature"},
     "outlier":      {"icon": "↑", "label": "Outlier"},
     "interference": {"icon": "⚡", "label": "Interference"},
-    "spectrum":     {"icon": "⚡", "label": "Spectrum"},
     "stoichiometry": {"icon": "⚖", "label": "Stoichiometry"},
     "cooccurrence": {"icon": "⊕", "label": "Co-occurrence"},
     "ratio_split":  {"icon": "⇅", "label": "Ratio split"},
@@ -99,10 +97,8 @@ NODE_TYPE_META: dict[str, str] = {
 }
 """Plot nodes Insights can propose, in the order the panel lists them.
 
-``interference`` is not a node: it gathers every interference finding, from
-the particles (whose cards add a correlation plot) and from the resolved
-spectrum (whose cards open the main window's Spectrum view); see
-:data:`FILTER_CATEGORIES`.
+``interference`` is not a node: it gathers the interference findings, whose
+cards add a correlation plot; see :data:`FILTER_CATEGORIES`.
 
 The Clustering node is not proposed. Particle types are found inside Insights
 with strict checks (see :func:`results.insights.discovery.find_particle_types`)
@@ -111,7 +107,7 @@ Clustering node's job.
 """
 
 FILTER_CATEGORIES: dict[str, frozenset] = {
-    "interference": frozenset({"interference", "spectrum"}),
+    "interference": frozenset({"interference"}),
 }
 """List entries that gather cards by kind of finding as well as by plot node."""
 
@@ -2343,7 +2339,6 @@ def _analyse_anomaly(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
 
 _REGISTRY = (
     ("interference", _disc.analyse_interference, "within", {"interference", "correlation_plot"}),
-    ("spectrum", _spectrum.analyse, "across", {"interference"}),
     ("isotope", _analyse_isotope, "within", {"isotopic_ratio_plot"}),
     ("isotope_groups", _disc.analyse_isotope_groups, "across", {"isotopic_ratio_plot"}),
     ("comparison", _analyse_comparison, "across", {"concentration_comparison"}),
@@ -2698,7 +2693,7 @@ class _AnalysisWorker(QThread):
 
     def __init__(self, scope: AnalysisScope, particles: list[dict],
                  sample_idx: np.ndarray, categories=None, node_types=None,
-                 dedupe: bool = True, focus: str = "", spectra: dict | None = None):
+                 dedupe: bool = True, focus: str = ""):
         """Prepare an analysis run.
 
         Args:
@@ -2712,9 +2707,6 @@ class _AnalysisWorker(QThread):
             focus: Element symbol to search around, e.g. ``"Fe"``; every
                 detector then looks only at findings naming it and keeps
                 many more of them. Empty searches everything.
-            spectra: Spectrum sources for the spectrum check, ``{"samples":
-                [SpectrumSource], "isotopes": [(label, exact mass)]}``
-                (see :mod:`results.insights.spectrum`).
         """
         super().__init__()
         self._scope = scope
@@ -2724,7 +2716,6 @@ class _AnalysisWorker(QThread):
         self._node_types = tuple(node_types) if node_types is not None else None
         self._dedupe = dedupe
         self._focus = focus
-        self._spectra = spectra or {}
         self._abort = False
 
     def cancel(self) -> None:
@@ -2756,7 +2747,6 @@ class _AnalysisWorker(QThread):
 
         self.progress.emit("Building element matrix…")
         ctx = build_context_from(self._scope, self._particles, self._sample_idx)
-        ctx.cache[_spectrum.SOURCES_KEY] = self._spectra
         if self._focus:
             ctx = focused(ctx, self._focus)
 

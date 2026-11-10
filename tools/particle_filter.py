@@ -540,7 +540,8 @@ def _expand_upstream_entries(u):
 
     Returns:
         list: Source entries with keys 'name', 'origin', 'particles',
-            'total', 'sample_data', 'conc', 'isotopes' and 'parent_window'.
+            'total', 'sample_data', 'conc', 'mean_signal', 'isotopes' and
+            'parent_window'.
     """
     if not u or u.get('type') not in _FILTERABLE_TYPES:
         return []
@@ -565,6 +566,7 @@ def _expand_upstream_entries(u):
                 'total': len(particles),
                 'sample_data': (u.get('data') or {}).get(name),
                 'conc': (u.get('concentration_meta') or {}).get(name),
+                'mean_signal': u.get('mean_signal') or {},
                 'isotopes': u.get('selected_isotopes') or [],
                 'parent_window': u.get('parent_window'),
             })
@@ -582,6 +584,7 @@ def _expand_upstream_entries(u):
             'total': len(particles),
             'sample_data': u.get('data'),
             'conc': (u.get('concentration_meta') or {}).get(name),
+            'mean_signal': u.get('mean_signal') or {},
             'isotopes': u.get('selected_isotopes') or [],
             'parent_window': u.get('parent_window'),
         })
@@ -1114,10 +1117,27 @@ def merge_single_sources(sources, name, dilution_resolution=None):
         'sample_data': next((s.get('sample_data') for s in sources
                              if s.get('sample_data')), None),
         'conc': conc,
+        'mean_signal': _sources_mean_signal(sources),
         'isotopes': isotopes,
         'parent_window': next((s.get('parent_window') for s in sources
                                if s.get('parent_window')), None),
     }
+
+
+def _sources_mean_signal(sources):
+    """Return the ``mean_signal`` of an output built from source entries.
+
+    Args:
+        sources (list): Source entries.
+
+    Returns:
+        dict: ``{sample: {label: mean}}`` of every source.
+    """
+    out = {}
+    for s in sources:
+        for sample, means in (s.get('mean_signal') or {}).items():
+            out.setdefault(sample, means)
+    return out
 
 
 _FILT_SUFFIX_RE = re.compile(r'^(?P<base>.*?)\s*\(filt x(?P<n>\d+)\)\s*$')
@@ -1299,6 +1319,7 @@ def build_multi_sample_dict(sources, parent_window=None):
         'sum_replicates': False,
         'concentration_meta': {
             s['name']: s.get('conc') or _empty_conc_meta() for s in sources},
+        'mean_signal': _sources_mean_signal(sources),
         'parent_window': pw,
     }
 
@@ -3176,6 +3197,7 @@ class ParticleFilterNode(QObject):
             'replicate_samples': [],
             'concentration_meta': {
                 source['name']: source['conc'] or _empty_conc_meta()},
+            'mean_signal': _sources_mean_signal([source]),
             'parent_window': source['parent_window'] or self.parent_window,
         }
 
@@ -3227,6 +3249,7 @@ class ParticleFilterNode(QObject):
             'sum_replicates': False,
             'concentration_meta': {
                 s['name']: s['conc'] or _empty_conc_meta() for s in sources},
+            'mean_signal': _sources_mean_signal(sources),
             'parent_window': pw,
         }
 

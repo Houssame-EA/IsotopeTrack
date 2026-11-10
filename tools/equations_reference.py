@@ -875,10 +875,33 @@ TOPIC_DETECTION = [
      <b>T = 11.49 counts</b> (computed with IsotopeTrack's own CPLN
      implementation). A Gaussian rule λ + 3√λ would give only
      2.6 counts and drown the results in false positives — this is why
-     CPLN is the default for ToF data. The <i>CPLN table</i> method
+     CPLN is used for low-background ToF data. The <i>CPLN table</i> method
      reads the same quantile from a precomputed λ×σ lookup table for
      speed; the fallback when the approximation fails numerically is
      T = λ + 3√λ (e.g. 19.5 for λ = 10).</p>"""),
+    ("h", """
+     <h3>Gaussian threshold (high background) and the Automatic choice</h3>
+     <p>When many ions arrive in every dwell, the summed signal of the
+     background is close to a normal distribution, and the threshold is
+     taken from the mean and the standard deviation of the background
+     points themselves. The <i>Gaussian</i> method always uses this
+     threshold. The <i>Automatic</i> method, the default, uses it when
+     fewer than 5 % of the non-zero points are at or below 5 counts,
+     which corresponds to a background of about 10 counts, and the
+     <i>CPLN table</i> threshold otherwise. With iterative thresholding
+     the mean and standard deviation are recomputed from the points
+     below the previous threshold; with a window they are taken in a
+     rolling window around each point.</p>"""),
+    ("eq", r"T = \mu_{bg} + z_{1-\alpha}\,s_{bg}"),
+    ("where", [
+        ("μ_bg", "mean of the background points (counts per dwell)"),
+        ("s_bg", "standard deviation of the background points"),
+        ("z₁₋α", "one-sided normal quantile of the false-positive rate α "
+                 "(Alpha column); 4.75 for α = 10⁻⁶, 5 for α = 2.87×10⁻⁷"),
+    ]),
+    ("ex", """
+     <p>Background mean 25 counts, standard deviation 6 counts,
+     α = 10⁻⁶ → z = 4.75 → <b>T = 25 + 4.75 × 6 = 53.5 counts</b>.</p>"""),
     ("h", """
      <h3>Iterative background refinement (with Aitken Δ²)</h3>
      <p>Particles bias a naive background estimate upward, so background

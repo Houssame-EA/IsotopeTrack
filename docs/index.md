@@ -1,7 +1,7 @@
 # IsotopeTrack Documentation
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Version](https://img.shields.io/badge/version-1.13.0-green.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
+[![Version](https://img.shields.io/badge/version-1.13.1-green.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://python.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
 
@@ -58,9 +58,10 @@ If you use IsotopeTrack in your research, please cite:
 
 | Method | Description |
 |--------|-------------|
-| **Currie Method** | Classical detection based on Poisson statistics |
-| **Formula C** | MARLAP-based, balances false positives/negatives |
-| **Compound Poisson Log-Normal** | Advanced — accounts for signal distribution |
+| **Automatic** (default) | Gaussian when the background is above about 10 counts, CPLN table below |
+| **Gaussian** | Background mean plus z standard deviations, z from the Alpha error rate; for high backgrounds |
+| **Compound Poisson Log-Normal** | Threshold from the compound Poisson–log-normal distribution of ToF single-ion signals |
+| **CPLN table** | Same quantile drawn from a precomputed λ×σ lookup table for speed and accuracy |
 | **Manual** | User-defined threshold |
 
 ---
@@ -99,7 +100,7 @@ Run.py
 | **Methods** | 2134 |
 | **Functions** | 292 |
 | **License** | GPL-3.0 |
-| **Version** | 1.13.0 |
+| **Version** | 1.13.1 |
 
 ---
 

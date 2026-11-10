@@ -1258,3 +1258,14 @@ def test_editor_shows_node_fields(dialog):
     assert not ed._visible('per_ml', ed._kinds('per_ml'))
     p0['group_by'] = 'sample'
     assert ed._visible('facet', ed._kinds('facet'))
+
+
+def test_spectrum_panel_without_data_explains_itself():
+    """A spectrum panel with no stored spectra reports a problem instead of drawing."""
+    from results.figure_builder.core.spec import default_spec, make_panel
+    from tests.figure_checks import render_problems, table_for
+    spec = default_spec()
+    spec["panels"] = [make_panel(rect=[0, 0, 1, 1], kind="spectrum")]
+    data = {"type": "sample_data", "particle_data": [{"elements": {"56Fe": 10.0}}] * 5,
+            "sample_name": "S1"}
+    assert render_problems(spec, table_for(data, "Counts"))

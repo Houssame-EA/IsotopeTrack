@@ -19,6 +19,13 @@ Pure logic, no Qt dependency, so it can be unit-tested without a GUI.
 
 ---
 
+## Constants
+
+| Name | Value |
+|------|-------|
+| `_BATCH_SUFFIX_RE` | `re.compile('\\s*\\[W\\d+(?:\\s*\\(.*\\))?\\]\\s*$')` |
+| `_FILT_SUFFIX_RE` | `re.compile('\\s*\\(filt x\\d+\\)\\s*$')` |
+
 ## Functions
 
 | Function | Signature | Description |
@@ -28,3 +35,4 @@ Pure logic, no Qt dependency, so it can be unit-tested without a GUI.
 | `analyzed_signal` | `(window, sample_name, element_key, signal)` | Return only the samples that count towards signal statistics. |
 | `mean_signal` | `(window, sample_name, element_key, signal, default=0.0)` | Mean signal over the analyzed part of a trace. |
 | `mean_std_signal` | `(window, sample_name, element_key, signal, ddof=0, default=0.0)` | Mean and standard deviation over the analyzed part of a trace. |
+| `mean_signal_ratio` | `(mean_signals, sample_name, num, den)` | Ratio of the mean signals of two isotopes in one sample. |

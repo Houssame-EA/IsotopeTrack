@@ -27,6 +27,7 @@ from results.shared_plot_utils import (
     apply_plot_title_style, apply_axis_label_style,
 )
 from utils.unit import units
+from utils.signal_stats import mean_signal_ratio
 from widget.unit_combo import UnitComboBox
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_isotope")
@@ -682,6 +683,14 @@ class SampleCorrectionDialog(QDialog):
                     ratios.append(r)
                     rep_details.append(f"  {sn}: {r:.6f}")
                     continue
+
+            r = mean_signal_ratio(
+                (node.input_data or {}).get('mean_signal') if node else None,
+                sn, num_label, den_label)
+            if r is not None:
+                ratios.append(r)
+                rep_details.append(f"  {sn}: {r:.6f}")
+                continue
 
             ratio_found = False
             original_name = _strip_batch_suffix(sn)
@@ -1440,6 +1449,14 @@ class IsotopeSettingsDialog(QDialog):
                     valid_names.append(sn)
                     n_particles_list.append(min(len(num_vals), len(den_vals)))
                     continue
+
+            node_input = getattr(self._node, 'input_data', None) or {}
+            ratio_ts = mean_signal_ratio(node_input.get('mean_signal'), sn, ref_num, ref_den)
+            if ratio_ts is not None:
+                ratios.append(ratio_ts)
+                valid_names.append(sn)
+                n_particles_list.append(0)
+                continue
 
             ratio_found = False
             windows_to_search = [pw] if pw else []
@@ -2816,6 +2833,12 @@ class IsotopicRatioDisplayDialog(QDialog):
                             den_sum += b
                     if num_sum > 0 and den_sum > 0:
                         return num_sum / den_sum
+
+        node_input = getattr(getattr(self, 'node', None), 'input_data', None) or {}
+        result = mean_signal_ratio(node_input.get('mean_signal'), sample_name,
+                                   ref_num_label, ref_den_label)
+        if result is not None:
+            return result
 
         for w in windows_to_search:
             if not hasattr(w, 'data_by_sample') or not hasattr(w, 'selected_isotopes'):

@@ -69,7 +69,6 @@ it is, and a button naming the plot it adds.
 |--------|-----------|-------------|
 | `__init__` | `(self, s: Suggestion, on_add, samples_text: str='', on_figure=None, pa` | Build a card for one suggestion. |
 | `_build` | `(self)` | Lay out the card's contents. |
-| `shows_spectrum` | `(self) → bool` | Whether the card is a spectrum finding, opened in the Spectrum view. |
 | `_build_details` | `(self, explanation) → QWidget` | Build the hidden details section: key numbers, then the explanation. |
 | `_toggle_details` | `(self)` | Show or hide the details section. |
 | `_figure_clicked` | `(self)` | Add the explained figure, and confirm on the button. |
@@ -146,7 +145,6 @@ instantiating this directly.
 | `_direct_node` | `(self, s: Suggestion)` | The selector node a card's plot connects straight to, or ``None``. |
 | `_card_source` | `(self, s: Suggestion) → str` | The card's line saying which samples, and which node, a finding comes from. |
 | `_add_figure` | `(self, s: Suggestion)` | Add the figure that walks through a finding, panels a to f with a legend. |
-| `_show_spectrum` | `(self, s: Suggestion)` | Open the main window's Spectrum view on a spectrum finding's sample and isotope. |
 | `_add_clustering` | `(self, s: Suggestion)` | Add a Clustering node over a particle-type finding's samples and elements. |
 | `_add_suggestion` | `(self, s: Suggestion, node_type: str \| None=None, config: dict \| None=` | Build the branch a suggestion describes and wire it into the canvas. |
 | `_build_scoped_selector` | `(self, s: Suggestion, factories: dict, narrow_elements: bool=True)` | Create a sample selector holding only what the finding is about. |
@@ -168,7 +166,6 @@ instantiating this directly.
 | `_raw_pool_for` | `(scene, parent_window) → dict` | Every loaded particle by sample, as the engine reads it. |
 | `_isotope_entries` | `(parent_window, scene, labels) → list[dict]` | Resolve element labels into the isotope records a selector expects. |
 | `isotope_markup` | `(text: str) → str` | Write isotope labels in text with a superscript mass number. |
-| `spectrum_sources` | `(parent_window, sample_names) → dict` | Collect, on the GUI thread, what the spectrum check needs for each sample. |
 | `section_of` | `(category: str) → str` | Return the section heading a finding of *category* is listed under. |
 | `strength_label` | `(confidence: float) → tuple[str, int]` | Word and number of filled dots describing how strong a finding is. |
 | `evidence_cells` | `(evidence) → list[tuple[str, str, bool \| None]]` | The evidence strip's cells: ``(heading, value, passed)``. |
