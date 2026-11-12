@@ -359,9 +359,10 @@ class FileInfoDialog(QDialog):
     """Dialog for displaying detailed file information."""
 
     def __init__(self, sample_name, run_info, method_info, time_array, masses, parent=None,
-                 tuning_info=None):
+                 tuning_info=None, blanking=None):
         super().__init__(parent)
         self.sample_name = sample_name
+        self.blanking = blanking
         self.run_info = run_info
         self.method_info = method_info
         self.tuning_info = tuning_info
@@ -521,6 +522,7 @@ class FileInfoDialog(QDialog):
                 mass_card.add_row("Median Step",   f"{np.median(np.diff(self.masses)):.4f}", "amu")
                 self._insert_card(mass_card)
 
+            self._build_blanking_card()
             self._build_run_info_card()
 
             if self.tuning_info:
@@ -689,6 +691,35 @@ class FileInfoDialog(QDialog):
                 [f"attenuator_vlens{n}a1", f"attenuator_vlens{n}a35", f"attenuator_vlens{n}a1000"], "V")
         self._insert_card(card)
 
+    def _build_blanking_card(self):
+        """Windows blanked by the method and periods closed by autoblanking."""
+        if not self.blanking:
+            return
+        card = Card("Blanking")
+        lo_lim = float(min(self.masses)) - 1 if self.masses is not None and len(self.masses) else 1.0
+        hi_lim = float(max(self.masses)) + 1 if self.masses is not None and len(self.masses) else 300.0
+        fixed = [w for w in self.blanking.get("fixed", []) if w[1] > lo_lim and w[0] < hi_lim and w[0] > 1]
+        card.add_divider("Blanked by the method")
+        if fixed:
+            for i, (lo, hi) in enumerate(fixed, 1):
+                card.add_row(f"Window {i}", f"{lo:.1f} – {hi:.1f}", "m/z")
+        else:
+            card.add_row("Windows", "None inside the mass range")
+
+        card.add_divider("Autoblanking during the run")
+        merged = {}
+        for lo, hi, n in self.blanking.get("auto", []):
+            key = (round(lo, 1), round(hi, 1))
+            merged[key] = merged.get(key, 0) + n
+        total = self.blanking.get("total_acquisitions") or 0
+        if merged:
+            for (lo, hi), n in sorted(merged.items()):
+                pct = f" ({100 * n / total:.1f} % of run)" if total else ""
+                card.add_row(f"m/z {lo:.1f} – {hi:.1f}", f"{n:,} acquisitions{pct}")
+        else:
+            card.add_row("Events", "No autoblanking")
+        self._insert_card(card)
+
     def _build_run_info_card(self):
         segs = self.run_info["SegmentInfo"]
         card = Card("Run Information")
@@ -713,17 +744,17 @@ class FileInfoDialog(QDialog):
 class FileInfoMenu:
     @staticmethod
     def create_menu(sample_name, run_info, method_info, time_array, masses, parent=None,
-                    tuning_info=None):
+                    tuning_info=None, blanking=None):
         menu = QMenu(parent)
         action = menu.addAction("Show Method Information")
         action.triggered.connect(lambda: FileInfoMenu.show_file_info(
-            sample_name, run_info, method_info, time_array, masses, parent, tuning_info
+            sample_name, run_info, method_info, time_array, masses, parent, tuning_info, blanking
         ))
         return menu
 
     @staticmethod
     def show_file_info(sample_name, run_info, method_info, time_array, masses, parent=None,
-                       tuning_info=None):
+                       tuning_info=None, blanking=None):
         dialog = FileInfoDialog(sample_name, run_info, method_info, time_array, masses, parent,
-                                tuning_info=tuning_info)
+                                tuning_info=tuning_info, blanking=blanking)
         dialog.exec()

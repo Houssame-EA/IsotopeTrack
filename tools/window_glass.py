@@ -267,8 +267,6 @@ def _apply_mac(widget):
     as one continuous column. The window title text is hidden. Only the parts
     of the Qt content that paint transparent (the sidebar) show the blur.
     """
-    if getattr(widget, "_glass_view", None):
-        return True
     view = int(widget.winId())
     window = _send(view, "window")
     if not window:
@@ -286,6 +284,10 @@ def _apply_mac(widget):
     _send(window, "setTitlebarAppearsTransparent:", None, (ctypes.c_bool,), True)
     _send(window, "setTitleVisibility:", None, (ctypes.c_long,), _MAC_TITLE_HIDDEN)
     widget._glass_unified = True
+
+    old = getattr(widget, "_glass_view", None)
+    if old and _send(old, "superview") == frame_view:
+        return True
 
     try:
         full = _rect(frame_view)
@@ -489,7 +491,7 @@ class _ShowWatcher:
 
         class _Filter(QObject):
             def eventFilter(self, obj, event):
-                if event.type() == QEvent.Type.Show and not getattr(obj, "_glass_active", False):
+                if event.type() == QEvent.Type.Show:
                     QTimer.singleShot(0, watcher.activate)
                 return False
 
@@ -503,9 +505,12 @@ class _ShowWatcher:
         from tools.theme import theme
         w = self.widget
         try:
-            if getattr(w, "_glass_active", False) or not w.isVisible():
+            if not w.isVisible():
                 return
         except RuntimeError:
+            return
+        if getattr(w, "_glass_active", False):
+            apply(w, theme.is_dark)
             return
         if apply(w, theme.is_dark):
             w._glass_active = True

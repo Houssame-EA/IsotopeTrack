@@ -40,6 +40,7 @@ from widget.numeric_table import NumericTableWidgetItem
 from widget.results_table_view import ResultsTableView
 from widget.calibration_info import CalibrationInfoDialog
 from loading.data_thread import DataProcessThread
+from loading import nu_blanking
 from tools.Info_table import InfoTooltip
 from processing.peak_detection import PeakDetection
 from tools.info_file import FileInfoMenu
@@ -3385,6 +3386,7 @@ class MainWindow(QMainWindow):
         sample_name = self.sample_table.item(row, 0).text()
 
         self.current_sample = sample_name
+        self._refresh_periodic_table_sample()
 
         self.load_or_initialize_parameters(sample_name)
 
@@ -3503,9 +3505,10 @@ class MainWindow(QMainWindow):
                 self.sample_run_info.get(sample_name),
                 self.sample_method_info.get(sample_name),
                 self.time_array_by_sample.get(sample_name),
-                self.all_masses,
+                self._sample_masses_for(sample_name) or self.all_masses,
                 self,
                 self._tuning_for(sample_name),
+                self._sample_blanking_for(sample_name),
             ))
 
             menu.addSeparator()
@@ -3728,6 +3731,61 @@ class MainWindow(QMainWindow):
     # ------------------------------------element isotope selection--------------------------------------------
     # ----------------------------------------------------------------------------------------------------------
 
+    def _sample_masses_for(self, sample_name):
+        """Masses measured in one loaded sample, read once per folder.
+
+        Args:
+            sample_name (str | None): Sample name.
+
+        Returns:
+            list | None: Masses, or None for CSV samples and when unknown.
+        """
+        folder = self.sample_to_folder_map.get(sample_name) if sample_name else None
+        if not folder or str(folder).lower().endswith('.csv'):
+            return None
+        cache = self.__dict__.setdefault('_sample_masses_cache', {})
+        key = str(folder)
+        if key not in cache:
+            try:
+                masses = DataProcessThread.get_masses_only(key)
+            except Exception:
+                self.logger.exception("Could not read the masses of %s", sample_name)
+                masses = None
+            cache[key] = None if masses is None else [float(m) for m in masses]
+        return cache[key]
+
+    def _sample_blanking_for(self, sample_name):
+        """Blanker windows and autoblank periods of one Nu sample, read once per folder.
+
+        Args:
+            sample_name (str | None): Sample name.
+
+        Returns:
+            dict | None: See :func:`loading.nu_blanking.read_nu_blanking`.
+        """
+        folder = self.sample_to_folder_map.get(sample_name) if sample_name else None
+        if not folder or not (Path(folder) / 'run.info').exists():
+            return None
+        cache = self.__dict__.setdefault('_sample_blanking_cache', {})
+        key = str(folder)
+        if key not in cache:
+            try:
+                cache[key] = nu_blanking.read_nu_blanking(key)
+            except Exception:
+                self.logger.exception("Could not read the blanking of %s", sample_name)
+                cache[key] = None
+        return cache[key]
+
+    def _refresh_periodic_table_sample(self):
+        """Point the periodic table at the sample that is open."""
+        ptw = self.periodic_table_widget
+        if ptw is None or not hasattr(ptw, 'set_sample_context'):
+            return
+        name = self.current_sample
+        if not name and self.sample_to_folder_map:
+            name = next(iter(self.sample_to_folder_map))
+        ptw.set_sample_context(name, self._sample_masses_for(name), self._sample_blanking_for(name))
+
     @log_user_action('DIALOG_OPEN', 'Opened periodic table')
     def show_periodic_table(self):
         """Display periodic table for element selection."""
@@ -3749,6 +3807,7 @@ class MainWindow(QMainWindow):
             if self.selected_isotopes:
                 self._update_periodic_table_selections()
 
+        self._refresh_periodic_table_sample()
         self.periodic_table_widget.show()
         self.periodic_table_widget.raise_()
 
@@ -3759,6 +3818,7 @@ class MainWindow(QMainWindow):
             self.periodic_table_widget.selection_confirmed.connect(self.handle_isotopes_selected)
         if hasattr(self, 'all_masses') and self.all_masses:
             self.periodic_table_widget.update_available_masses(self.all_masses)
+        self._refresh_periodic_table_sample()
 
         self.periodic_table_widget.show()
         self.periodic_table_widget.raise_()

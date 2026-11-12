@@ -1,11 +1,13 @@
 import os
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, QPoint, QSettings
-from PySide6.QtGui import QColor, QPainter, QLinearGradient
+from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, QPoint, QSettings, QTimer
+from PySide6.QtGui import QColor, QPainter, QLinearGradient, QPen, QPolygon, QPixmap
 from PySide6.QtWidgets import (QGridLayout, QPushButton, QVBoxLayout,
                                QLabel, QSizePolicy, QHBoxLayout, QDialog, QApplication,
-                               QFrame, QFileDialog, QMessageBox, QComboBox)
+                               QFrame, QFileDialog, QMessageBox, QComboBox, QWidget)
 
-from tools.theme import theme
+from tools.theme import theme, glass_rgba
+from tools import window_glass
+from loading import nu_blanking
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.widget.periodic_table_widget")
 
@@ -123,6 +125,7 @@ class AnimatedButton(QPushButton):
         self.isotope_display = None
         self.highlight_percentage = 0
         self.selected_abundances = []
+        self.blank_mark = None
         self.highlight_color = QColor(153,153,153)
         self.is_selected = False
         self._element_data = None
@@ -151,13 +154,42 @@ class AnimatedButton(QPushButton):
             event: Paint event object
         """
         super().paintEvent(event)
-        if self.highlight_percentage > 0:
-            painter = QPainter(self)
-            highlight_height = int(self.height() * (min(self.highlight_percentage, 100) / 100))
-            gradient = QLinearGradient(0, self.height() - highlight_height, 0, self.height())
-            gradient.setColorAt(0, self.highlight_color)
-            gradient.setColorAt(1, QColor(255, 255, 255, 0))
-            painter.fillRect(0, self.height() - highlight_height, self.width(), highlight_height, gradient)
+        enabled = self.isEnabled()
+        selected = self.highlight_percentage > 0
+        mark = self.blank_mark if enabled else None
+        if not selected and not mark:
+            return
+        painter = QPainter(self)
+        if not painter.isActive():
+            return
+        try:
+            painter.setRenderHint(QPainter.Antialiasing)
+            if selected and not enabled:
+                painter.setPen(QPen(QColor(theme.palette.accent), 2))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 6, 6)
+                return
+            if selected:
+                highlight_height = int(self.height() * (min(self.highlight_percentage, 100) / 100))
+                gradient = QLinearGradient(0, self.height() - highlight_height, 0, self.height())
+                gradient.setColorAt(0, self.highlight_color)
+                gradient.setColorAt(1, QColor(255, 255, 255, 0))
+                painter.fillRect(0, self.height() - highlight_height, self.width(), highlight_height, gradient)
+            if mark == "blanked":
+                painter.save()
+                painter.setClipRect(self.rect().adjusted(2, 2, -2, -2))
+                painter.setPen(QPen(QColor(230, 70, 70, 150), 2))
+                for x in range(-self.height(), self.width(), 8):
+                    painter.drawLine(x, self.height(), x + self.height(), 0)
+                painter.restore()
+            elif mark == "auto":
+                size = 10
+                w = self.width()
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QColor("#f5a623"))
+                painter.drawPolygon(QPolygon([QPoint(w - size - 3, 3), QPoint(w - 3, 3), QPoint(w - 3, size + 3)]))
+        finally:
+            painter.end()
 
     def set_highlight(self, percentage, accumulate=True):
         """Set or accumulate highlight percentage for the button.
@@ -498,6 +530,9 @@ class IsotopeDisplay(QFrame):
         
         for mass, label, abundance, is_preferred in sorted_isotopes:
             display_text = f"{label} ({abundance:.1f}%)" if abundance > 0 else label
+            note = getattr(self, "mass_notes", {}).get(mass)
+            if note:
+                display_text = f"{display_text} — {note}"
             isotope_label = SelectableIsotopeLabel(display_text, mass, is_preferred, self)
             
             self.mass_labels[mass] = isotope_label
@@ -565,29 +600,32 @@ class IsotopeDisplay(QFrame):
         Args:
             pos: QPoint position to display at
         """
-        screen_rect = QApplication.primaryScreen().geometry()
-        parent_rect = self.parent().rect()
-        
-        button_global_pos = self.parent_button.mapToGlobal(self.parent_button.rect().topLeft())
-        button_rect = QRect(button_global_pos, self.parent_button.size())
-        
-        ideal_width = 120
+        parent = self.parent()
+        parent_rect = parent.rect()
+        margin = 4
+
+        self.adjustSize()
+        ideal_width = max(120, self.sizeHint().width())
         ideal_height = self.sizeHint().height()
-        
-        relative_x = self.parent_button.x() / parent_rect.width()
+
+        button_tl = parent.mapFromGlobal(self.parent_button.mapToGlobal(QPoint(0, 0)))
+        button_rect = QRect(button_tl, self.parent_button.size())
+
+        relative_x = button_rect.x() / max(1, parent_rect.width())
         is_right_side = relative_x > 0.5
-        
+
         if is_right_side:
             x = button_rect.left() - ideal_width
         else:
             x = button_rect.right()
-            
-        if button_rect.bottom() + ideal_height > screen_rect.bottom():
-            y = button_rect.top() - ideal_height
-        else:
-            y = button_rect.top()
-            
-        pos = self.parent().mapFromGlobal(QPoint(x, y))
+        x = max(margin, min(x, parent_rect.right() - margin - ideal_width))
+
+        y = button_rect.top()
+        if y + ideal_height > parent_rect.bottom() - margin:
+            y = parent_rect.bottom() - margin - ideal_height
+        y = max(margin, y)
+
+        pos = QPoint(x, y)
         
         self.move(pos)
         self.show()
@@ -716,6 +754,11 @@ class PeriodicTableWidget(QDialog):
         """
         super().__init__(parent)
         self.setWindowTitle("Periodic Table")
+        self.setObjectName("periodicTableWindow")
+        self._glass_inset = 0
+        self._sample_name = None
+        self._sample_masses = None
+        self._project_available = {}
         self.buttons = {}
         self.current_element = None
         self.selected_preset = None
@@ -729,13 +772,52 @@ class PeriodicTableWidget(QDialog):
             
         self.initUI()
         self.add_control_panel()
+        self._build_legend()
         self.apply_theme()
         self._theme_cleanup = theme.connect_theme(self.apply_theme)
         self.destroyed.connect(lambda *_: self._theme_cleanup())
+        if window_glass.attach(self, self._on_glass_active):
+            if getattr(self, "_glass_qt_unified", False):
+                self._grid.setContentsMargins(5, 5 + window_glass.TITLEBAR_INSET, 5, 5)
+            self.apply_theme()
         
         max_width = min(1200, int(screen.width() * 0.95))
         max_height = min(800, int(screen.height() * 0.9))
         self.setMaximumSize(max_width, max_height)
+
+    def showEvent(self, event):
+        """Keep the window invisible until the frosted backdrop is attached on first show.
+
+        Args:
+            event: Show event object
+        """
+        if getattr(self, "_glass_prepared", False) and not getattr(self, "_glass_active", False):
+            self.setWindowOpacity(0.0)
+            QTimer.singleShot(300, self, lambda: self.setWindowOpacity(1.0))
+        super().showEvent(event)
+
+    def resizeEvent(self, event):
+        """Keep the tint panel behind the grid the same size as the window.
+
+        Args:
+            event: Resize event object
+        """
+        super().resizeEvent(event)
+        body = getattr(self, "_body", None)
+        if body is not None:
+            body.setGeometry(self.rect())
+            body.lower()
+
+    def _on_glass_active(self, inset):
+        """Frosted backdrop is on: keep the grid below the window buttons and repaint.
+
+        Args:
+            inset (int): Height of the merged title-bar strip.
+        """
+        self._glass_inset = inset
+        self._grid.setContentsMargins(5, 5 + inset, 5, 5)
+        self.apply_theme()
+        self.setWindowOpacity(1.0)
 
     def apply_theme(self, *_):
         """Re-apply the theme-driven chrome of the periodic table.
@@ -751,12 +833,24 @@ class PeriodicTableWidget(QDialog):
         state the previous theme left them).
         """
         p = theme.palette
-        self.setStyleSheet(f"background-color: {p.bg_primary};")
+        if getattr(self, "_glass_active", False) or getattr(self, "_glass_prepared", False):
+            self.setStyleSheet(
+                f"QWidget#periodicTableWindow {{ background-color: transparent; }}"
+                f"QWidget#periodicTableBody {{ background-color: {glass_rgba(p, p.bg_primary)}; }}"
+                f"QWidget {{ background-color: transparent; }}"
+            )
+        else:
+            self.setStyleSheet(f"background-color: {p.bg_primary};")
 
         if hasattr(self, "_preset_label"):
             self._preset_label.setStyleSheet(
                 f"color: {p.text_primary}; font-size: 12px;"
             )
+        if hasattr(self, "_sample_label"):
+            self._sample_label.setStyleSheet(
+                f"color: {p.text_muted}; font-size: 12px;"
+            )
+        self._refresh_legend()
 
         if hasattr(self, "preset_combo"):
             self.preset_combo.setStyleSheet(f"""
@@ -1555,8 +1649,10 @@ class PeriodicTableWidget(QDialog):
         control_layout.addWidget(load_button)
         control_layout.addWidget(confirm_button)
         control_layout.addStretch()
+        self._sample_label = QLabel("")
+        control_layout.addWidget(self._sample_label)
         
-        self.layout().addLayout(control_layout, 10, 0, 1, 18)
+        self.layout().addLayout(control_layout, 10, 0, 1, -1)
         
     def confirm_selections(self):
         """Gather all selected elements and isotopes and emit signal.
@@ -1735,7 +1831,7 @@ class PeriodicTableWidget(QDialog):
                 continue
 
             button = self.buttons[symbol]
-            if not button.isotope_display or not button.isEnabled():
+            if not button.isotope_display or not self._project_available.get(symbol, button.isEnabled()):
                 missing_elements.append(symbol)
                 continue
 
@@ -1763,10 +1859,18 @@ class PeriodicTableWidget(QDialog):
         Args:
             None
         """
+        self._body = QWidget(self)
+        self._body.setObjectName("periodicTableBody")
+        self._body.setAttribute(Qt.WA_StyledBackground, True)
+        self._body.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._body.setGeometry(self.rect())
+        self._body.lower()
+
         layout = QGridLayout()
         layout.setSpacing(2)
         layout.setContentsMargins(5, 5, 5, 5)
         self.setLayout(layout)
+        self._grid = layout
 
         self.buttons = {}
         self.current_element = None
@@ -1882,7 +1986,7 @@ class PeriodicTableWidget(QDialog):
             for symbol in elements_to_deselect:
                 if symbol in self.buttons:
                     button = self.buttons[symbol]
-                    if not button.isEnabled():
+                    if not self._project_available.get(symbol, button.isEnabled()):
                         continue
                         
                     if button.isotope_display:
@@ -1915,7 +2019,7 @@ class PeriodicTableWidget(QDialog):
             for symbol in elements:
                 if symbol in self.buttons:
                     button = self.buttons[symbol]
-                    if not button.isEnabled():
+                    if not self._project_available.get(symbol, button.isEnabled()):
                         continue
                         
                     if button.isotope_display:
@@ -2100,15 +2204,182 @@ class PeriodicTableWidget(QDialog):
                 f"Please reselect elements from the updated periodic table."
             )
 
+    def set_sample_context(self, sample_name, sample_masses, blanking=None):
+        """Restrict the table to the masses of the sample that is open.
+
+        Elements found in the project but not in this sample are greyed out
+        and cannot be clicked; their selections are kept for the samples
+        that have them. Passing ``None`` masses shows the whole project.
+
+        Args:
+            sample_name (str | None): Name of the open sample.
+            sample_masses (array-like | None): Masses measured in that sample.
+            blanking (dict | None): Output of
+                :func:`loading.nu_blanking.read_nu_blanking` for that sample.
+        """
+        self._sample_name = sample_name
+        self._sample_masses = None
+        self._sample_blanking = blanking
+        self._sample_flags = {}
+        if sample_masses is not None and len(sample_masses):
+            self._sample_masses = [float(m) for m in sample_masses]
+            self._sample_flags = nu_blanking.mass_flags(self._sample_masses, blanking)
+        self._update_sample_label()
+        self._refresh_legend()
+        if getattr(self, "all_masses", None) is not None and len(self.all_masses):
+            self.update_available_masses(self.all_masses)
+
+    def _blanking_marks(self, symbol):
+        """Blanking mark, isotope notes and tooltip text for one element.
+
+        Args:
+            symbol (str): Element symbol.
+
+        Returns:
+            tuple: (mark, notes, text) where mark is ``'blanked'`` when every
+            isotope measured in the sample lies in a window blanked by the
+            method, ``'auto'`` when one was autoblanked for part of the run,
+            otherwise None; notes maps isotope masses to a short label for the
+            isotope list.
+        """
+        flags = getattr(self, "_sample_flags", {}) or {}
+        if not flags:
+            return None, {}, ""
+        element = self._elements_by_symbol[symbol]
+        notes, states = {}, []
+        for iso in element['isotopes']:
+            mass = iso['mass'] if isinstance(iso, dict) else iso
+            f = nu_blanking.isotope_flag(mass, flags)
+            if f is None:
+                continue
+            states.append(f)
+            if f['blanked']:
+                notes[mass] = "blanked"
+            elif f['autoblank_fraction'] > 0:
+                notes[mass] = f"autoblanked {100 * f['autoblank_fraction']:.1f} %"
+        if not states:
+            return None, notes, ""
+        blanking = getattr(self, "_sample_blanking", None) or {}
+        if all(f['blanked'] for f in states):
+            win = nu_blanking.windows_text(blanking.get('fixed', []))
+            return "blanked", notes, f"Blanked by the method in {self._sample_name}" + (f" ({win})" if win else "")
+        frac = max(f['autoblank_fraction'] for f in states)
+        if frac > 0:
+            return "auto", notes, (f"Autoblanked for {100 * frac:.1f} % of the run in {self._sample_name}; "
+                                   f"those points are excluded")
+        if notes:
+            return None, notes, "Some isotopes blanked by the method: " + ", ".join(
+                f"{round(m)}{symbol}" for m, n in notes.items() if n == "blanked")
+        return None, notes, ""
+
+    _LEGEND_ITEMS = (
+        ("blanked", "Blanked by the method (still selectable)"),
+        ("auto", "Autoblanked for part of the run"),
+        ("off", "Not measured in this sample"),
+        ("elsewhere", "Selected for other samples"),
+    )
+
+    def _build_legend(self):
+        """Legend of the element marks, in the empty space above the transition metals."""
+        self._legend = QWidget(self)
+        self._legend.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        lay = QVBoxLayout(self._legend)
+        lay.setContentsMargins(8, 4, 0, 0)
+        lay.setSpacing(3)
+        self._legend_rows = []
+        for kind, text in self._LEGEND_ITEMS:
+            row = QHBoxLayout()
+            row.setSpacing(6)
+            icon = QLabel()
+            label = QLabel(text)
+            row.addWidget(icon)
+            row.addWidget(label)
+            row.addStretch()
+            lay.addLayout(row)
+            self._legend_rows.append((kind, icon, label))
+        lay.addStretch()
+        self.layout().addWidget(self._legend, 0, 12, 2, 11)
+        self._legend.setVisible(False)
+        self._refresh_legend()
+
+    def _legend_swatch(self, kind):
+        """Small picture of one element mark, drawn like the buttons.
+
+        Args:
+            kind (str): ``'blanked'``, ``'auto'``, ``'off'`` or ``'elsewhere'``.
+
+        Returns:
+            QPixmap: The swatch.
+        """
+        p = theme.palette
+        dpr = self.devicePixelRatioF() or 1.0
+        size = 18
+        pm = QPixmap(int(size * dpr), int(size * dpr))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(Qt.transparent)
+        painter = QPainter(pm)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = QRect(1, 1, size - 2, size - 2)
+        if kind in ("off", "elsewhere"):
+            painter.setPen(QPen(QColor(p.border), 1))
+            painter.setBrush(QColor(p.bg_tertiary))
+        else:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor("#5b6bd6"))
+        painter.drawRoundedRect(rect, 4, 4)
+        if kind == "blanked":
+            painter.setClipRect(rect)
+            painter.setPen(QPen(QColor(230, 70, 70, 190), 1.5))
+            for x in range(-size, size, 5):
+                painter.drawLine(x, size, x + size, 0)
+            painter.setClipping(False)
+        elif kind == "auto":
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor("#f5a623"))
+            painter.drawPolygon(QPolygon([QPoint(size - 9, 1), QPoint(size - 1, 1), QPoint(size - 1, 9)]))
+        elif kind == "elsewhere":
+            painter.setPen(QPen(QColor(p.accent), 2))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(rect, 4, 4)
+        painter.end()
+        return pm
+
+    def _refresh_legend(self):
+        """Redraw the legend for the current theme and show it while a sample is open."""
+        legend = getattr(self, "_legend", None)
+        if legend is None:
+            return
+        p = theme.palette
+        for kind, icon, label in self._legend_rows:
+            icon.setPixmap(self._legend_swatch(kind))
+            label.setStyleSheet(f"color: {p.text_muted}; font-size: 11px; background: transparent;")
+        legend.setVisible(bool(getattr(self, "_sample_masses", None)))
+
+    def _update_sample_label(self):
+        """Show which sample the table is following and its mass range."""
+        lbl = getattr(self, "_sample_label", None)
+        if lbl is None:
+            return
+        if self._sample_masses:
+            lbl.setText(f"{self._sample_name} · m/z {min(self._sample_masses):.1f}–"
+                        f"{max(self._sample_masses):.1f}")
+        else:
+            lbl.setText("")
+
     def update_available_masses(self, available_masses):
         """Update which elements are available based on detected masses.
+
+        An element is clickable when the project has one of its isotopes
+        and, if a sample context is set, that sample has one too.
 
         Args:
             available_masses: List or array of available mass values
         """
         self.all_masses = available_masses
+        sample_masses = self._sample_masses
         
-        previously_enabled = {symbol: btn.isEnabled() for symbol, btn in self.buttons.items()}
+        previously_enabled = {symbol: self._project_available.get(symbol, btn.isEnabled())
+                              for symbol, btn in self.buttons.items()}
         
         element_availability = {}
         
@@ -2123,8 +2394,15 @@ class PeriodicTableWidget(QDialog):
             isotope_matches = [mass for mass in available_masses 
                             if any(abs(mass - isotope) < 0.5 for isotope in element_isotopes)]
             
+            in_sample = True
+            if sample_masses is not None:
+                isotope_matches = [mass for mass in sample_masses
+                                   if any(abs(mass - isotope) < 0.5 for isotope in element_isotopes)]
+                in_sample = len(isotope_matches) > 0
             element_availability[symbol] = {
-                'is_available': len(isotope_matches) > 0,
+                'is_available': any(abs(mass - isotope) < 0.5
+                                    for mass in available_masses for isotope in element_isotopes),
+                'in_sample': in_sample,
                 'matches': isotope_matches
             }
         
@@ -2133,9 +2411,14 @@ class PeriodicTableWidget(QDialog):
         for symbol, btn in self.buttons.items():
             availability_data = element_availability[symbol]
             is_available = availability_data['is_available']
+            in_sample = availability_data['in_sample']
             isotope_matches = availability_data['matches']
+            self._project_available[symbol] = is_available
             
+            mark, notes, extra = self._blanking_marks(symbol) if (is_available and in_sample) else (None, {}, "")
+            btn.blank_mark = mark
             if btn.isotope_display:
+                btn.isotope_display.mass_notes = notes
                 btn.isotope_display.set_available_masses(available_masses)
                 element = self._elements_by_symbol[symbol]
                 btn.isotope_display.set_isotopes(element)
@@ -2146,9 +2429,10 @@ class PeriodicTableWidget(QDialog):
                     btn.isotope_display.clear_selection()
                     btn.clear_highlights()
             
-            btn.setEnabled(is_available)
+            usable = is_available and in_sample
+            btn.setEnabled(usable)
             
-            if not is_available:
+            if not usable:
                 btn.setStyleSheet(self._disabled_element_style())
                 self._refresh_element_button_labels(btn, enabled=False)
             else:
@@ -2157,10 +2441,18 @@ class PeriodicTableWidget(QDialog):
                 self._refresh_element_button_labels(btn, enabled=True)
             
             element = self._elements_by_symbol[symbol]
-            tooltip = (f"{element['name']}\n"
-                    f"Available isotopes: {', '.join(f'{m:.1f}' for m in isotope_matches)}"
-                    if is_available else f"{element['name']} (No matching isotopes)")
+            if not is_available:
+                tooltip = f"{element['name']} (No matching isotopes)"
+            elif not in_sample:
+                tooltip = (f"{element['name']}\nNot measured in {self._sample_name} "
+                           f"(m/z {min(sample_masses):.1f}–{max(sample_masses):.1f})")
+            else:
+                tooltip = (f"{element['name']}\n"
+                           f"Available isotopes: {', '.join(f'{m:.1f}' for m in isotope_matches)}")
+                if extra:
+                    tooltip += "\n" + extra
             btn.setToolTip(tooltip)
+            btn.update()
                         
     def get_element_by_symbol(self, symbol):
         """

@@ -17,6 +17,7 @@ import traceback
 import loading.vitesse_loading
 import loading.tofwerk_loading
 from loading import sia_stats
+from loading import nu_blanking
 from processing.peak_detection import erfinv
 import csv
 
@@ -91,6 +92,26 @@ def _weighted_stats(values: np.ndarray, weights: np.ndarray) -> tuple:
     cv    = std / mean if mean > 0 else 0.0
     sigma = np.sqrt(np.log(1.0 + cv ** 2)) if cv > 0 else DEFAULT_SIGMA
     return mean, std, sigma
+
+
+def _blanked_mask(masses, blanking, n: int) -> np.ndarray:
+    """Masses that lie inside a window blanked by the method.
+
+    Args:
+        masses (np.ndarray): Mass of each column.
+        blanking (dict | None): Output of :func:`loading.nu_blanking.read_nu_blanking`.
+        n (int): Number of signal columns.
+
+    Returns:
+        np.ndarray: Boolean mask of length ``n``.
+    """
+    mask = np.zeros(n, dtype=bool)
+    if not blanking:
+        return mask
+    m = np.atleast_1d(np.asarray(masses, dtype=float)).flatten()[:n]
+    flags = nu_blanking.mass_flags(m, blanking)
+    mask[:len(m)] = [flags[float(x)]['blanked'] for x in m]
+    return mask
 
 
 def _build_histogram(data: np.ndarray, n_bins: int) -> tuple:
@@ -190,19 +211,23 @@ class SIAWorker(QObject):
         if self._should_stop: return
 
         self._emit(50, "Calculating single-ion distribution...")
+        signals_2d = np.atleast_2d(signals) if signals.ndim == 1 else signals
+        blanking   = nu_blanking.read_nu_blanking(path)
+        blanked    = _blanked_mask(masses, blanking, signals_2d.shape[1])
         single_ion_dist = loading.vitesse_loading.single_ion_distribution(
-            counts=signals, bins="auto"
+            counts=signals_2d[:, ~blanked], bins="auto"
         )
         if self._should_stop: return
 
         self._emit(70, "Processing distribution statistics...")
         run_info['InstrumentType'] = 'Nu Vitesse'
 
-        signals_2d = np.atleast_2d(signals) if signals.ndim == 1 else signals
         poi2       = _compute_poi2(signals_2d)
 
         result = self._build_result(single_ion_dist, str(path), run_info,
-                                    masses, signals_2d, poi2)
+                                    masses, signals_2d, poi2, blanked)
+        result['single_ion_info']['blanked_windows'] = [
+            (lo, hi) for lo, hi in (blanking or {}).get('fixed', []) if 1 < lo and hi < 300]
         if self._should_stop: return
 
         self.progress.emit(100)
@@ -284,6 +309,7 @@ class SIAWorker(QObject):
         masses          : np.ndarray,
         signals         : np.ndarray,
         poi2            : np.ndarray,
+        blanked         : np.ndarray | None = None,
     ) -> dict:
         """
         Build the full result dictionary from pre-computed inputs.
@@ -297,6 +323,9 @@ class SIAWorker(QObject):
             masses          (np.ndarray): Mass array of shape (n_masses,).
             signals         (np.ndarray): Signal matrix of shape (n_acq, n_masses).
             poi2            (np.ndarray): Pre-computed poi2 array of shape (n_masses,).
+            blanked         (np.ndarray | None): True for masses inside a window
+                                          blanked by the method; they are left
+                                          out of the per-mass distributions.
 
         Returns:
             dict: Result dictionary with keys:
@@ -322,7 +351,10 @@ class SIAWorker(QObject):
         masses = masses[:n]
         poi2   = poi2[:n]
 
-        valid_indices = np.where((poi2 > POI2_LOW) & (poi2 < POI2_HIGH))[0]
+        keep = (poi2 > POI2_LOW) & (poi2 < POI2_HIGH)
+        if blanked is not None:
+            keep &= ~np.asarray(blanked, dtype=bool)[:len(keep)]
+        valid_indices = np.where(keep)[0]
         per_mass      = {}
 
         for i in valid_indices:
@@ -354,6 +386,11 @@ class SIAWorker(QObject):
                 _itk_log.exception("Handled exception in _build_result")
                 _itk_log.error(f"Warning: failed to process mass {masses[i]}: {e}")
 
+        summary      = sia_stats.summarize_per_mass(per_mass)
+        global_sigma = (float(summary['mean'])
+                        if summary is not None and np.isfinite(summary['mean'])
+                        else float(calc_sigma))
+
         sample_name = run_info.get("SampleName", Path(data_path).name)
 
         return {
@@ -371,12 +408,14 @@ class SIAWorker(QObject):
                 'distribution_points'    : len(single_ion_dist),
                 'mean_signal'            : mean_sig,
                 'std_signal'             : std_sig,
-                'calculated_sigma'       : calc_sigma,
+                'calculated_sigma'       : global_sigma,
+                'pooled_sigma'           : float(calc_sigma),
                 'analysis_datetime'      : run_info.get("AnalysisDateTime", "Unknown"),
                 'signal_values'          : sig_vals.copy(),
                 'weights'                : weights.copy(),
                 'average_single_ion_area': avg_sia,
                 'num_valid_masses'       : len(per_mass),
+                'num_blanked_masses'     : int(np.count_nonzero(blanked)) if blanked is not None else 0,
             },
         }
 
