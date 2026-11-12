@@ -27,6 +27,8 @@ PySide6, numba, or scipy.
 | `GAUSSIAN_LOW_COUNT` | `5.0` |
 | `GAUSSIAN_LOW_FRACTION` | `0.05` |
 | `AUTOMATIC_LOW_BACKGROUND_ID` | `'CPLN table'` |
+| `DEFAULT_ALPHA` | `1e-06` |
+| `AUTOMATIC_GAUSSIAN_ALPHA` | `1e-07` |
 | `_BY_ID` | `{}` |
 | `_ORDER` | `[]` |
 | `DEFAULT_METHOD_ID` | `'Poisson'` |
@@ -50,6 +52,7 @@ One detection method: metadata plus the numeric hooks the engine calls.
 |----------|-----------|-------------|
 | `gaussian_z` | `(alpha)` | Return the one-sided normal quantile of an error rate. |
 | `is_gaussian_background` | `(signal)` | Tell whether a signal's background is high enough for a Gaussian threshold. |
+| `automatic_alpha` | `(signal)` | Return the alpha Automatic uses for a signal unless the user set one. |
 | `_automatic_choice` | `(signal)` | Return the method id the Automatic choice uses for a signal. |
 | `_poisson_single` | `(engine, lam, alpha, sigma)` | 3-sigma Poisson threshold (unclipped) — the historic ``else`` fallback. |
 | `_poisson_array_clipped` | `(method, engine, lam_arr, alpha, sigma)` | 3-sigma Poisson threshold over an array, clipping lambda at 1. |

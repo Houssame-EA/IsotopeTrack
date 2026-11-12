@@ -61,6 +61,9 @@
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, parent=None)` | Initialize the periodic table widget. |
+| `showEvent` | `(self, event)` | Keep the window invisible until the frosted backdrop is attached on first show. |
+| `resizeEvent` | `(self, event)` | Keep the tint panel behind the grid the same size as the window. |
+| `_on_glass_active` | `(self, inset)` | Frosted backdrop is on: keep the grid below the window buttons and repaint. |
 | `apply_theme` | `(self, *_)` | Re-apply the theme-driven chrome of the periodic table. |
 | `_refresh_all_element_buttons` | `(self)` | Re-apply the correct style to every element button based on |
 | `_refresh_element_button_labels` | `(self, btn, enabled)` | Update the four internal labels (atomic number, symbol, name, |
@@ -82,6 +85,12 @@
 | `get_element_style` | `(self, element, highlighted=False)` | Get the style for an element button. |
 | `update_element_states` | `(self, available_masses, low_count_elements)` | Update element button states based on available masses. |
 | `validate_selections_against_new_range` | `(self)` | Validate and clear selections that are no longer available in the new mass range. |
+| `set_sample_context` | `(self, sample_name, sample_masses, blanking=None)` | Restrict the table to the masses of the sample that is open. |
+| `_blanking_marks` | `(self, symbol)` | Blanking mark, isotope notes and tooltip text for one element. |
+| `_build_legend` | `(self)` | Legend of the element marks, in the empty space above the transition metals. |
+| `_legend_swatch` | `(self, kind)` | Small picture of one element mark, drawn like the buttons. |
+| `_refresh_legend` | `(self)` | Redraw the legend for the current theme and show it while a sample is open. |
+| `_update_sample_label` | `(self)` | Show which sample the table is following and its mass range. |
 | `update_available_masses` | `(self, available_masses)` | Update which elements are available based on detected masses. |
 | `get_element_by_symbol` | `(self, symbol)` | Get element data by symbol using O(1) lookup. |
 | `close_all_isotope_displays_except` | `(self, current_button)` | Close all isotope displays except for the specified button. |

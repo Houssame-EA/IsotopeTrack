@@ -111,4 +111,5 @@ Unified SIA Manager — Nu Vitesse + TOFWERK.
 | `lognormal_pdf_scipy` | `(x: np.ndarray, mu: float, sigma: float) → np.ndarray` | Lognormal probability density function via scipy. |
 | `_compute_poi2` | `(signals: np.ndarray) → np.ndarray` | Compute the poi2 filter array from a 2-D signal matrix. |
 | `_weighted_stats` | `(values: np.ndarray, weights: np.ndarray) → tuple` | Compute weighted mean, weighted standard deviation, and lognormal sigma |
+| `_blanked_mask` | `(masses, blanking, n: int) → np.ndarray` | Masses that lie inside a window blanked by the method. |
 | `_build_histogram` | `(data: np.ndarray, n_bins: int) → tuple` | Build a histogram from 1-D positive data. |

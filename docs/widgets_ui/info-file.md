@@ -84,6 +84,7 @@ Dialog for displaying detailed file information.
 | `_tuning_row` | `(self, card, label, keys, unit='')` | Add one tuning row, joining several registers with ' / '. |
 | `_tuning_status` | `(self, card, label, key)` | Add an on/off row for one register, if present. |
 | `_build_tuning_cards` | `(self)` | Add the instrument tuning cards read from the run's Snapshot.tuning. |
+| `_build_blanking_card` | `(self)` | Windows blanked by the method and periods closed by autoblanking. |
 | `_build_run_info_card` | `(self)` |  |
 
 ### `FileInfoMenu`
