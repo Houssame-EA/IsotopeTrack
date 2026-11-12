@@ -168,3 +168,47 @@ def test_project_round_trip(mw, monkeypatch):
     assert mgr._exclude_outliers
     assert len(mgr.per_mass_distributions) == len(SIGMAS)
     assert mgr.info_sid_button.isEnabled()
+
+
+def test_build_result_global_sigma_is_per_mass_mean():
+    from loading.SIA_manager import SIAWorker
+    rng = np.random.default_rng(3)
+    n_acq = 40000
+    signals = np.zeros((n_acq, 3))
+    for j, sg in enumerate((0.4, 0.5, 0.6)):
+        hit = rng.random(n_acq) < 0.1
+        signals[hit, j] = rng.lognormal(np.log(1000), sg, hit.sum())
+    signals[100:110, 2] = 5e6
+    pos = signals[signals > 0]
+    c, e = np.histogram(pos, bins="auto")
+    dist = np.stack((0.5 * (e[:-1] + e[1:]), c), axis=1)
+    pzeros = np.count_nonzero(signals, axis=0) / n_acq
+    poi2 = 1.0 - np.exp(-pzeros) * (1.0 + pzeros + pzeros ** 2 / 2.0)
+    res = SIAWorker()._build_result(dist, "/data/sia", {"AverageSingleIonArea": 1000.0},
+                                    np.array([56.0, 89.0, 159.0]), signals, poi2)
+    info = res["single_ion_info"]
+    summary = sia_stats.summarize_per_mass(res["per_mass_distributions"])
+    assert len(res["per_mass_distributions"]) == 3
+    assert info["calculated_sigma"] == pytest.approx(summary["mean"])
+    assert info["pooled_sigma"] > info["calculated_sigma"]
+
+
+def test_build_result_leaves_out_masses_blanked_by_the_method():
+    from loading.SIA_manager import SIAWorker
+    rng = np.random.default_rng(4)
+    n_acq = 40000
+    signals = np.zeros((n_acq, 3))
+    for j in range(3):
+        hit = rng.random(n_acq) < 0.1
+        signals[hit, j] = rng.lognormal(np.log(1000), 0.5, hit.sum())
+    pos = signals[signals > 0]
+    c, e = np.histogram(pos, bins="auto")
+    dist = np.stack((0.5 * (e[:-1] + e[1:]), c), axis=1)
+    pzeros = np.count_nonzero(signals, axis=0) / n_acq
+    poi2 = 1.0 - np.exp(-pzeros) * (1.0 + pzeros + pzeros ** 2 / 2.0)
+    blanked = np.array([False, True, False])
+    res = SIAWorker()._build_result(dist, "/data/sia", {"AverageSingleIonArea": 1000.0},
+                                    np.array([30.0, 44.0, 63.0]), signals, poi2, blanked)
+    kept = sorted(d["mass"] for d in res["per_mass_distributions"].values())
+    assert kept == [30.0, 63.0]
+    assert res["single_ion_info"]["num_blanked_masses"] == 1

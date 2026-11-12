@@ -7,12 +7,17 @@ Instrument data readers: Nu Vitesse, TOFWERK, CSV, and background threads.
 ### [`SIA_manager.py`](sia-manager.md)
 
 
-**2** classes &nbsp;·&nbsp; **4** functions &nbsp;·&nbsp; **74** methods
+**2** classes &nbsp;·&nbsp; **5** functions &nbsp;·&nbsp; **74** methods
 
 ### [`data_thread.py`](data-thread.md)
 
 
 **1** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **8** methods
+
+### [`nu_blanking.py`](nu-blanking.md)
+Blanker windows and autoblank periods of a Nu Vitesse acquisition.
+
+**0** classes &nbsp;·&nbsp; **7** functions &nbsp;·&nbsp; **0** methods
 
 ### [`nu_raw_spectrum.py`](nu-raw-spectrum.md)
 Resolved mass spectrum rebuilt from the ``.raw`` snapshots of a Nu run.

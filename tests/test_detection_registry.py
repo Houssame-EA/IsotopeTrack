@@ -167,3 +167,11 @@ def test_method_text_marks_the_automatic_choice():
     assert reg.method_text({"method_used": "Gaussian", "method_requested": "Gaussian"}) == "Gaussian"
     assert reg.method_text({"method_used": "CPLN table"}) == "CPLN table"
     assert reg.method_text({}) == "—"
+
+
+def test_automatic_alpha_is_stricter_only_for_a_gaussian_background():
+    rng = np.random.default_rng(7)
+    high = rng.poisson(200.0, 50000).astype(float)
+    low = rng.poisson(0.5, 50000).astype(float)
+    assert reg.automatic_alpha(high) == pytest.approx(1e-7)
+    assert reg.automatic_alpha(low) == pytest.approx(1e-6)

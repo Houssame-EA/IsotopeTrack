@@ -152,9 +152,15 @@ scrolling page the frame grew a little every time the view was switched.
 | `remove_sample` | `(self, sample_name)` | Remove sample and all associated data. |
 | `remove_all_samples` | `(self)` | Remove all samples and reset application. |
 | `sample_table_key_press` | `(self, event)` | Handle keyboard navigation in sample table. |
+| `_sample_masses_for` | `(self, sample_name)` | Masses measured in one loaded sample, read once per folder. |
+| `_sample_blanking_for` | `(self, sample_name)` | Blanker windows and autoblank periods of one Nu sample, read once per folder. |
+| `_refresh_periodic_table_sample` | `(self)` | Point the periodic table at the sample that is open. |
 | `show_periodic_table` | `(self)` | Display periodic table for element selection. |
 | `show_periodic_table_after_load` | `(self)` | Show periodic table after data is loaded. |
 | `_add_isotopes_from_reserve` | `(self, newly_added)` | Add newly selected isotopes without going back to the raw data when possible. |
+| `_progress_ui_alive` | `(self)` | Whether the status-bar progress bar and label still exist. |
+| `_set_progress` | `(self, value=None, visible=None)` | Update the status-bar progress bar unless it was already deleted. |
+| `_set_status` | `(self, text)` | Show a status-bar message unless the label was already deleted. |
 | `handle_isotopes_selected` | `(self, selected_isotopes)` | Handle confirmed isotope selections from periodic table. |
 | `handle_isotopes_selection_from_calibration` | `(self, selected_isotopes)` | Handle isotope selections from ionic calibration window. |
 | `find_closest_isotope` | `(self, target_mass, data=None, tolerance=None)` | Find the channel in a sample's data that carries one isotope. |
@@ -164,6 +170,7 @@ scrolling page the frame grew a little every time the view was switched.
 | `_build_element_conversion_cache` | `(self)` | Build cache for element count to mass conversions. |
 | `_update_periodic_table_selections` | `(self)` | Update periodic table with current isotope selections. |
 | `update_parameters_table` | `(self, force=True)` | Rebuild the detection-parameters table. |
+| `_apply_automatic_alpha` | `(self, sample_name)` | Set alpha for elements on Automatic whose alpha the user has not set. |
 | `_populate_parameters_table` | `(self)` | Populate detection parameters table with element-specific settings. |
 | `color_parameters_table_rows` | `(self)` | Highlight parameter table rows red when >=90% of that element's |
 | `_default_detection_parameters` | `(sigma)` | Return the default detection parameters for one element. |

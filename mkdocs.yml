@@ -105,6 +105,7 @@ nav:
     - Overview: loading/index.md
     - "SIA_manager.py": loading/sia-manager.md
     - "data_thread.py": loading/data-thread.md
+    - "nu_blanking.py": loading/nu-blanking.md
     - "nu_raw_spectrum.py": loading/nu-raw-spectrum.md
     - "nu_tuning.py": loading/nu-tuning.md
     - "sia_stats.py": loading/sia-stats.md

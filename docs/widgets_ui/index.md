@@ -52,7 +52,7 @@ Isobaric Correction dialog — calculator-style equation editor.
 ### [`periodic_table_widget.py`](periodic-table-widget.md)
 
 
-**4** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **59** methods
+**4** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **68** methods
 
 ### [`results_table_view.py`](results-table-view.md)
 Fast model/view table for the Single Element and Multi-Element results.
@@ -97,7 +97,7 @@ Drop-in replacement for the QTableWidget used as the parameters table in
 ### [`info_file.py`](info-file.md)
 File information display dialogs and menus for viewing method and run information.
 
-**10** classes &nbsp;·&nbsp; **2** functions &nbsp;·&nbsp; **23** methods
+**10** classes &nbsp;·&nbsp; **2** functions &nbsp;·&nbsp; **24** methods
 
 ### [`signal_selector_dialog.py`](signal-selector-dialog.md)
 
