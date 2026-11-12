@@ -5,6 +5,20 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
+## v1.13.2 - 2026-11-12
+
+### What’s Changed
+
+- v1.13.2 ([#52](https://github.com/Houssame-EA/IsotopeTrack/pull/52)) [@Houssame-EA](https://github.com/Houssame-EA)
+- v1.13.2 ([#51](https://github.com/Houssame-EA/IsotopeTrack/pull/51)) [@Houssame-EA](https://github.com/Houssame-EA)
+- Improvement v8 ([#50](https://github.com/Houssame-EA/IsotopeTrack/pull/50)) [@Houssame-EA](https://github.com/Houssame-EA)
+
+### Contributors
+
+@Houssame-EA and [@github-actions[bot]](https://github.com/apps/github-actions)
+
+**Full Changelog**: [v1.13.1...v1.13.2](https://github.com/Houssame-EA/IsotopeTrack/compare/v1.13.1...v1.13.2)
+
 ## v1.13.1 - 2026-11-10
 
 ### What’s Changed
