@@ -69,7 +69,7 @@ def _fmt_alpha(v):
         return '0'
     exp = int('{:.0e}'.format(v).split('e')[1])
     mant = v / (10 ** exp)
-    mant_s = '{:.2g}'.format(mant).rstrip('0').rstrip('.')
+    mant_s = '{:.4g}'.format(mant)
     sup = str(exp).replace('-', '⁻').translate(_SUP)
     return '{}×10{}'.format(mant_s, sup)
 
@@ -456,7 +456,7 @@ class ParametersDelegate(QStyledItemDelegate):
         if col == COL_ALPHA:
             w = QDoubleSpinBox(parent)
             w.setRange(0.00000001, 0.1)
-            w.setDecimals(8)
+            w.setDecimals(10)
             w.setSingleStep(0.000001)
             return w
 

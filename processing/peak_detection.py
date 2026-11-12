@@ -1108,6 +1108,9 @@ class PeakDetection:
                 use_iterative = params.get('iterative', True)
                 max_iters = params.get('max_iterations', 4) if use_iterative else 0
                 alpha = params.get('alpha', 0.000001)
+                if method == 'Automatic' and not params.get('alpha_user_set', False):
+                    alpha = detection_registry.automatic_alpha(signal)
+                    params['alpha'] = alpha
                 manual_threshold = params.get('manual_threshold', 10.0)
                 sigma = params.get('sigma', 0.55)
                 use_window_size = params.get('use_window_size', False)

@@ -67,6 +67,26 @@ def is_gaussian_background(signal):
     return n_low / n_nonzero < GAUSSIAN_LOW_FRACTION
 
 
+DEFAULT_ALPHA = 1e-6
+"""Default false-positive rate per point."""
+
+AUTOMATIC_GAUSSIAN_ALPHA = 1e-7
+"""Rate Automatic uses when it picks Gaussian."""
+
+
+def automatic_alpha(signal):
+    """Return the alpha Automatic uses for a signal unless the user set one.
+
+    Args:
+        signal (np.ndarray): Signal in counts.
+
+    Returns:
+        float: :data:`AUTOMATIC_GAUSSIAN_ALPHA` when the background is
+        Gaussian, :data:`DEFAULT_ALPHA` otherwise.
+    """
+    return AUTOMATIC_GAUSSIAN_ALPHA if is_gaussian_background(signal) else DEFAULT_ALPHA
+
+
 def _automatic_choice(signal):
     """Return the method id the Automatic choice uses for a signal."""
     return "Gaussian" if is_gaussian_background(signal) else AUTOMATIC_LOW_BACKGROUND_ID

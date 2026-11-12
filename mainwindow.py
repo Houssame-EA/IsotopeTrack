@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayo
                                QAbstractItemView, QSpinBox)
 
 from tools.mass_fraction_utils import MassFractionService, CompoundDatabase
-from tools.parameters_table import (ParametersTableView, COL_SIGMA)
+from tools.parameters_table import (ParametersTableView, COL_SIGMA, COL_ALPHA)
 from PySide6.QtCore import (Qt, QTimer, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve, QSize, QPoint,
                             QEvent, QEventLoop, QSettings)
 from PySide6.QtGui import QGuiApplication
@@ -4541,11 +4541,38 @@ class MainWindow(QMainWindow):
         finally:
             self.parameters_table.setUpdatesEnabled(True)
 
+    def _apply_automatic_alpha(self, sample_name):
+        """Set alpha for elements on Automatic whose alpha the user has not set.
+
+        Elements whose background is Gaussian get
+        :data:`processing.detection_registry.AUTOMATIC_GAUSSIAN_ALPHA`, the
+        others :data:`processing.detection_registry.DEFAULT_ALPHA`.
+
+        Args:
+            sample_name (str | None): Sample whose parameters are updated.
+        """
+        params = self.sample_parameters.get(sample_name) if sample_name else None
+        data = self.data_by_sample.get(sample_name) if sample_name else None
+        if not params or not data:
+            return
+        for element_key, p in params.items():
+            if p.get('method') != 'Automatic' or p.get('alpha_user_set', False):
+                continue
+            try:
+                isotope = float(element_key.rsplit('-', 1)[1])
+            except (IndexError, ValueError):
+                continue
+            key = self.find_closest_isotope(isotope, data)
+            if key is None or key not in data:
+                continue
+            p['alpha'] = detection_registry.automatic_alpha(data[key])
+
     def _populate_parameters_table(self):
         """
         Populate detection parameters table with element-specific settings.
         Uses model.populate() — no widgets are created, so no HWND/DWM cost.
         """
+        self._apply_automatic_alpha(self.current_sample)
         saved_params = self.sample_parameters.get(self.current_sample, {})
 
         if self.current_sample and self.current_sample in self.data_by_sample:
@@ -4587,6 +4614,7 @@ class MainWindow(QMainWindow):
                 'manual_threshold': sp.get('manual_threshold', 10.0),
                 'min_continuous': float(sp.get('min_continuous', 1)),
                 'alpha': sp.get('alpha', 0.000001),
+                'alpha_user_set': sp.get('alpha_user_set', False),
                 'iterative': sp.get('iterative', True),
                 'use_window_size': sp.get('use_window_size', False),
                 'window_size': int(sp.get('window_size', 5000)),
@@ -4722,6 +4750,7 @@ class MainWindow(QMainWindow):
                 'manual_threshold': d.get('manual_threshold', 10.0),
                 'min_continuous': d.get('min_continuous', 1),
                 'alpha': d.get('alpha', 0.000001),
+                'alpha_user_set': d.get('alpha_user_set', False),
                 'iterative': d.get('iterative', True),
                 'max_iterations': 4,
                 'sigma': d.get('sigma', getattr(self, '_global_sigma', 0.55)),
@@ -4763,6 +4792,8 @@ class MainWindow(QMainWindow):
         """
         if getattr(self, '_suppress_model_callbacks', False):
             return
+        if col == COL_ALPHA:
+            self.parameters_table.set_row_field(row, 'alpha_user_set', True)
         if col == COL_SIGMA:
             value = self.parameters_table.get_row_params(row).get(
                 'sigma', getattr(self, '_global_sigma', 0.55))
@@ -4966,8 +4997,11 @@ class MainWindow(QMainWindow):
                 if sample_name not in self.sample_parameters:
                     self.sample_parameters[sample_name] = {}
 
+                user_alpha = abs(parameters.get('alpha', detection_registry.DEFAULT_ALPHA)
+                                 - detection_registry.DEFAULT_ALPHA) > 1e-12
                 for element_key in selected_elements:
-                    self.sample_parameters[sample_name][element_key] = parameters.copy()
+                    self.sample_parameters[sample_name][element_key] = dict(
+                        parameters, alpha_user_set=user_alpha)
 
             if self.current_sample in selected_samples:
                 self.update_parameters_table()
