@@ -2,6 +2,7 @@ from __future__ import annotations
 import sys
 import gc
 from pathlib import Path
+import shiboken6
 
 from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QLineEdit, QScrollArea,
                                QFileDialog, QProgressBar, QLabel, QHBoxLayout, QComboBox, QSizePolicy,
@@ -3891,6 +3892,43 @@ class MainWindow(QMainWindow):
 
         return raw_needed
 
+    def _progress_ui_alive(self):
+        """Whether the status-bar progress bar and label still exist.
+
+        They are deleted with the window, which can be closed while samples
+        are processed in a nested event loop.
+
+        Returns:
+            bool: True while both widgets are alive.
+        """
+        bar = getattr(self, 'progress_bar', None)
+        label = getattr(self, 'status_label', None)
+        return (bar is not None and label is not None
+                and shiboken6.isValid(bar) and shiboken6.isValid(label))
+
+    def _set_progress(self, value=None, visible=None):
+        """Update the status-bar progress bar unless it was already deleted.
+
+        Args:
+            value (int | None): New value.
+            visible (bool | None): New visibility.
+        """
+        if not self._progress_ui_alive():
+            return
+        if visible is not None:
+            self.progress_bar.setVisible(visible)
+        if value is not None:
+            self.progress_bar.setValue(value)
+
+    def _set_status(self, text):
+        """Show a status-bar message unless the label was already deleted.
+
+        Args:
+            text (str): Message.
+        """
+        if self._progress_ui_alive():
+            self.status_label.setText(text)
+
     def handle_isotopes_selected(self, selected_isotopes):
         """Handle confirmed isotope selections from periodic table."""
         try:
@@ -3906,9 +3944,9 @@ class MainWindow(QMainWindow):
                 self.process_csv_files_with_isotopes(selected_isotopes)
 
             if not is_project_loading:
-                self.progress_bar.setVisible(True)
-                self.progress_bar.setValue(0)
-                self.status_label.setText("Processing element changes...")
+                self._set_progress(visible=True)
+                self._set_progress(value=0)
+                self._set_status("Processing element changes...")
                 QApplication.processEvents()
 
             old_isotopes = set()
@@ -3929,7 +3967,7 @@ class MainWindow(QMainWindow):
             self.selected_isotopes = selected_isotopes.copy()
 
             if removed_isotopes:
-                self.status_label.setText("Removing deselected elements...")
+                self._set_status("Removing deselected elements...")
                 QApplication.processEvents()
 
                 for sample_name in self.data_by_sample:
@@ -3967,8 +4005,8 @@ class MainWindow(QMainWindow):
                 all_accessible, inaccessible_samples = self.verify_all_data_sources(raw_needed.keys())
 
                 if not all_accessible:
-                    self.status_label.setText("Data sources not accessible. Please reconnect external drives.")
-                    self.progress_bar.setVisible(False)
+                    self._set_status("Data sources not accessible. Please reconnect external drives.")
+                    self._set_progress(visible=False)
 
                     while not all_accessible:
                         retry = self.prompt_reconnect_data_source(inaccessible_samples)
@@ -3983,20 +4021,20 @@ class MainWindow(QMainWindow):
 
                             self.selected_isotopes = old_isotopes_dict.copy()
 
-                            self.progress_bar.setVisible(False)
+                            self._set_progress(visible=False)
                             self.update_parameters_table()
 
                             if self.periodic_table_widget:
                                 self._update_periodic_table_selections()
 
-                            self.status_label.setText("Element addition cancelled - data sources not accessible")
+                            self._set_status("Element addition cancelled - data sources not accessible")
                             return
 
                         all_accessible, inaccessible_samples = self.verify_all_data_sources(raw_needed.keys())
 
                         if all_accessible:
-                            self.status_label.setText("All data sources are now accessible. Proceeding...")
-                            self.progress_bar.setVisible(True)
+                            self._set_status("All data sources are now accessible. Proceeding...")
+                            self._set_progress(visible=True)
                             QApplication.processEvents()
                             break
 
@@ -4005,8 +4043,8 @@ class MainWindow(QMainWindow):
                         element_key = f"{element}-{isotope:.4f}"
                         self.mark_element_changed(sample_name, element_key)
 
-                self.progress_bar.setValue(20)
-                self.status_label.setText(f"Processing {len(newly_added)} new elements...")
+                self._set_progress(value=20)
+                self._set_status(f"Processing {len(newly_added)} new elements...")
                 QApplication.processEvents()
 
                 raw_items = [
@@ -4031,7 +4069,7 @@ class MainWindow(QMainWindow):
                             )
 
                             self.selected_isotopes = old_isotopes_dict.copy()
-                            self.progress_bar.setVisible(False)
+                            self._set_progress(visible=False)
                             self.update_parameters_table()
 
                             if self.periodic_table_widget:
@@ -4041,8 +4079,8 @@ class MainWindow(QMainWindow):
 
                         try:
                             progress = 20 + int((i / total_samples) * 80)
-                            self.progress_bar.setValue(progress)
-                            self.status_label.setText(
+                            self._set_progress(value=progress)
+                            self._set_status(
                                 f"Adding new elements to sample {i + 1}/{total_samples}: {sample_name}")
                             QApplication.processEvents()
 
@@ -4053,7 +4091,7 @@ class MainWindow(QMainWindow):
 
                             def _elem_progress(value, _i=i, _tot=total_samples):
                                 overall = 20 + ((_i + value / 100.0) / max(1, _tot)) * 80
-                                self.progress_bar.setValue(int(overall))
+                                self._set_progress(value=int(overall))
                                 QApplication.processEvents()
 
                             thread.progress.connect(_elem_progress)
@@ -4071,23 +4109,25 @@ class MainWindow(QMainWindow):
                             except (RuntimeError, TypeError):
                                 _itk_log.exception("Handled exception in handle_isotopes_selected")
                             thread.deleteLater()
+                            if not self._progress_ui_alive():
+                                return
 
                         except Exception as e:
                             self.logger.error(f"Error processing sample {sample_name}: {str(e)}")
                             continue
 
             if not self.pending_csv_processing:
-                self.progress_bar.setValue(100)
-                self.progress_bar.setVisible(False)
+                self._set_progress(value=100)
+                self._set_progress(visible=False)
 
                 if newly_added:
-                    self.status_label.setText(f"Added {len(newly_added)} new elements")
+                    self._set_status(f"Added {len(newly_added)} new elements")
                 elif removed_isotopes:
-                    self.status_label.setText(f"Removed {len(removed_isotopes)} elements")
+                    self._set_status(f"Removed {len(removed_isotopes)} elements")
                 else:
-                    self.status_label.setText("Element selection updated")
+                    self._set_status("Element selection updated")
             else:
-                self.status_label.setText("Processing CSV files with selected isotopes...")
+                self._set_status("Processing CSV files with selected isotopes...")
 
             QApplication.processEvents()
 
@@ -4116,7 +4156,7 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             self.logger.error(f"Error in handle_isotopes_selected: {str(e)}")
-            self.progress_bar.setVisible(False)
+            self._set_progress(visible=False)
 
         if (newly_added or removed_isotopes) and not is_project_loading:
             self._mark_results_changed()
@@ -4134,9 +4174,9 @@ class MainWindow(QMainWindow):
             )
 
             if not is_project_loading:
-                self.progress_bar.setVisible(True)
-                self.progress_bar.setValue(0)
-                self.status_label.setText("Processing selected elements from calibration...")
+                self._set_progress(visible=True)
+                self._set_progress(value=0)
+                self._set_status("Processing selected elements from calibration...")
                 QApplication.processEvents()
 
             old_isotopes = set()
@@ -4157,7 +4197,7 @@ class MainWindow(QMainWindow):
             self.selected_isotopes = selected_isotopes.copy()
 
             if removed_isotopes:
-                self.status_label.setText("Removing deselected elements...")
+                self._set_status("Removing deselected elements...")
                 QApplication.processEvents()
 
                 for sample_name in self.data_by_sample:
@@ -4195,8 +4235,8 @@ class MainWindow(QMainWindow):
                 all_accessible, inaccessible_samples = self.verify_all_data_sources(raw_needed.keys())
 
                 if not all_accessible:
-                    self.status_label.setText("Data sources not accessible. Please reconnect external drives.")
-                    self.progress_bar.setVisible(False)
+                    self._set_status("Data sources not accessible. Please reconnect external drives.")
+                    self._set_progress(visible=False)
 
                     while not all_accessible:
                         retry = self.prompt_reconnect_data_source(inaccessible_samples)
@@ -4211,21 +4251,21 @@ class MainWindow(QMainWindow):
 
                             self.selected_isotopes = old_isotopes_dict.copy()
 
-                            self.progress_bar.setVisible(False)
+                            self._set_progress(visible=False)
                             self.update_parameters_table()
 
                             if hasattr(self, 'ionic_calibration_window') and self.ionic_calibration_window:
                                 self.ionic_calibration_window.selected_isotopes = old_isotopes_dict.copy()
                                 self.ionic_calibration_window.update_periodic_table()
 
-                            self.status_label.setText("Element addition cancelled - data sources not accessible")
+                            self._set_status("Element addition cancelled - data sources not accessible")
                             return
 
                         all_accessible, inaccessible_samples = self.verify_all_data_sources(raw_needed.keys())
 
                         if all_accessible:
-                            self.status_label.setText("All data sources are now accessible. Proceeding...")
-                            self.progress_bar.setVisible(True)
+                            self._set_status("All data sources are now accessible. Proceeding...")
+                            self._set_progress(visible=True)
                             QApplication.processEvents()
                             break
 
@@ -4234,8 +4274,8 @@ class MainWindow(QMainWindow):
                         element_key = f"{element}-{isotope:.4f}"
                         self.mark_element_changed(sample_name, element_key)
 
-                self.progress_bar.setValue(20)
-                self.status_label.setText(f"Processing {len(newly_added)} new elements...")
+                self._set_progress(value=20)
+                self._set_status(f"Processing {len(newly_added)} new elements...")
                 QApplication.processEvents()
 
                 raw_items = [
@@ -4260,7 +4300,7 @@ class MainWindow(QMainWindow):
                             )
 
                             self.selected_isotopes = old_isotopes_dict.copy()
-                            self.progress_bar.setVisible(False)
+                            self._set_progress(visible=False)
                             self.update_parameters_table()
 
                             if hasattr(self, 'ionic_calibration_window') and self.ionic_calibration_window:
@@ -4271,8 +4311,8 @@ class MainWindow(QMainWindow):
 
                         try:
                             progress = 20 + int((i / total_samples) * 80)
-                            self.progress_bar.setValue(progress)
-                            self.status_label.setText(
+                            self._set_progress(value=progress)
+                            self._set_status(
                                 f"Adding new elements to sample {i + 1}/{total_samples}: {sample_name}")
                             QApplication.processEvents()
 
@@ -4283,7 +4323,7 @@ class MainWindow(QMainWindow):
 
                             def _elem_progress(value, _i=i, _tot=total_samples):
                                 overall = 20 + ((_i + value / 100.0) / max(1, _tot)) * 80
-                                self.progress_bar.setValue(int(overall))
+                                self._set_progress(value=int(overall))
                                 QApplication.processEvents()
 
                             thread.progress.connect(_elem_progress)
@@ -4301,23 +4341,25 @@ class MainWindow(QMainWindow):
                             except (RuntimeError, TypeError):
                                 _itk_log.exception("Handled exception in handle_isotopes_selection_from_calibration")
                             thread.deleteLater()
+                            if not self._progress_ui_alive():
+                                return
 
                         except Exception as e:
                             self.logger.error(f"Error processing sample {sample_name}: {str(e)}")
                             continue
 
             if not self.pending_csv_processing:
-                self.progress_bar.setValue(100)
-                self.progress_bar.setVisible(False)
+                self._set_progress(value=100)
+                self._set_progress(visible=False)
 
                 if newly_added:
-                    self.status_label.setText(f"Added {len(newly_added)} new elements")
+                    self._set_status(f"Added {len(newly_added)} new elements")
                 elif removed_isotopes:
-                    self.status_label.setText(f"Removed {len(removed_isotopes)} elements")
+                    self._set_status(f"Removed {len(removed_isotopes)} elements")
                 else:
-                    self.status_label.setText("Element selection updated")
+                    self._set_status("Element selection updated")
             else:
-                self.status_label.setText("Processing CSV files with selected isotopes...")
+                self._set_status("Processing CSV files with selected isotopes...")
 
             QApplication.processEvents()
 
@@ -4346,7 +4388,7 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             self.logger.error(f"Error in handle_isotopes_selection_from_calibration: {str(e)}")
-            self.progress_bar.setVisible(False)
+            self._set_progress(visible=False)
 
         if (newly_added or removed_isotopes) and not is_project_loading:
             self._mark_results_changed()
