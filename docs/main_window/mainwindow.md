@@ -158,6 +158,9 @@ scrolling page the frame grew a little every time the view was switched.
 | `show_periodic_table` | `(self)` | Display periodic table for element selection. |
 | `show_periodic_table_after_load` | `(self)` | Show periodic table after data is loaded. |
 | `_add_isotopes_from_reserve` | `(self, newly_added)` | Add newly selected isotopes without going back to the raw data when possible. |
+| `_progress_ui_alive` | `(self)` | Whether the status-bar progress bar and label still exist. |
+| `_set_progress` | `(self, value=None, visible=None)` | Update the status-bar progress bar unless it was already deleted. |
+| `_set_status` | `(self, text)` | Show a status-bar message unless the label was already deleted. |
 | `handle_isotopes_selected` | `(self, selected_isotopes)` | Handle confirmed isotope selections from periodic table. |
 | `handle_isotopes_selection_from_calibration` | `(self, selected_isotopes)` | Handle isotope selections from ionic calibration window. |
 | `find_closest_isotope` | `(self, target_mass, data=None, tolerance=None)` | Find the channel in a sample's data that carries one isotope. |
