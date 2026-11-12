@@ -235,8 +235,10 @@ class DataProcessThread(QThread):
         mass_mapping = self.find_closest_masses(masses, self.selected_masses)
         
         if not mass_mapping:
-            raise ValueError("No matching masses found within tolerance. Available masses: " + 
-                        ", ".join(f"{m:.4f}" for m in masses))
+            _itk_log.info(
+                "%s has none of the selected isotopes (measured m/z %.1f–%.1f); nothing loaded for it",
+                self.sample_name, float(np.min(masses)), float(np.max(masses)))
+            return {}, run_info, np.arange(len(signals)) * dwell_time, analysis_datetime
 
         selected_masses_dict = {
             f"{int(target_mass)}": actual_mass 

@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayo
                                QAbstractItemView, QSpinBox)
 
 from tools.mass_fraction_utils import MassFractionService, CompoundDatabase
-from tools.parameters_table import (ParametersTableView, COL_SIGMA)
+from tools.parameters_table import (ParametersTableView, COL_SIGMA, COL_ALPHA)
 from PySide6.QtCore import (Qt, QTimer, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve, QSize, QPoint,
                             QEvent, QEventLoop, QSettings)
 from PySide6.QtGui import QGuiApplication
@@ -40,6 +40,7 @@ from widget.numeric_table import NumericTableWidgetItem
 from widget.results_table_view import ResultsTableView
 from widget.calibration_info import CalibrationInfoDialog
 from loading.data_thread import DataProcessThread
+from loading import nu_blanking
 from tools.Info_table import InfoTooltip
 from processing.peak_detection import PeakDetection
 from tools.info_file import FileInfoMenu
@@ -3385,6 +3386,7 @@ class MainWindow(QMainWindow):
         sample_name = self.sample_table.item(row, 0).text()
 
         self.current_sample = sample_name
+        self._refresh_periodic_table_sample()
 
         self.load_or_initialize_parameters(sample_name)
 
@@ -3503,9 +3505,10 @@ class MainWindow(QMainWindow):
                 self.sample_run_info.get(sample_name),
                 self.sample_method_info.get(sample_name),
                 self.time_array_by_sample.get(sample_name),
-                self.all_masses,
+                self._sample_masses_for(sample_name) or self.all_masses,
                 self,
                 self._tuning_for(sample_name),
+                self._sample_blanking_for(sample_name),
             ))
 
             menu.addSeparator()
@@ -3728,6 +3731,61 @@ class MainWindow(QMainWindow):
     # ------------------------------------element isotope selection--------------------------------------------
     # ----------------------------------------------------------------------------------------------------------
 
+    def _sample_masses_for(self, sample_name):
+        """Masses measured in one loaded sample, read once per folder.
+
+        Args:
+            sample_name (str | None): Sample name.
+
+        Returns:
+            list | None: Masses, or None for CSV samples and when unknown.
+        """
+        folder = self.sample_to_folder_map.get(sample_name) if sample_name else None
+        if not folder or str(folder).lower().endswith('.csv'):
+            return None
+        cache = self.__dict__.setdefault('_sample_masses_cache', {})
+        key = str(folder)
+        if key not in cache:
+            try:
+                masses = DataProcessThread.get_masses_only(key)
+            except Exception:
+                self.logger.exception("Could not read the masses of %s", sample_name)
+                masses = None
+            cache[key] = None if masses is None else [float(m) for m in masses]
+        return cache[key]
+
+    def _sample_blanking_for(self, sample_name):
+        """Blanker windows and autoblank periods of one Nu sample, read once per folder.
+
+        Args:
+            sample_name (str | None): Sample name.
+
+        Returns:
+            dict | None: See :func:`loading.nu_blanking.read_nu_blanking`.
+        """
+        folder = self.sample_to_folder_map.get(sample_name) if sample_name else None
+        if not folder or not (Path(folder) / 'run.info').exists():
+            return None
+        cache = self.__dict__.setdefault('_sample_blanking_cache', {})
+        key = str(folder)
+        if key not in cache:
+            try:
+                cache[key] = nu_blanking.read_nu_blanking(key)
+            except Exception:
+                self.logger.exception("Could not read the blanking of %s", sample_name)
+                cache[key] = None
+        return cache[key]
+
+    def _refresh_periodic_table_sample(self):
+        """Point the periodic table at the sample that is open."""
+        ptw = self.periodic_table_widget
+        if ptw is None or not hasattr(ptw, 'set_sample_context'):
+            return
+        name = self.current_sample
+        if not name and self.sample_to_folder_map:
+            name = next(iter(self.sample_to_folder_map))
+        ptw.set_sample_context(name, self._sample_masses_for(name), self._sample_blanking_for(name))
+
     @log_user_action('DIALOG_OPEN', 'Opened periodic table')
     def show_periodic_table(self):
         """Display periodic table for element selection."""
@@ -3749,6 +3807,7 @@ class MainWindow(QMainWindow):
             if self.selected_isotopes:
                 self._update_periodic_table_selections()
 
+        self._refresh_periodic_table_sample()
         self.periodic_table_widget.show()
         self.periodic_table_widget.raise_()
 
@@ -3759,6 +3818,7 @@ class MainWindow(QMainWindow):
             self.periodic_table_widget.selection_confirmed.connect(self.handle_isotopes_selected)
         if hasattr(self, 'all_masses') and self.all_masses:
             self.periodic_table_widget.update_available_masses(self.all_masses)
+        self._refresh_periodic_table_sample()
 
         self.periodic_table_widget.show()
         self.periodic_table_widget.raise_()
@@ -4481,11 +4541,38 @@ class MainWindow(QMainWindow):
         finally:
             self.parameters_table.setUpdatesEnabled(True)
 
+    def _apply_automatic_alpha(self, sample_name):
+        """Set alpha for elements on Automatic whose alpha the user has not set.
+
+        Elements whose background is Gaussian get
+        :data:`processing.detection_registry.AUTOMATIC_GAUSSIAN_ALPHA`, the
+        others :data:`processing.detection_registry.DEFAULT_ALPHA`.
+
+        Args:
+            sample_name (str | None): Sample whose parameters are updated.
+        """
+        params = self.sample_parameters.get(sample_name) if sample_name else None
+        data = self.data_by_sample.get(sample_name) if sample_name else None
+        if not params or not data:
+            return
+        for element_key, p in params.items():
+            if p.get('method') != 'Automatic' or p.get('alpha_user_set', False):
+                continue
+            try:
+                isotope = float(element_key.rsplit('-', 1)[1])
+            except (IndexError, ValueError):
+                continue
+            key = self.find_closest_isotope(isotope, data)
+            if key is None or key not in data:
+                continue
+            p['alpha'] = detection_registry.automatic_alpha(data[key])
+
     def _populate_parameters_table(self):
         """
         Populate detection parameters table with element-specific settings.
         Uses model.populate() — no widgets are created, so no HWND/DWM cost.
         """
+        self._apply_automatic_alpha(self.current_sample)
         saved_params = self.sample_parameters.get(self.current_sample, {})
 
         if self.current_sample and self.current_sample in self.data_by_sample:
@@ -4527,6 +4614,7 @@ class MainWindow(QMainWindow):
                 'manual_threshold': sp.get('manual_threshold', 10.0),
                 'min_continuous': float(sp.get('min_continuous', 1)),
                 'alpha': sp.get('alpha', 0.000001),
+                'alpha_user_set': sp.get('alpha_user_set', False),
                 'iterative': sp.get('iterative', True),
                 'use_window_size': sp.get('use_window_size', False),
                 'window_size': int(sp.get('window_size', 5000)),
@@ -4662,6 +4750,7 @@ class MainWindow(QMainWindow):
                 'manual_threshold': d.get('manual_threshold', 10.0),
                 'min_continuous': d.get('min_continuous', 1),
                 'alpha': d.get('alpha', 0.000001),
+                'alpha_user_set': d.get('alpha_user_set', False),
                 'iterative': d.get('iterative', True),
                 'max_iterations': 4,
                 'sigma': d.get('sigma', getattr(self, '_global_sigma', 0.55)),
@@ -4703,6 +4792,8 @@ class MainWindow(QMainWindow):
         """
         if getattr(self, '_suppress_model_callbacks', False):
             return
+        if col == COL_ALPHA:
+            self.parameters_table.set_row_field(row, 'alpha_user_set', True)
         if col == COL_SIGMA:
             value = self.parameters_table.get_row_params(row).get(
                 'sigma', getattr(self, '_global_sigma', 0.55))
@@ -4906,8 +4997,11 @@ class MainWindow(QMainWindow):
                 if sample_name not in self.sample_parameters:
                     self.sample_parameters[sample_name] = {}
 
+                user_alpha = abs(parameters.get('alpha', detection_registry.DEFAULT_ALPHA)
+                                 - detection_registry.DEFAULT_ALPHA) > 1e-12
                 for element_key in selected_elements:
-                    self.sample_parameters[sample_name][element_key] = parameters.copy()
+                    self.sample_parameters[sample_name][element_key] = dict(
+                        parameters, alpha_user_set=user_alpha)
 
             if self.current_sample in selected_samples:
                 self.update_parameters_table()
