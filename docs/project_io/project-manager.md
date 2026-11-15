@@ -58,3 +58,4 @@ Manages project state serialization/deserialization including canvas workflows.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `_alive` | `(obj)` | Return True when ``obj``'s underlying C++ object still exists. |
+| `samples_waiting_for_spectrum` | `(mw) → set` | Samples of a just-opened project whose resolved spectrum was not saved with it. |

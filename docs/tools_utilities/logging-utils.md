@@ -43,11 +43,11 @@ Appends structured JSON-lines to a .jsonl log file.
 
 ### `_BufferHandler` *(extends `logging.Handler`)*
 
-Fills a shared list with entry dicts until the GUI window takes over.
+Fills a shared buffer with entry dicts until the GUI window takes over.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, buffer: list)` |  |
+| `__init__` | `(self, buffer)` |  |
 | `emit` | `(self, record: logging.LogRecord) → None` |  |
 
 ### `_LogStatsBar` *(extends `QFrame`)*
@@ -142,7 +142,9 @@ Pre-window buffer
 -----------------
 All log records emitted before ``create_log_window`` is called are
 stored in ``_pre_window_buffer``.  When the window is first opened the
-buffer is replayed so no startup messages are ever lost.
+buffer is replayed so no startup messages are ever lost. It keeps the
+same number of entries the window shows, so a session that never opens
+the window does not hold every log record in memory.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

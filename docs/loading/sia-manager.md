@@ -45,7 +45,7 @@ Unified SIA Manager — Nu Vitesse + TOFWERK.
 | `_point_color` | `(alpha=255)` | Scatter point colour that stays readable on the current plot background. |
 | `_info_card_qss` | `() → str` | QSS for the information card at the top of the SIA dialog. |
 | `_restyle_plot_widget` | `(pw)` | Re-apply plot background and axis colors from the active palette. |
-| `_register_dialog` | `(self, dialog)` | Track a dialog so it gets restyled on theme change. |
+| `_register_dialog` | `(self, dialog)` | Track a dialog so it gets restyled on theme change, and free it once closed. |
 | `create_sia_buttons` | `(self, parent_layout)` | Create and add the three SIA control buttons to a layout. |
 | `get_effective_sigma` | `(self) → float` | Return the sigma the application should use from the loaded SIA. |
 | `_sigma_mode_is_per_isotope` | `(self) → bool` | Whether the main window is in per-isotope sigma mode. |
@@ -76,6 +76,7 @@ Unified SIA Manager — Nu Vitesse + TOFWERK.
 | `_apply_sia_to_all_samples` | `(self)` | Trigger a parameters-table refresh so all samples reflect the new SIA. |
 | `_show_success_message` | `(self, history=None)` | Display a QMessageBox summarising the loaded SIA. |
 | `show_single_ion_info` | `(self)` | Open the SIA information dialog with plot and optional per-mass |
+| `_forget_info_plots` | `(self, *_)` | Drop the information window's plots once that window is destroyed. |
 | `_create_info_html` | `(self, info: dict) → str` | Build the HTML shown in the information card of the dialog. |
 | `_annot` | `(text: str) → str` | Wrap a plain-text string in the standard annotation HTML style |
 | `_make_plot_widget` | `(left_label: str, bottom_label: str) → pg.PlotWidget` | Create a styled PlotWidget with shared axis and font settings. |

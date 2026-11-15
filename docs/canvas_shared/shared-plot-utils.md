@@ -235,12 +235,13 @@ Call .build() to get the QGroupBox, then .collect() to read current values.
 | `_figure_alive` | `(dlg)` | Return True if the dialog's underlying C++ object still exists. |
 | `capture_figure_thumbnail` | `(node, dlg)` | Grab a small snapshot of the figure's plot for the node hover preview. |
 | `_connect_thumb_refresh` | `(node, dlg)` | Re-capture the thumbnail (debounced) whenever the figure changes. |
+| `_disconnect_thumb_refresh` | `(dlg) → None` | Undo :func:`_connect_thumb_refresh` for a window that is going away. |
 | `maybe_warn_classifier_wip` | `(node, parent=None)` | Tell the user once that this node ignores an attached classifier. |
 | `show_persistent_figure` | `(node, factory, _parent_window=None)` | Open a node's figure, reusing one window and hiding (not killing) it. |
 | `prime_figure_thumbnail` | `(node, factory)` | Build a figure off-screen once so its hover thumbnail exists before the |
 | `_finish_prime` | `(node, dlg)` | Capture the primed thumbnail, then keep the window hidden + ready. |
 | `view_config_method` | `(func)` | Mark a node method as config-derived, so a per-figure view computes it |
-| `_connect_view_thumb_refresh` | `(view, dlg)` |  |
+| `_connect_view_thumb_refresh` | `(view, dlg)` | Re-capture one figure's thumbnail (debounced) whenever its node changes. |
 | `capture_view_thumbnail` | `(view)` | Grab a thumbnail for one figure view (and mirror to the node). |
 | `_open_view` | `(view)` | Show a figure view's window, creating it on first open. |
 | `_add_node_figure` | `(node, dialog_class, parent_window, base_config=None)` | Create a new figure view for the node, append it, and open it. |
@@ -250,7 +251,15 @@ Call .build() to get the QGroupBox, then .collect() to read current values.
 | `serialize_node_figures` | `(node)` | Return a pickle-safe list describing a node's figures for project save. |
 | `rebuild_node_figures` | `(node, dialog_class, parent_window, saved)` | Recreate a node's figures from saved data, without opening windows. |
 | `focus_node_figure` | `(view)` | Bring a figure (picked from the hover fan) to the front. |
-| `close_node_figure` | `(view)` | Close/remove a figure picked from the hover fan. |
+| `_free_plot_menus` | `(dlg) → None` | Delete the context menus pyqtgraph plots create without a parent window. |
+| `_free_item_menus` | `(items) → None` | Delete the parentless menus of pyqtgraph plots (see :func:`_free_plot_menus`). |
+| `_layout_items` | `(layout) → list` | Every item a pyqtgraph layout holds, including those in nested layouts. |
+| `clear_plot_layout` | `(layout_widget) → None` | Empty a pyqtgraph layout before it is redrawn, freeing the plots it held. |
+| `release_window` | `(dlg) → None` | Free a dialog once it is closed, and the plot menus pyqtgraph gave it. |
+| `delete_on_close` | `(dlg) → None` | Free a non-modal window, and its pyqtgraph menus, as soon as it is closed. |
+| `_tear_down` | `(dlg) → None` | Close a figure window for good and let Qt free it once control returns to the event loop. |
+| `release_node_figures` | `(node) → None` | Destroy the figure windows a node keeps hidden for quick reopening. |
+| `close_node_figure` | `(view)` | Remove a figure picked from the hover fan and free its window. |
 | `pick_color_hex` | `(initial_color: str, owner=None, title: str='Select Color') → str \| No` | Open a safely parented color dialog and return a validated hex color. |
 | `parse_element_label` | `(label: str) → tuple[str, str \| None]` | Parse element/isotope text into (symbol_like, mass_or_none). |
 | `format_element_label` | `(key: str, mode: str, renderer: Renderer=Renderer.HTML, config: dict \|` | Format an element key for display according to label mode and renderer. |

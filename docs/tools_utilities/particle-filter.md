@@ -65,6 +65,7 @@ open and is debounced (~250 ms) after the last user change.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, parent, upstreams, sample_filters=None, selected_sources=None, ` |  |
+| `_restyle` | `(self)` | Re-apply the dialog's stylesheet after a theme switch. |
 | `_load_elem_data` | `()` | Load the periodic-table element metadata used by the chips. |
 | `_style` | `()` | Build the dialog stylesheet for the current app theme. |
 | `_build` | `(self)` | Assemble the two-pane layout: sample list on the left, the |

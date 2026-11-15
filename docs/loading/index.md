@@ -7,7 +7,7 @@ Instrument data readers: Nu Vitesse, TOFWERK, CSV, and background threads.
 ### [`SIA_manager.py`](sia-manager.md)
 
 
-**2** classes &nbsp;·&nbsp; **5** functions &nbsp;·&nbsp; **74** methods
+**2** classes &nbsp;·&nbsp; **5** functions &nbsp;·&nbsp; **75** methods
 
 ### [`data_thread.py`](data-thread.md)
 

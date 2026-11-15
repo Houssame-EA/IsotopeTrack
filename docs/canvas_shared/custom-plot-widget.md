@@ -274,13 +274,15 @@ box in the top-right corner of the plot.
 | `resizeEvent` | `(self, event)` | Move the View All button and the overlays with the plot. |
 | `_setup_appearance` | `(self)` | Use the fonts and label style of the signal plot. |
 | `apply_theme` | `(self, *args)` | Repaint the background, axes, labels, trace and overlays from the theme. |
+| `_style_action_button` | `(self)` | Give the button under the message the theme's accent colour. |
+| `_on_action` | `(self)` | Run the callback of the button under the message. |
 | `open_plot_settings` | `(self)` | Open the shared Plot Settings dialog (fonts, grid, traces). |
 | `set_units` | `(self, units)` | Set the intensity units, unless the user renamed the left axis. |
 | `set_spectrum` | `(self, key, masses, intensity)` | Show a spectrum; nothing is redrawn when the same sample is shown again. |
 | `set_isotope` | `(self, target, windows, rows, markers=None)` | Mark the selected isotope and zoom onto its peak. |
 | `zoom_to_isotope` | `(self)` | Zoom onto the selected isotope. |
 | `show_full_spectrum` | `(self)` | Show the whole mass range. |
-| `show_message` | `(self, text)` | Clear the plot and show a message in its centre. |
+| `show_message` | `(self, text, action=None)` | Clear the plot and show a message in its centre. |
 | `_render_info` | `(self)` | Draw the peak check box from the stored rows. |
 | `_update_info_visibility` | `(self, *args)` | Show the peak check box only while the view is zoomed onto the selected isotope. |
 | `_alert_color` | `(p, alert, default)` | Return the colour of a value: danger, warning or the default. |

@@ -146,6 +146,7 @@ while the dialog stays open.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, parent, samples, current_selection=None, current_isotopes=None,` |  |
+| `_restyle_base` | `(self)` | Re-apply the dialog's base stylesheet after a theme switch. |
 | `_build` | `(self)` |  |
 | `_make_section_label` | `(self, text)` |  |
 | `_build_sample_list` | `(self, samples)` |  |
@@ -175,6 +176,7 @@ the field is empty.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, parent, samples, current_selection=None, current_isotopes=None,` |  |
+| `_restyle_base` | `(self)` | Re-apply the dialog's base stylesheet after a theme switch. |
 | `_build` | `(self)` |  |
 | `_make_section_label` | `(self, text)` |  |
 | `_build_sample_list` | `(self, samples)` |  |
@@ -276,6 +278,7 @@ rather than waiting for OK.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, scene, node, parent=None)` |  |
+| `_restyle_base` | `(self)` | Re-apply the dialog's base stylesheet after a theme switch. |
 | `_current_output_links` | `(self)` |  |
 | `_current_input_links` | `(self)` |  |
 | `_temp_connectivity_summary` | `(self)` | Human-readable description of this Temp Node's current, |
@@ -291,6 +294,7 @@ rather than waiting for OK.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, parent_window, previously_selected=None, saved_snapshot=None)` |  |
+| `_restyle_base` | `(self)` | Re-apply the dialog's base stylesheet after a theme switch. |
 | `_build` | `(self)` |  |
 | `_preview` | `(self)` |  |
 | `get_selection` | `(self)` |  |
@@ -513,6 +517,8 @@ Thin handle on the right edge of the canvas node list; drag it to resize.
 | `undo` | `(self)` | Reverse the last tracked action (add/delete node or link). |
 | `delete_selected_items` | `(self)` |  |
 | `delete_node` | `(self, ni)` |  |
+| `clear_workflow` | `(self)` | Remove every node, link and note, and let go of what they held. |
+| `_release_node_data` | `(node)` | Let go of the particle data a deleted node was holding. |
 | `remove_and_reconnect_temp` | `(self, ni)` | Right-click "Remove and Reconnect" on a Temp Node: delete it and |
 | `delete_link` | `(self, li)` |  |
 | `_clear_if_orphaned` | `(self, node)` | Drop a node's cached input once it has no incoming link left. |

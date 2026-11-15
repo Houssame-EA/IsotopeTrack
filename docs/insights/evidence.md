@@ -22,17 +22,22 @@ passed (✓), failed (✗) or undecided (–) with a short reason.
 | `EXCESS_LOW` | `0.6` |
 | `DRIFT_RHO` | `0.15` |
 | `COINCIDENCE_SHARE` | `0.1` |
+| `TWO_PEAKS_MIN` | `60` |
+| `TWO_PEAKS_SEPARATION` | `2.0` |
+| `TWO_PEAKS_SHARE` | `0.1` |
 
 ## Classes
 
 ### `Checks`
 
-The checks a figure ran, written as the legend's closing line.
+The checks a figure ran, written as the legend's verdict.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `add` | `(self, ok: bool \| None, text: str) → None` | Record a check: ``True`` passed, ``False`` failed, ``None`` undecided. |
-| `line` | `(self) → str` | The verdict line, or an empty string when nothing was checked. |
+| `line` | `(self) → str` | The verdict on one line, or an empty string when nothing was checked. |
+| `summary` | `(self) → str` | How many checks passed, failed and stayed undecided, in a few words. |
+| `block` | `(self) → str` | The verdict as a headed list, one check per line, failed checks first. |
 
 ## Functions
 
@@ -50,6 +55,7 @@ The checks a figure ran, written as the legend's closing line.
 | `fold_ci` | `(a: np.ndarray, b: np.ndarray, seed: int=0) → tuple[float, float, floa` | Ratio of the medians of *a* to *b* with a bootstrap 95% interval. |
 | `spearman` | `(x: np.ndarray, y: np.ndarray) → tuple[float, float, int]` | Spearman's rho, its p-value and the number of pairs used. |
 | `ratio_spread` | `(table, num: str, den: str, rule: str='', factor: float=1.0, group: np` | How the ratio of two isotopes scatters compared with counting statistics. |
+| `pooled` | `(table, expr: str, rule: str='') → list` | Each sample's value of *expr* with its uncertainty, from its particles pooled. |
 | `ratio_drift` | `(table, num: str, den: str, rule: str='') → tuple[float, float, int]` | Rank correlation of a particle's isotope ratio with its denominator counts. |
 | `replicate_medians` | `(table, expr: str, rule: str='') → dict[str, list[float]]` | Each sample's replicate medians of *expr*: sample → one median per replicate. |
 | `replicate_test` | `(meds: dict[str, list[float]], log: bool=True) → tuple[float \| None, s` | Test between samples on replicate medians, when every sample has two or more. |
@@ -60,5 +66,7 @@ The checks a figure ran, written as the legend's closing line.
 | `detected_share_by_size` | `(table, element: str, rule: str='') → list[tuple[str, float, int]]` | Share of particles carrying *element* in each size class: ``(class, share, n)``. |
 | `coincidence` | `(table, a: str, b: str) → dict \| None` | Co-detections of two elements against those expected from chance coincidence. |
 | `independence` | `(table, a: str, b: str, rule: str='') → dict \| None` | Co-detections of two elements against those expected if they were independent. |
+| `ratio_peaks` | `(ratios) → dict \| None` | Whether particle ratios form one population or two. |
+| `slope_bounds` | `(table, x_expr: str, y_expr: str, rule: str='') → tuple[float, float, ` | The range the log-log slope of *y* against *x* lies in when both are noisy. |
 | `near_limit` | `(v: np.ndarray, limit: float \| None, factor: float=2.0) → float \| None` | Share of values within *factor* of the detection limit. |
 | `_num` | `(x) → float` | A float, or NaN when *x* is not a number. |

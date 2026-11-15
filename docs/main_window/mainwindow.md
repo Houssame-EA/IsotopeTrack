@@ -214,6 +214,8 @@ scrolling page the frame grew a little every time the view was switched.
 | `update_sample_mean_signal` | `(self)` | Store the mean signal of every selected isotope of every sample. |
 | `plot_results` | `(self, mass, signal, particles, lambda_bkgd, threshold, preserve_view_` | Plot detection results with peaks and thresholds. |
 | `_raw_spectrum_for` | `(self, sample_name)` | Return the resolved spectrum of a sample, reading its .raw files once. |
+| `load_raw_spectrum_on_request` | `(self, sample_name)` | Read the spectrum of a sample from an older project from its run folder, when asked. |
+| `_spectrum_request_message` | `(self, sample)` | The message and button the Spectrum view shows for a sample whose spectrum waits for the user. |
 | `_fit_plot_view` | `(self)` | Fit the time plot to its data now, not at the next repaint. |
 | `_refresh_spectrum_view` | `(self)` | Redraw the Spectrum view when it is shown, after the sample or element changed. |
 | `_update_spectrum_plot` | `(self)` | Show the resolved spectrum of the current sample, zoomed onto the selected isotope. |

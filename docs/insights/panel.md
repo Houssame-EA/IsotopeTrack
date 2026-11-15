@@ -26,6 +26,20 @@ and :func:`make_insights_toggle_button`.
 
 ## Classes
 
+### `_WorkerKeeper` *(extends `QObject`)*
+
+Holds every analysis worker until its thread has ended.
+
+A panel can be freed while a search is still running, for example when
+its window closes. The worker must outlive it: freeing a QThread whose
+thread is still running makes Qt abort the application.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self)` |  |
+| `keep` | `(self, worker)` | Hold *worker* until it reports that its thread has finished. |
+| `_release` | `(self)` | Drop the worker that just finished, once its thread has fully exited. |
+
 ### `_IsotopeTile` *(extends `QWidget`)*
 
 A small periodic-table tile: mass number above the element symbol.
@@ -158,6 +172,7 @@ instantiating this directly.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `_keep_worker` | `(worker)` | Hold *worker* on the GUI thread until its thread has ended (see :class:`_WorkerKeeper`). |
 | `_find_source_node` | `(scene) → object \| None` | Find the node a newly added plot node should be wired to. |
 | `_occupied_rects` | `(scene) → list[tuple[float, float, float, float]]` | List the space every node on the canvas already takes up. |
 | `_free_position` | `(scene, preferred)` | Find a spot for a new node that no existing node is sitting on. |

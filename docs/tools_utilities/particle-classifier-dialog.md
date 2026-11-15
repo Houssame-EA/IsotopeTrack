@@ -82,6 +82,7 @@ definition-reuse across samples" model).
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, parent, upstreams, definitions=None, groups=None, overlap_mode=` |  |
+| `_restyle` | `(self)` | Re-apply the dialog's stylesheet after a theme switch. |
 | `_style` | `()` | Build the dialog stylesheet for the current app theme. |
 | `_section_label` | `(text)` | Build a small uppercase section label (mirrors ParticleFilterDialog). |
 | `_build` | `(self)` |  |

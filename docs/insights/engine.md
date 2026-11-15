@@ -265,7 +265,7 @@ Signals:
 | `gather_scope_data` | `(scene, parent_window, scope: AnalysisScope) → tuple[list[dict], np.nd` | Collect the particle list for *scope*. |
 | `build_context_from` | `(scope: AnalysisScope, particles: list[dict], sample_idx: np.ndarray) ` | Build an :class:`AnalysisContext`, reusing a cached one when possible. |
 | `build_context` | `(scene, parent_window, scope: AnalysisScope \| None=None) → AnalysisCon` | Resolve, gather and build a context in one call. |
-| `invalidate_context_cache` | `() → None` | Drop every cached context. |
+| `invalidate_context_cache` | `() → None` | Drop every cached context and batch split. |
 | `_say` | `(progress, message: str) → None` | Report progress if the caller supplied a callback. |
 | `_focus_correlation_card` | `(ctx, pairs, significant, adjusted) → 'Suggestion'` | One card listing the focused element's correlation with every element tested. |
 | `_analyse_correlation` | `(ctx: AnalysisContext, progress=None) → list[Suggestion]` | Find element pairs that vary together. |

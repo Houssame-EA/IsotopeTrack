@@ -17,8 +17,9 @@ replicated.
 
 When the figure's particles are known (:attr:`FigureContext.table`), the
 legend reports what the panels show, measured on those same particles with
-:mod:`results.insights.evidence`, and closes with a line of checks, each
-passed or failed. Legends sit below their plot and reference lines are named
+:mod:`results.insights.evidence`. The legend opens with the conclusion and
+a list of the checks the figure ran, each passed, failed or undecided, before
+it describes the panels. Legends sit below their plot and reference lines are named
 there, so no writing covers the data.
 
 :func:`figure_for` builds the design; the panel adds it to the canvas as a
@@ -31,21 +32,35 @@ Figure Builder node fed by a selector holding the finding's samples.
 | Name | Value |
 |------|-------|
 | `QUANTITY_NAMES` | `{'counts': 'counts', 'mass': 'mass (fg)', 'd': 'size (nm)'}` |
+| `SHARE_NOTE` | `' Each bar is labelled with its share and carries its 95%…` |
+| `DENSE_PARTICLES` | `1500` |
 | `WITH_COLOR` | `'#c2410c'` |
 | `WITHOUT_COLOR` | `'#64748b'` |
 | `LIMIT_NAMES` | `{'counts': 'LOD', 'mass': 'MDL', 'd': 'SDL'}` |
 | `LIMIT_UNITS` | `{'counts': 'net counts', 'mass': 'fg', 'd': 'nm'}` |
 | `KINDS` | `{'mass': 'mass', 'd': 'diameter'}` |
 | `LIMIT_SPREAD` | `1.1` |
+| `ZOOM_PAD` | `0.3` |
+| `SAME_RATIO` | `1.5` |
+| `CIRCULAR_SHARE` | `0.5` |
+| `MATRIX_ELEMENTS` | `8` |
+| `LINKED` | `0.5` |
 | `DESIGNS` | `{'interference': _interference, 'isotope': _isotope_pair,…` |
 | `ISOTOPE_DESIGNS` | `{_isotope_pair, _isotope_track, _isotope_groups}` |
 | `BETWEEN_DESIGNS` | `frozenset({_comparison, _replicates, _signature, _isotope…` |
 | `MAX_PANELS` | `6` |
+| `CAPTION_SIZE` | `9.5` |
+| `CAPTION_MARGIN` | `0.3` |
 | `OVERLAY_KINDS` | `frozenset({'histogram', 'ecdf', 'box', 'violin', 'bar', '…` |
 | `MAX_SPLIT_GROUPS` | `3` |
 | `MAX_GROUP_ROWS` | `4` |
 | `XY_KINDS` | `frozenset({'scatter', 'hexbin', 'density', 'contour'})` |
+| `RANGE_AXES` | `{'histogram': (('value', 'x'),), 'ecdf': (('value', 'x'),…` |
+| `MANY_GROUPS` | `4` |
 | `GROUP_ROW_VIEWS` | `3` |
+| `PAIR_GROUPS` | `4` |
+| `TALL_GROUPS` | `6` |
+| `TALL_KINDS` | `frozenset({'strip', 'ridgeline', 'estimate'})` |
 
 ## Classes
 
@@ -115,6 +130,8 @@ Attributes:
 | `_drift_check` | `(ctx: FigureContext, s, num: str, den: str) → str` | Check, above the signal cut, whether the ratio still changes with signal. |
 | `_natural_check` | `(ctx: FigureContext, s, num: str, den: str, natural) → None` | Check how far the (corrected) median ratio sits from the natural ratio. |
 | `_three_isotope` | `(ctx: FigureContext, s, num: str, den: str, **extra)` | The ²⁰⁸Pb/²⁰⁶Pb against ²⁰⁷Pb/²⁰⁶Pb plot with source references, when Pb allows it. |
+| `_zoom` | `(values, sources) → dict` | Axis limits framing group values, their intervals and the reference sources. |
+| `_estimate` | `(ctx: FigureContext, s, num: str, den: str, natural, check: bool=False` | The ratio of each sample as one value with its 95% interval, and its caption. |
 | `_isotope_pair` | `(s, ctx, natural=None)` |  |
 | `_isotope_track` | `(s, ctx, natural=None)` |  |
 | `_isotope_groups` | `(s, ctx, natural=None)` |  |
@@ -122,6 +139,7 @@ Attributes:
 | `_size_box` | `(ctx: FigureContext, value: str, title: str, y_label: str, rule: str='` | Box plot of *value* in small, medium and large particles. |
 | `_size_sentence` | `(ctx: FigureContext, value: str, what: str, rule: str='') → str` | Measured medians by size class and whether they differ, adding a check. |
 | `_size_caption` | `(what: str) → str` | Sentence explaining a size-class panel. |
+| `_count` | `(value: float) → str` | A number of particles as it is read: ``1,440`` or ``28.7``, never ``1.44e+03``. |
 | `_coincidence_sentence` | `(ctx: FigureContext, a: str, b: str) → str` | Co-detections against chance coincidence of two particles, adding a check. |
 | `_interference` | `(s, ctx)` |  |
 | `_comparison` | `(s, ctx)` |  |
@@ -130,7 +148,10 @@ Attributes:
 | `_share_size_sentence` | `(ctx: FigureContext, el: str, rule: str='') → str` | Measured detected share by size class, adding a check on its trend. |
 | `_stoichiometry` | `(s, ctx)` |  |
 | `_ratio_split` | `(s, ctx)` |  |
+| `_where_most` | `(ctx: FigureContext, x: str, y: str, rule: str, x_label: str, y_label:` | The panel showing where most particles of an X–Y cloud sit, with its caption. |
+| `_size_is_circular` | `(ctx: FigureContext, xa: str, xb: str, rule: str) → float \| None` | Median share of the particle amount that two plotted elements make up, when it is large. |
 | `_correlation` | `(s, ctx)` |  |
+| `_company` | `(ctx: FigureContext, focus, limit: int=MATRIX_ELEMENTS) → str` | The elements most often found in the particles carrying the *focus* elements. |
 | `_cooccurrence` | `(s, ctx)` |  |
 | `_rare` | `(s, ctx)` |  |
 | `_distribution` | `(s, ctx)` |  |
@@ -138,21 +159,30 @@ Attributes:
 | `_time` | `(s, ctx)` |  |
 | `_composition` | `(s, ctx)` |  |
 | `_network` | `(s, ctx)` |  |
+| `_matrix_elements` | `(s) → list[str]` | The elements of a correlation-matrix finding, from the finding itself or its details. |
+| `_pair_correlations` | `(ctx: FigureContext, els, quantity: str) → list[tuple[str, str, float,` | Rank correlation of every pair of *els* among the particles carrying both. |
+| `_matrix` | `(s, ctx)` |  |
 | `_outlier` | `(s, ctx)` |  |
 | `_type_definition` | `(s) → dict` | The particle-type definition carried by a types card. |
 | `_type_panels` | `(s, definition, title)` | The card's own PCA panel, retitled for the story. |
 | `_types_overview` | `(s, ctx)` |  |
 | `_particle_type` | `(s, ctx)` |  |
+| `caption_height` | `(caption: str, width: float) → float` | Height in inches the legend needs under a figure *width* inches wide. |
 | `story_layout` | `(n: int, caption: str='') → tuple[list[list[float]], list[float], floa` | Place *n* panels above a caption sized to its text. |
-| `caption_text` | `(title: str, captions: list[str]) → str` | Write the figure legend: the title, then one sentence per panel letter. |
+| `caption_text` | `(captions: list[str]) → str` | Write the panels' part of the legend: one paragraph per panel, its letter in bold. |
+| `conclusion` | `(s) → str` | The legend's opening paragraph: the finding's title in bold, then what was found. |
+| `legend_text` | `(s, panels: str, notes: list[str], checks) → str` | Put the legend together: the conclusion, the checks, then the panels. |
 | `group_names` | `(ctx: FigureContext) → list[str]` | The groups the figure compares: the samples of its table, when there are two or more. |
 | `_for_group` | `(panel: dict, name: str) → dict` | A copy of *panel* showing only the particles of group *name*. |
 | `_axis_range` | `(values: np.ndarray, log: bool) → tuple[float, float] \| None` | A padded range covering *values*, in log or linear terms. |
-| `same_ranges` | `(ctx: FigureContext, panels: list[dict]) → list[dict]` | Give the per-group copies of an X–Y panel the same axis ranges. |
+| `same_ranges` | `(ctx: FigureContext, panels: list[dict]) → list[dict]` | Give the per-group copies of a panel the same axis ranges. |
+| `_ridges` | `(panel: dict) → dict` | A histogram panel redrawn as one ridge per group. |
 | `by_groups` | `(story: list, names: list[str], ctx: FigureContext \| None=None) → list` | Lay a story out to compare groups. |
 | `arrange` | `(rows, names: list[str], between: bool)` | Choose how a grouped figure is laid out, from what the finding is about. |
-| `rows_layout` | `(rows, n_groups: int, caption: str='')` | Place grouped rows above the legend: a wide panel spans its row, the others share it equally. |
-| `rows_caption` | `(title: str, rows, names: list[str], views=None) → str` | The legend of a grouped figure, naming the panel of each group. |
+| `_lines` | `(rows, n_groups: int) → list[list[int]]` | Which rows share a line of the page, as lists of row indices. |
+| `_line_height` | `(rows, members, n_groups: int) → float` | Height in inches of one line of the page. |
+| `rows_layout` | `(rows, n_groups: int, caption: str='')` | Place grouped rows above the legend. |
+| `rows_caption` | `(rows, names: list[str], views=None) → str` | The panels' part of a grouped figure's legend, naming the panel of each group. |
 | `_group_values` | `(ctx: FigureContext, expr: str, rule: str, names: list[str])` | ``(group, values)`` of *expr* among the particles passing *rule*, per group. |
 | `_medians_between` | `(ctx: FigureContext, expr: str, rule: str, what: str, names: list[str]` | Compare a value's median between groups, adding a check; return the sentence. |
 | `_correlation_between` | `(ctx: FigureContext, a: str, b: str, names: list[str]) → str` | Rank correlation of two elements in each group, adding a check; return the sentence. |

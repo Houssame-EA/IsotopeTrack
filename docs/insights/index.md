@@ -17,7 +17,7 @@ The Insights engine: what to search, and the detectors that search it.
 ### [`evidence.py`](evidence.md)
 Numbers behind a finding's figure, measured on the particles the figure draws.
 
-**1** classes &nbsp;·&nbsp; **24** functions &nbsp;·&nbsp; **2** methods
+**1** classes &nbsp;·&nbsp; **27** functions &nbsp;·&nbsp; **4** methods
 
 ### [`explain.py`](explain.md)
 Plain-language explanations of each kind of finding.
@@ -27,12 +27,12 @@ Plain-language explanations of each kind of finding.
 ### [`figures.py`](figures.md)
 Figures that tell the story behind a finding.
 
-**1** classes &nbsp;·&nbsp; **82** functions &nbsp;·&nbsp; **0** methods
+**1** classes &nbsp;·&nbsp; **97** functions &nbsp;·&nbsp; **0** methods
 
 ### [`panel.py`](panel.md)
 The Insights side panel of the results canvas.
 
-**5** classes &nbsp;·&nbsp; **25** functions &nbsp;·&nbsp; **72** methods
+**6** classes &nbsp;·&nbsp; **26** functions &nbsp;·&nbsp; **75** methods
 
 ### [`replicates.py`](replicates.md)
 Work out which samples are replicates of one another.

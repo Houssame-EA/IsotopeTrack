@@ -87,7 +87,7 @@ The functions of this module are there to help with formula manipulations
 ### [`particle_classifier_dialog.py`](particle-classifier-dialog.md)
 Particle Classifier configuration dialog (Stage 3).
 
-**2** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **65** methods
+**2** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **66** methods
 
 ### [`particle_classifier_expr.py`](particle-classifier-expr.md)
 Core expression-logic engine for the Particle Classifier node.
@@ -117,7 +117,7 @@ Simple Particle Classifier dialog, in the shared application look.
 ### [`particle_filter.py`](particle-filter.md)
 Particle Filter node for the Workflow Canvas.
 
-**3** classes &nbsp;·&nbsp; **37** functions &nbsp;·&nbsp; **63** methods
+**3** classes &nbsp;·&nbsp; **37** functions &nbsp;·&nbsp; **64** methods
 
 ### [`periodic_table_info.py`](periodic-table-info.md)
 This file contains a readonly service (info) for periodic table data.
