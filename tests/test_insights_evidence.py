@@ -300,8 +300,10 @@ def test_groups_are_compared_side_by_side_or_in_colour(app, pooled):
     assert (first["x_min"], first["x_max"], first["y_min"], first["y_max"]) == \
            (second["x_min"], second["x_max"], second["y_min"], second["y_max"])
     legend = spec["panels"][-1]["text"]
-    assert "One panel per group: (a) A, (d) B." in legend
-    assert "Each row is one group: A a–c; B d–f." in legend
+    assert plots[0]["kind"] == "histogram" and plots[0]["group_by"] == "sample"
+    assert plots[0]["hist_percent"]
+    assert "One panel per group: (b) A, (e) B." in legend
+    assert "Each row is one group: A b–d; B e–g." in legend
     assert "Between groups" in legend and "ρ" in legend
     _pool, _units, table = pooled
     assert render_problems(spec, table) == []

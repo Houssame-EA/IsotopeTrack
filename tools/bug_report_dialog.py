@@ -8,6 +8,7 @@ sent. Both use the app palette and follow theme changes while open.
 What is sent and how it is cleaned is defined in ``tools/crash_reporting.py``.
 """
 
+from results.shared_plot_utils import release_window
 import logging
 
 from PySide6.QtCore import Qt, QThread, Signal
@@ -273,7 +274,9 @@ def ask_crash_consent_once(parent=None):
     if crash_reporting.consent_asked() or not crash_reporting.sending_allowed():
         return None
     dlg = CrashConsentDialog(parent)
-    answer = dlg.exec() == QDialog.DialogCode.Accepted
+    result = dlg.exec()
+    release_window(dlg)
+    answer = result == QDialog.DialogCode.Accepted
     crash_reporting.set_reports_enabled(answer)
     return answer
 

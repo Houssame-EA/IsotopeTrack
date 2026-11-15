@@ -33,6 +33,7 @@ from loading.csv.file_list import THUMB_ROWS, FileListPanel
 from loading.csv.profiles import (
     ImportProfile, clear_profiles, load_profiles, save_profile,
 )
+from results.shared_plot_utils import release_window
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.loading.csv.dialog")
 
@@ -2344,7 +2345,9 @@ class FileStructureDialog(QDialog):
             initial_filter=col_name,
             parent=self,
         )
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             iso = dlg.selected_isotope()
             if iso:
                 self._commit_mapping(column_index, col_name, iso)
@@ -2579,7 +2582,9 @@ class FileStructureDialog(QDialog):
         if not profiles:
             return
         picker = RecentSetupsDialog(profiles, self)
-        chosen = picker.selected_profile() if picker.exec() == QDialog.Accepted \
+        result = picker.exec()
+        release_window(picker)
+        chosen = picker.selected_profile() if result == QDialog.Accepted \
             else None
         self._refresh_recent_button()
         if chosen is None:
@@ -2698,7 +2703,9 @@ class FileStructureDialog(QDialog):
         picker = ApplyTargetsDialog(
             candidates, Path(self.file_paths[source]).name,
             preselected=self._apply_targets(), parent=self)
-        if picker.exec() != QDialog.Accepted:
+        result = picker.exec()
+        release_window(picker)
+        if result != QDialog.Accepted:
             return
         targets = picker.selected_indexes()
         if not targets:
@@ -3064,7 +3071,9 @@ class FileStructureDialog(QDialog):
             msg.setDetailedText(detail)
             msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
             msg.setDefaultButton(QMessageBox.No)
-            if msg.exec() != QMessageBox.Yes:
+            result = msg.exec()
+            release_window(msg)
+            if result != QMessageBox.Yes:
                 return
         try:
             save_profile(self._capture_profile())
@@ -3100,7 +3109,9 @@ def show_csv_structure_dialog(file_paths, parent=None) -> dict | None:
         config = cfg
 
     dialog.file_configured.connect(on_configured)
-    return config if dialog.exec() == QDialog.Accepted else None
+    result = dialog.exec()
+    release_window(dialog)
+    return config if result == QDialog.Accepted else None
 
 
 def show_csv_calibration_dialog(file_paths, parent=None) -> dict | None:

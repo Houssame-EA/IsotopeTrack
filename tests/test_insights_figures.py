@@ -141,7 +141,8 @@ def test_every_design_draws(app, stream, key):
     assert 2 <= len(plots) <= F.MAX_PANELS
     assert caption["kind"] == "text" and caption["caption"]
     assert caption["text"].count("(") >= len(plots)
-    assert caption["text"].startswith("t. (a) ")
+    assert caption["text"].startswith("**t.** r\n")
+    assert "\n**(a" in caption["text"]
     assert spec["figure"]["panel_letters"]
     assert render_problems(spec, table) == []
 
@@ -539,3 +540,74 @@ def test_band_on_wrong_axes_is_left_out_with_a_note(app, stream):
     report = render(fig, spec, table)
     assert not report.errors
     assert any("band left out" in line for line in report.stats)
+
+
+def _legend_story(stream, key="comparison", title="56Fe mass: S1 vs S2",
+                  reasoning="The median 56Fe mass is 1.09x apart."):
+    """A story figure over the two-sample stream, with its measured checks."""
+    parts, table = stream
+    s = rr.Suggestion(title, reasoning, key.split("_")[0], 0.5, "x", elements=ELEMENTS[key],
+                      explain_key=key)
+    ctx = F.context_from(parts, s.elements, {"56Fe": {"mass": {"S1": 0.02, "S2": 0.021}}},
+                         multi_sample=True, table=table)
+    return F.figure_for(s, ctx), table
+
+
+def test_legend_opens_with_the_conclusion_then_checks_then_panels(app, stream):
+    """The reader meets what was found first, the verdict next, the panel notes last."""
+    spec, _table = _legend_story(stream)
+    paragraphs = spec["panels"][-1]["text"].split("\n")
+    assert paragraphs[0] == "**56Fe mass: S1 vs S2.** The median 56Fe mass is 1.09x apart."
+    assert paragraphs[1].startswith("**Checks: ") and " passed" in paragraphs[1]
+    marks = [p[0] for p in paragraphs[2:] if p[:1] in "✓✗–"]
+    first_panel = next(i for i, p in enumerate(paragraphs) if p.startswith("**(a"))
+    assert marks and first_panel == 2 + len(marks)
+    assert marks == sorted(marks, key="✗–✓".index)
+    assert paragraphs[-1].startswith("**Notes.** ")
+
+
+def test_legend_without_checks_goes_straight_to_the_panels(app, stream):
+    """A figure that ran no check has no verdict heading."""
+    parts, _table = stream
+    s = rr.Suggestion("t", "r", "quality", 0.5, "x", elements=("56Fe",), explain_key="quality")
+    text = F.figure_for(s, F.context_from(parts, s.elements))["panels"][-1]["text"]
+    assert "Checks" not in text and text.split("\n")[1].startswith("**(a)** ")
+
+
+@pytest.mark.parametrize("key", ["comparison", "correlation", "isotope", "stoichiometry"])
+def test_legend_stays_inside_its_panel(app, stream, key):
+    """Every legend line ends before the figure's edge and above its bottom."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+    from results.figure_builder.core.engine import render
+    spec, table = _legend_story(stream, key, reasoning="What was found, in a sentence. " * 6)
+    fig = Figure()
+    canvas = FigureCanvasAgg(fig)
+    render(fig, spec, table)
+    canvas.draw()
+    ax = fig.axes[-1]
+    box = ax.get_window_extent()
+    assert len(ax.texts) > 4
+    for t in ax.texts:
+        extent = t.get_window_extent()
+        assert extent.x1 <= box.x1 + 1 and extent.y0 >= box.y0 - 1, t.get_text()
+
+
+def test_check_summary_counts_each_outcome():
+    """The verdict heading says how many checks passed, failed and stayed open."""
+    from results.insights.evidence import Checks
+    c = Checks()
+    assert c.summary() == "" and c.block() == ""
+    c.add(True, "holds in every replicate")
+    assert c.summary() == "passed"
+    c.add(True, "above the limit")
+    assert c.summary() == "all 2 passed"
+    c.add(None, "samples not replicated")
+    c.add(False, "the interval reaches 1")
+    assert c.summary() == "2 of 4 passed, 1 to read with care, 1 undecided"
+    assert c.block().split("\n") == [
+        "**Checks: 2 of 4 passed, 1 to read with care, 1 undecided.**",
+        "✗ The interval reaches 1", "– Samples not replicated",
+        "✓ Holds in every replicate", "✓ Above the limit"]
+    assert c.line().startswith("Checks: ✓ holds in every replicate; ")
+

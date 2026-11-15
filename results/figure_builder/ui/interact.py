@@ -30,6 +30,7 @@ from utils.unit import units
 from results.figure_builder.core.expressions import DATA_TYPES, plain
 from results.figure_builder.core.recipes import RECIPES
 from results.figure_builder.ui.widgets import ColorButton
+from results.shared_plot_utils import release_window
 
 XYISH = {'scatter', 'line', 'density', 'histogram', 'box', 'violin', 'bar', 'hexbin', 'contour',
          'strip'}
@@ -389,7 +390,9 @@ def rename_items(win, panel) -> bool:
     if not items:
         return False
     dlg = ItemLabelsDialog(items, panel.get('item_labels') or {}, win)
-    if dlg.exec() != QDialog.Accepted:
+    result = dlg.exec()
+    release_window(dlg)
+    if result != QDialog.Accepted:
         return False
     panel['item_labels'] = dlg.labels()
     return True
@@ -404,7 +407,9 @@ def style_dialog(win, panel, elements, title) -> bool:
         src = (figcfg.get('text_styles') or {}) if figure_level else (panel.get('text_styles') or {})
         current[el] = dict(src.get(el) or {})
     dlg = TextStyleDialog(elements, current, title, win, figure_level=figure_level)
-    if dlg.exec() != QDialog.Accepted:
+    result = dlg.exec()
+    release_window(dlg)
+    if result != QDialog.Accepted:
         return False
     new = dlg.styles()
     if figure_level or dlg.all_panels.isChecked():
@@ -893,7 +898,9 @@ def find_pairs(win, panel) -> bool:
     lay.addWidget(buttons)
     if not pairs:
         note.setText('No pair of isotopes is found together in at least 10 particles.')
-    if dlg.exec() and chosen.get('pair'):
+    result = dlg.exec()
+    release_window(dlg)
+    if result and chosen.get('pair'):
         panel['x'], panel['y'] = chosen['pair']
         panel['x_label'] = panel['y_label'] = ''
         return True

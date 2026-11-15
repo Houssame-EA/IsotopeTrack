@@ -39,8 +39,7 @@ from results.shared_plot_utils import (
     LegendGroup, ExportSettingsGroup, MplDraggableCanvas, LABEL_MODES,
     format_element_label, Renderer, get_sample_color,
     get_display_name, download_matplotlib_figure,
-    pick_color_hex,
-)
+    pick_color_hex, release_window, delete_on_close)
 from utils.unit import units
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_triangle")
@@ -1444,7 +1443,9 @@ class ManageAnnotationsDialog(QDialog):
 
     def _add(self):
         dlg = AnnotationDialog(parent=self)
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self._anns.append(dlg.collect())
             self._reload()
 
@@ -1453,7 +1454,9 @@ class ManageAnnotationsDialog(QDialog):
         if idx < 0:
             return
         dlg = AnnotationDialog(ann=self._anns[idx], parent=self)
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self._anns[idx] = dlg.collect()
             self._reload(); self._table.selectRow(idx)
 
@@ -1932,6 +1935,7 @@ class TriangleDisplayDialog(QDialog):
 
         dname = get_display_name(sample_key, self.node.config)
         dlg = TriangleDisplayDialog(node, parent_window=self)
+        delete_on_close(dlg)
         dlg.setWindowTitle(f"Ternary — {dname}")
         dlg.setMinimumSize(1000, 750)
         dlg.show()
@@ -1975,7 +1979,9 @@ class TriangleDisplayDialog(QDialog):
     def _add_annotation(self):
         """Open annotation creator; preserves existing annotation data model/behavior."""
         dlg = AnnotationDialog(parent=self)
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             anns = list(self.node.config.get('annotations', []))
             anns.append(dlg.collect())
             self.node.config['annotations'] = anns
@@ -1985,7 +1991,9 @@ class TriangleDisplayDialog(QDialog):
         """Open annotation manager; preserves existing annotation ordering/edit behavior."""
         anns = list(self.node.config.get('annotations', []))
         dlg = ManageAnnotationsDialog(anns, parent=self)
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config['annotations'] = dlg.collect()
             self._refresh()
 
@@ -1994,7 +2002,9 @@ class TriangleDisplayDialog(QDialog):
         dlg = TernarySettingsDialog(
             self.node.config, self._available_elements(),
             self._is_multi(), self._sample_names(), self)
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
 
@@ -2009,7 +2019,9 @@ class TriangleDisplayDialog(QDialog):
             self.node.config, self._available_elements(),
             self._is_multi(), self._sample_names(), self, scope='format')
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
         else:
@@ -2029,7 +2041,9 @@ class TriangleDisplayDialog(QDialog):
             self._is_multi(), self._sample_names(), self, scope='quantities',
             input_data=self.node.input_data)
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
         else:
@@ -3196,6 +3210,7 @@ class TrianglePlotNode(QObject):
     def configure(self, parent_window):
         dlg = TriangleDisplayDialog(self, parent_window)
         dlg.exec()
+        release_window(dlg)
         return True
 
     def process_data(self, input_data):

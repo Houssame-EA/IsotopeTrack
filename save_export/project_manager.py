@@ -87,6 +87,26 @@ class SaveProjectThread(QThread):
             self.failed.emit(str(exc))
 
 
+def samples_waiting_for_spectrum(mw) -> set:
+    """Samples of a just-opened project whose resolved spectrum was not saved with it.
+
+    Projects saved before spectra were stored, or saved while a run folder
+    was out of reach, have none. Their spectrum is read from the run folder
+    only when the user asks for it in the Spectrum view, never on its own:
+    the folder may be on a drive that is gone, and reading every snapshot of
+    a run takes a while.
+
+    Args:
+        mw: The main window, after the project's data was restored.
+
+    Returns:
+        set: Names of the samples whose spectrum waits for the user.
+    """
+    stored = getattr(mw, 'sample_raw_spectrum', None) or {}
+    return {name for name in (getattr(mw, 'sample_to_folder_map', None) or {})
+            if (stored.get(name) or {}).get('spectrum') is None}
+
+
 class ProjectManager:
     """
     Handles saving and loading of IsotopeTrack project files.
@@ -511,6 +531,8 @@ Terminal=false
     def _finalize_load(self):
         """Common post-load setup for both v1 and v2 formats."""
         mw = self.main_window
+        mw._raw_spectrum_missing = set()
+        mw._raw_spectrum_on_request = samples_waiting_for_spectrum(mw)
 
         mw.update_sample_table()
 
@@ -1018,11 +1040,7 @@ Terminal=false
         
         scene = self.main_window.canvas_results_dialog.canvas.scene
         
-        scene.workflow_nodes.clear()
-        scene.workflow_links.clear()
-        scene.node_items.clear()
-        scene.link_items.clear()
-        scene.clear()
+        scene.clear_workflow()
         
         scene_rect = canvas_state.get('scene_rect', {})
         if scene_rect:

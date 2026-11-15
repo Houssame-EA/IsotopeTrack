@@ -32,6 +32,7 @@ import uuid
 from PySide6.QtCore import QObject, QPointF, QSettings, QTimer, Signal
 from PySide6.QtWidgets import QCheckBox, QDialog, QMessageBox
 
+from results.shared_plot_utils import release_window
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.tools.particle_classifier_node")
 
@@ -220,6 +221,7 @@ def maybe_show_classifier_onboarding(parent_window):
     box.setCheckBox(dont_show)
     box.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
     box.exec()
+    release_window(box)
     if dont_show.isChecked():
         settings.setValue(_HIDE_ONBOARDING_SETTING, True)
 
@@ -608,7 +610,9 @@ class ParticleClassifierNode(QObject):
             self.overlap_mode, self.unmatched_mode, self.unclassified_color,
             self.selected_sources, self.group_pooling_policies,
             self.confound_dismissals)
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.definitions = dlg.get_definitions()
             self.groups = dlg.get_groups()
             self.overlap_mode = dlg.get_overlap_mode()

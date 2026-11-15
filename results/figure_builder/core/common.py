@@ -448,6 +448,106 @@ def apply_axis_controls(ax, panel):
         ax.yaxis.label.set_color(color)
 
 
+NARROW_LOG = 10.0
+"""Ratio of a log axis's two ends below which its ticks are written as plain numbers."""
+
+
+SHORT_LOG = 150.0
+"""Ratio of a log axis's two ends below which its ticks run 1, 2, 5, 10 in plain numbers."""
+
+
+def _span(axis) -> float:
+    """Ratio of the two ends of a log axis's view, infinite when it reaches zero."""
+    lo, hi = sorted(axis.get_view_interval())
+    return hi / lo if lo > 0 else float('inf')
+
+
+def tidy_log_ticks(ax) -> None:
+    """Give short log axes plain tick labels at round values.
+
+    An axis showing less than a decade has at most one power of ten in
+    view, so matplotlib labels the ticks between as ``2×10⁰`` or
+    ``2.025×10⁰``; this writes ``2`` and ``2.025`` at evenly chosen values
+    instead. An axis showing about two decades or less often has a single
+    labelled tick; it gets ticks at 1, 2 and 5 times each power of ten,
+    written as ``0.5``, ``1``, ``2``. An axis with a tick format or tick
+    positions of its own is left as it is, and the choice is made when the
+    figure is drawn, so zooming out brings the powers of ten back.
+    """
+    from matplotlib import ticker
+
+    class Locator(ticker.LogLocator):
+        """Powers of ten, or round values when under a decade is in view."""
+
+        def tick_values(self, vmin, vmax):
+            lo, hi = sorted((vmin, vmax))
+            if lo > 0 and hi / lo < NARROW_LOG:
+                return ticker.MaxNLocator(nbins=5, steps=[1, 2, 2.5, 5, 10]).tick_values(lo, hi)
+            if lo > 0 and hi / lo < SHORT_LOG:
+                decades = np.arange(np.floor(np.log10(lo)), np.ceil(np.log10(hi)) + 1)
+                return np.concatenate([m * 10.0 ** decades for m in (1.0, 2.0, 5.0)])
+            return super().tick_values(vmin, vmax)
+
+    class Major(ticker.LogFormatterSciNotation):
+        """Powers of ten, or plain numbers when under a decade is in view."""
+
+        def __call__(self, x, pos=None):
+            if _span(self.axis) < SHORT_LOG:
+                return f'{x:.5g}'
+            return super().__call__(x, pos)
+
+    class Minor(ticker.LogFormatterSciNotation):
+        """Minor tick labels, left out when under a decade is in view."""
+
+        def __call__(self, x, pos=None):
+            if _span(self.axis) < SHORT_LOG:
+                return ''
+            return super().__call__(x, pos)
+
+    if getattr(ax, 'name', '') != 'rectilinear':
+        return
+    for axis, scale in ((ax.xaxis, ax.get_xscale()), (ax.yaxis, ax.get_yscale())):
+        if scale != 'log':
+            continue
+        if type(axis.get_major_formatter()) is not ticker.LogFormatterSciNotation:
+            continue
+        if type(axis.get_major_locator()) is not ticker.LogLocator:
+            continue
+        axis.set_major_locator(Locator())
+        axis.set_major_formatter(Major())
+        minor = axis.get_minor_formatter()
+        if type(minor) is ticker.LogFormatterSciNotation:
+            axis.set_minor_formatter(Minor(labelOnlyBase=False,
+                                           minor_thresholds=minor.minor_thresholds))
+
+
+def raise_isotopes(ax, labels) -> None:
+    """Write the isotopes named in a panel's title, axis labels and legend with a raised mass number.
+
+    Automatic axis labels already do; this brings the title, the labels
+    typed by hand or set by an Insights story, and legend entries such as
+    ``With 27Al`` in line with them. Only the
+    isotopes the data holds are touched, so a sample called ``10X`` keeps
+    its name.
+
+    Args:
+        ax: The panel's axes.
+        labels: The isotope labels of the particle table.
+    """
+    from results.figure_builder.core.richtext import with_isotopes
+    known = set(labels or ())
+    if not known:
+        return
+    artists = [ax.title, ax.xaxis.label, ax.yaxis.label]
+    legend = ax.get_legend()
+    if legend is not None:
+        artists += list(legend.get_texts())
+    for artist in artists:
+        text = artist.get_text()
+        if text:
+            artist.set_text(with_isotopes(text, known))
+
+
 def annotate(ax, panel):
     """Draw the panel's free text annotations, with optional arrows."""
     for index, a in enumerate(panel.get('annotations') or []):

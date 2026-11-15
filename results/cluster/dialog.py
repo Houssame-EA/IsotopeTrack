@@ -89,8 +89,7 @@ from results.shared_plot_utils import (
     Renderer,
     per_ml_active,
     per_ml_factor, conc_meta_available,
-    format_per_ml,
-)
+    format_per_ml, release_window)
 from results.utils_sort import (
     sort_elements_by_mass,
 )
@@ -4014,7 +4013,9 @@ class ClusteringDisplayDialog(QDialog):
         btns.rejected.connect(dlg.reject)
         outer.addWidget(btns)
 
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             for key, w in widgets.items():
                 if isinstance(w, QCheckBox):
                     cfg[key] = w.isChecked()
@@ -4327,7 +4328,9 @@ class ClusteringDisplayDialog(QDialog):
     def _open_settings(self):
         dlg = ClusteringSettingsDialog(self.node.config, self,
                                        input_data=self.node.input_data)
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._data_matrix_cache = None
             self._apply_display_settings()
@@ -6351,6 +6354,7 @@ class ClusteringDisplayDialog(QDialog):
         save_btn.clicked.connect(_save)
         close_btn.clicked.connect(dlg.accept)
         dlg.exec()
+        release_window(dlg)
 
 
 class ClusteringPlotNode(QObject):

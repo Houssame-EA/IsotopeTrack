@@ -293,7 +293,7 @@ def capture_figure_thumbnail(node, dlg):
     figure is shown and again when it is hidden, so the preview reflects the
     user's latest view. Best-effort: never raises.
     """
-    if node is None or dlg is None:
+    if node is None or not _figure_alive(dlg):
         return
     try:
         widget = (getattr(dlg, 'pw', None)
@@ -309,16 +309,36 @@ def capture_figure_thumbnail(node, dlg):
 
 
 def _connect_thumb_refresh(node, dlg):
-    """Re-capture the thumbnail (debounced) whenever the figure changes."""
+    """Re-capture the thumbnail (debounced) whenever the figure changes.
+
+    The slot is kept on the window so :func:`_tear_down` can disconnect it:
+    a connection held by the node's signal would otherwise keep a destroyed
+    window, and everything it draws, alive for as long as the node lives.
+    """
     if getattr(dlg, '_thumb_refresh_connected', False):
         return
     try:
-        node.configuration_changed.connect(
-            lambda n=node, d=dlg: QTimer.singleShot(
-                450, lambda: capture_figure_thumbnail(n, d)))
+        def refresh(n=node, d=dlg):
+            QTimer.singleShot(450, lambda: capture_figure_thumbnail(n, d))
+        node.configuration_changed.connect(refresh)
         dlg._thumb_refresh_connected = True
+        dlg._thumb_refresh_slot = (node, refresh)
     except Exception:
         _itk_log.exception("Handled exception in _connect_thumb_refresh")
+
+
+def _disconnect_thumb_refresh(dlg) -> None:
+    """Undo :func:`_connect_thumb_refresh` for a window that is going away."""
+    held = getattr(dlg, '_thumb_refresh_slot', None)
+    if not held:
+        return
+    node, slot = held
+    try:
+        node.configuration_changed.disconnect(slot)
+    except (RuntimeError, TypeError):
+        pass
+    dlg._thumb_refresh_slot = None
+    dlg._thumb_refresh_connected = False
 
 
 def maybe_warn_classifier_wip(node, parent=None):
@@ -377,6 +397,7 @@ def maybe_warn_classifier_wip(node, parent=None):
     box.setCheckBox(dont_show)
     box.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
     box.exec()
+    release_window(box)
     if dont_show.isChecked():
         settings.setValue(key, True)
 
@@ -601,12 +622,21 @@ class _FigureView:
 
 
 def _connect_view_thumb_refresh(view, dlg):
+    """Re-capture one figure's thumbnail (debounced) whenever its node changes.
+
+    The slot is kept on the window, as in :func:`_connect_thumb_refresh`, so
+    :func:`_tear_down` can disconnect it when the figure is deleted.
+    """
     if getattr(dlg, '_thumb_refresh_connected', False):
         return
     try:
-        view._node.configuration_changed.connect(
-            lambda v=view: QTimer.singleShot(450, lambda: capture_view_thumbnail(v)))
+        node = view._node
+
+        def refresh(v=view):
+            QTimer.singleShot(450, lambda: capture_view_thumbnail(v))
+        node.configuration_changed.connect(refresh)
         dlg._thumb_refresh_connected = True
+        dlg._thumb_refresh_slot = (node, refresh)
     except Exception:
         _itk_log.exception("Handled exception in _connect_view_thumb_refresh")
 
@@ -766,17 +796,167 @@ def focus_node_figure(view):
         _itk_log.exception("Handled exception in focus_node_figure")
 
 
+def _free_plot_menus(dlg) -> None:
+    """Delete the context menus pyqtgraph plots create without a parent window.
+
+    Every pyqtgraph plot builds a "Plot Options" menu and a view menu that
+    belong to no window. Their actions are connected back to the plot, so
+    the menus and the plot keep each other alive, out of reach of Python's
+    garbage collector, and the plot keeps everything it draws. Closing the
+    plot items and deleting their menus breaks that loop.
+    """
+    try:
+        import pyqtgraph as pg
+    except Exception:
+        return
+    items = []
+    for view in dlg.findChildren(pg.GraphicsView):
+        try:
+            scene = view.scene()
+            items.extend(scene.items() if scene is not None else [])
+        except RuntimeError:
+            continue
+    _free_item_menus(items)
+
+
+def _free_item_menus(items) -> None:
+    """Delete the parentless menus of pyqtgraph plots (see :func:`_free_plot_menus`).
+
+    Only the menus are deleted. ``PlotItem.close()`` is not called and no
+    attribute of the plot is reset: dropping the plot's own references from
+    Python while it still has live connections crashes PySide 6.9 on macOS
+    (in its connection bookkeeping). Deleting the menus already breaks the
+    loop that kept the plot alive.
+    """
+    import pyqtgraph as pg
+    seen = set()
+    for item in items:
+        if id(item) in seen:
+            continue
+        seen.add(id(item))
+        try:
+            if isinstance(item, pg.ViewBox):
+                menu = getattr(item, 'menu', None)
+            elif isinstance(item, pg.PlotItem):
+                menu = getattr(item, 'ctrlMenu', None)
+            else:
+                continue
+            if menu is not None:
+                menu.deleteLater()
+        except (RuntimeError, AttributeError):
+            continue
+
+
+def _layout_items(layout) -> list:
+    """Every item a pyqtgraph layout holds, including those in nested layouts."""
+    import pyqtgraph as pg
+    out = []
+    for item in list(getattr(layout, 'items', None) or {}):
+        out.append(item)
+        if isinstance(item, pg.GraphicsLayout):
+            out.extend(_layout_items(item))
+    return out
+
+
+def clear_plot_layout(layout_widget) -> None:
+    """Empty a pyqtgraph layout before it is redrawn, freeing the plots it held.
+
+    ``GraphicsLayoutWidget.clear()`` only takes the plots out of the layout:
+    each keeps its parentless menus, which keep the plot and everything it
+    draws alive, so every redraw would leave one set behind. The layout's own
+    plots are freed first, while still in the view as pyqtgraph expects;
+    anything else in the view keeps its menu.
+    """
+    try:
+        import pyqtgraph as pg
+        items = _layout_items(layout_widget.ci)
+        views = [i.vb for i in items if isinstance(i, pg.PlotItem) and i.vb is not None]
+        _free_item_menus(views + items)
+    except (RuntimeError, AttributeError):
+        _itk_log.exception("Handled exception freeing the plots of a layout")
+    layout_widget.clear()
+
+
+def release_window(dlg) -> None:
+    """Free a dialog once it is closed, and the plot menus pyqtgraph gave it.
+
+    Called right after a modal ``exec()`` returns. The dialog is deleted
+    once control is back in the event loop, never by Python's garbage
+    collector, the path that crashed pyqtgraph windows before (see
+    ``MainWindow.open_isobaric_correction``).
+    """
+    if not isinstance(dlg, QObject) or not _figure_alive(dlg):
+        return
+    try:
+        _free_plot_menus(dlg)
+        dlg.deleteLater()
+    except RuntimeError:
+        pass
+
+
+def delete_on_close(dlg) -> None:
+    """Free a non-modal window, and its pyqtgraph menus, as soon as it is closed."""
+    dlg.setAttribute(Qt.WA_DeleteOnClose)
+    dlg.finished.connect(lambda *_: _free_plot_menus(dlg))
+
+
+def _tear_down(dlg) -> None:
+    """Close a figure window for good and let Qt free it once control returns to the event loop."""
+    if dlg is not None:
+        try:
+            _disconnect_thumb_refresh(dlg)
+        except RuntimeError:
+            pass
+    if not _figure_alive(dlg):
+        return
+    try:
+        dlg._force_close = True
+        dlg.hide()
+        _free_plot_menus(dlg)
+        dlg.close()
+        dlg.deleteLater()
+    except RuntimeError:
+        pass
+
+
+def release_node_figures(node) -> None:
+    """Destroy the figure windows a node keeps hidden for quick reopening.
+
+    A figure window, once built by opening the node or by its hover preview,
+    stays alive hidden on the node so it reopens as the user left it. When
+    the node is deleted from the canvas, the undo history keeps the node,
+    and with it every such window and the data it draws. This frees them;
+    the small preview image is kept, and an undone node simply builds its
+    window again the next time it is opened.
+
+    Args:
+        node: The workflow node being deleted.
+    """
+    if node is None:
+        return
+    try:
+        _tear_down(getattr(node, '_figure_dialog', None))
+        node._figure_dialog = None
+        for view in list(getattr(node, '_figures', None) or []):
+            _tear_down(getattr(view, 'dialog', None))
+            try:
+                view.dialog = None
+            except Exception:
+                pass
+        if getattr(node, '_figures', None):
+            node._figures = []
+    except Exception:
+        _itk_log.exception("Handled exception in release_node_figures")
+
+
 def close_node_figure(view):
-    """Close/remove a figure picked from the hover fan."""
+    """Remove a figure picked from the hover fan and free its window."""
     try:
         node = view._node
         figs = getattr(node, '_figures', None)
         if figs and view in figs:
             figs.remove(view)
-        dlg = getattr(view, 'dialog', None)
-        if dlg is not None:
-            dlg._force_close = True
-            dlg.close()
+        _tear_down(getattr(view, 'dialog', None))
         view.dialog = None
         node._figure_thumbnail = (getattr(figs[-1], 'thumbnail', None)
                                   if figs else None)
@@ -3313,7 +3493,9 @@ def download_pyqtgraph_figure(plot_widget, parent,
     dlg = DownloadConfigDialog(default_name, parent=parent)
     if csv_data is not None:
         dlg.set_csv_data(csv_data, csv_columns)
-    if dlg.exec() != QDialog.Accepted:
+    result = dlg.exec()
+    release_window(dlg)
+    if result != QDialog.Accepted:
         return
 
     cfg = dlg.collect()
@@ -3485,7 +3667,9 @@ def download_matplotlib_figure(figure, parent,
     dlg.show_dpi_control(True)
     if csv_data is not None:
         dlg.set_csv_data(csv_data, csv_columns)
-    if dlg.exec() != QDialog.Accepted:
+    result = dlg.exec()
+    release_window(dlg)
+    if result != QDialog.Accepted:
         return
 
     cfg = dlg.collect()

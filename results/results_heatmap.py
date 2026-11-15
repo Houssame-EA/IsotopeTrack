@@ -19,8 +19,7 @@ from results.shared_plot_utils import (
     apply_font_to_matplotlib, apply_font_to_colorbar_standalone,
     get_display_name, download_matplotlib_figure,
     LABEL_MODES, format_element_label, format_combination_label, Renderer, per_ml_factor,
-    conc_meta_available, format_per_ml, single_sample_name,
-)
+    conc_meta_available, format_per_ml, single_sample_name, release_window)
 
 from results.utils_sort import (
     sort_elements_by_mass
@@ -913,7 +912,9 @@ class HeatmapDisplayDialog(QDialog):
         dlg = HeatmapSettingsDialog(
             self.node.config, self._is_multi(), self._sample_names(), self,
             input_data=self.node.input_data)
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
 
@@ -923,7 +924,9 @@ class HeatmapDisplayDialog(QDialog):
             self.node.config, self._is_multi(), self._sample_names(), self, scope='format',
             input_data=self.node.input_data)
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
         else:
@@ -937,7 +940,9 @@ class HeatmapDisplayDialog(QDialog):
             self.node.config, self._is_multi(), self._sample_names(), self, scope='quantities',
             input_data=self.node.input_data)
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
         else:

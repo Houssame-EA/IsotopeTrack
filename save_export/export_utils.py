@@ -21,6 +21,7 @@ from utils.app_version import __version__ as APP_VERSION
 from utils.numeric_format import as_scalar as _as_scalar, fmt as _fmt
 import utils.signal_stats
 from processing import detection_registry
+from results.shared_plot_utils import release_window
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.save_export.export_utils")
 
@@ -381,6 +382,7 @@ def export_data(main_window: MainWindow):
         samples = list(main_window.sample_to_folder_map.keys())
         dlg = tools.dilution_utils.DilutionFactorDialog(main_window, samples)
         dlg.exec()
+        release_window(dlg)
 
     dilution_btn.clicked.connect(_open_dilution_editor)
     samples_layout.addWidget(dilution_btn)
@@ -461,7 +463,9 @@ def export_data(main_window: MainWindow):
     export_summary_cb.stateChanged.connect(lambda *_: update_count_label())
     update_count_label()
 
-    if export_dialog.exec() != QDialog.Accepted:
+    result = export_dialog.exec()
+    release_window(export_dialog)
+    if result != QDialog.Accepted:
         return False
 
     # -- function expects (keeps downstream code unchanged) --------------

@@ -10,6 +10,7 @@ from results.figure_builder.charts.categorical import (
 from results.figure_builder.charts.matrices import (
     draw_cooccurrence, draw_corr_matrix, draw_heatmap, draw_pairs)
 from results.figure_builder.charts.distributions import draw_distribution, draw_histogram
+from results.figure_builder.charts.estimate import draw_estimate
 from results.figure_builder.charts.extra import (
     draw_contour, draw_hexbin, draw_parallel, draw_radar, draw_ridgeline, draw_strip)
 from results.figure_builder.charts.more import (
@@ -42,6 +43,7 @@ DRAWERS = {
     'radar': draw_radar,
     'parallel': draw_parallel,
     'ecdf': draw_ecdf,
+    'estimate': draw_estimate,
     'lollipop': draw_lollipop,
     'treemap': draw_treemap,
     'timeline': draw_timeline,

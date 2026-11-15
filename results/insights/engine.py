@@ -1425,13 +1425,16 @@ def build_context(scene, parent_window, scope: AnalysisScope | None = None) -> A
 
 
 def invalidate_context_cache() -> None:
-    """Drop every cached context.
+    """Drop every cached context and batch split.
 
     Scope fingerprints already cover sample and particle-count changes, so this
-    is only needed when the underlying values change without the counts moving.
+    is needed when the underlying values change without the counts moving, and
+    when the canvas or the project is cleared: the caches hold the particles
+    they were built from, which would otherwise outlive the data they describe.
     """
     with _CTX_LOCK:
         _CTX_CACHE.clear()
+    _BATCH_SPLITS.clear()
 
 
 # ──────────────────────────────────────────────────────────────────────────────

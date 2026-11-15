@@ -9,8 +9,14 @@ from results.figure_builder.core.expressions import pretty
 
 ELLIPSES = {
     'none': 'None', '1sd': '68% (1 SD) ellipse', '2sd': '95% ellipse', '3sd': '99% ellipse',
+    'mean95': 'Group value and its 95% ellipse',
 }
-"""Confidence ellipses that can surround each group."""
+"""Confidence ellipses that can surround each group.
+
+The first three enclose that share of a group's particles. ``mean95``
+encloses where the group's own value lies: far smaller, and what tells two
+groups, or a group and a reference, apart.
+"""
 
 ELLIPSE_P = {'1sd': 0.6827, '2sd': 0.95, '3sd': 0.99}
 
@@ -39,16 +45,75 @@ def _from_space(v, log):
     return 10 ** v if log else v
 
 
-def draw_group_shapes(ax, panel, data, log_x, log_y):
+def _axis_estimate(panel, table, key, values, index):
+    """Estimate one axis of a scatter panel on a group's drawn particles."""
+    from results.figure_builder.core import estimates
+    from results.figure_builder.core.expressions import evaluate
+    den = estimates.denominator(panel.get(key) or '')
+    if den is None or table is None or index is None:
+        return estimates.estimate(values)
+    weights = np.asarray(evaluate(den, table), dtype=float)[index]
+    return estimates.estimate(values, weights)
+
+
+def draw_group_values(ax, panel, data, table=None, index=None, report=None):
+    """Each group's own value on both axes, with the 95% ellipse of that value.
+
+    An axis that is a ratio is estimated as the ratio of its summed signals,
+    anything else by its mean (see
+    :mod:`results.figure_builder.core.estimates`); the ellipse follows from
+    how the two estimates vary together over the particles. The values are
+    reported under Statistics and the marker stands for its group in the
+    legend, in place of the group's points.
+
+    Args:
+        data: ``[(group, x, y), ...]`` of the points drawn for each group.
+        table: The particle table, to read a ratio's denominator.
+        index: Group key to the table rows of its drawn points.
+        report: Where the values are reported.
+    """
+    from results.figure_builder.core import estimates
+    for g, x, y in data:
+        rows = (index or {}).get(g.key)
+        if rows is not None and len(rows) != len(x):
+            rows = None
+        ex = _axis_estimate(panel, table, 'x', x, rows)
+        ey = _axis_estimate(panel, table, 'y', y, rows)
+        if ex is None or ey is None or ex.n != ey.n:
+            continue
+        ring = estimates.ellipse(ex, ey)
+        if ring is not None:
+            ax.fill(ring[0], ring[1], color=g.color, alpha=0.3, lw=0, zorder=6)
+            ax.plot(ring[0], ring[1], color=g.color, lw=1.5, zorder=7)
+        for points in ax.collections:
+            if str(points.get_label()).startswith(f'{g.label} (n=') or points.get_label() == g.label:
+                points.set_label('_nolegend_')
+        ax.scatter([ex.value], [ey.value], s=34, color=g.color, edgecolors='white', linewidths=1.0,
+                   zorder=8, label=f'{g.label} (n={ex.n:,}): value and 95% ellipse')
+        if report is not None:
+            report.stats.append(f'{g.label}: x = {estimates.fmt_pm(ex.value, ex.half)}, '
+                                f'y = {estimates.fmt_pm(ey.value, ey.half)} (95% intervals, '
+                                f'n = {ex.n:,})')
+            record = report.artists.setdefault(panel['id'], {})
+            record.setdefault('group_values', []).append(
+                (g.label, ex.value, ex.half, ey.value, ey.half, ex.n))
+
+
+def draw_group_shapes(ax, panel, data, log_x, log_y, table=None, index=None, report=None):
     """Confidence ellipses and convex hulls around each group of points.
 
     Args:
         data: ``[(group, x, y), ...]`` of the points drawn for each group.
+        table: The particle table, for the ``mean95`` ellipse.
+        index: Group key to the table rows of its drawn points, for the same.
+        report: Where the ``mean95`` values are reported.
     """
     level = panel.get('ellipse', 'none')
     hull = bool(panel.get('hull'))
     if level == 'none' and not hull:
         return
+    if level == 'mean95':
+        draw_group_values(ax, panel, data, table, index, report)
     from scipy import stats
     for g, x, y in data:
         if x.size < 3:
@@ -518,7 +583,9 @@ def isotope_references(ax, panel, table, report):
     allowed). ``iso_refs`` lists source names from
     :func:`results.figure_builder.core.references.isotope_sources`, or
     ``all``. Each source lacking one of the four isotopes is skipped. The
-    points join the legend; nothing is written on the plot.
+    points join the legend; nothing is written on the plot. With
+    ``iso_ref_line`` the sources are joined in the order listed by a dotted
+    line, along which mixtures of two sources fall.
     """
     wanted = (panel.get('iso_refs') or '').strip()
     if not wanted:
@@ -533,6 +600,7 @@ def isotope_references(ax, panel, table, report):
     names = list(isotope_sources()) if wanted.lower() == 'all' else \
         [n.strip() for n in wanted.replace(';', ',').split(',') if n.strip()]
     drawn = []
+    placed = []
     for k, name in enumerate(names):
         x = source_ratio(name, *px)
         y = source_ratio(name, *py)
@@ -542,8 +610,12 @@ def isotope_references(ax, panel, table, report):
                        facecolor='white', edgecolor=SOURCE_COLORS[k % len(SOURCE_COLORS)],
                        linewidths=1.8, zorder=9, label=name)
         drawn.append(h)
+        placed.append((x, y))
         report.stats.append(f'Isotope source {name}: {px[0]}/{px[1]} = {x:.4g}, '
                             f'{py[0]}/{py[1]} = {y:.4g}')
+    if panel.get('iso_ref_line') and len(placed) >= 2:
+        ax.plot([p[0] for p in placed], [p[1] for p in placed], color='#111827', lw=1.0,
+                ls=(0, (1, 2)), zorder=5)
     if drawn:
         from results.figure_builder.core.common import merge_legend
         merge_legend(ax, panel, drawn)

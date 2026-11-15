@@ -19,11 +19,12 @@ from results.figure_builder.core import massbias
 from results.figure_builder.core.isotopes import counts_for_isotope_ratios
 from results.figure_builder.core.common import (
     CBAR_LOCATIONS, Group, RenderReport, annotate, candidate_groups, draw_shapes, fit_decorations,
-    fit_outside_legend, merge_legend, place_colorbar, resolve_groups)
+    fit_outside_legend, merge_legend, place_colorbar, raise_isotopes, resolve_groups,
+    tidy_log_ticks)
 
 SHAPE_KINDS = {'scatter', 'line', 'density', 'hexbin', 'contour', 'histogram', 'box', 'violin',
                'strip', 'bar', 'combinations', 'composition', 'ridgeline', 'code', 'ecdf',
-               'lollipop', 'timeline', 'pca'}
+               'lollipop', 'timeline', 'pca', 'estimate'}
 """Panel kinds that can carry grey areas and reference lines."""
 from results.figure_builder.core.expressions import ExpressionError, ParticleTable
 from results.figure_builder.core.spec import (
@@ -236,7 +237,8 @@ NO_FACET = {'text', 'code', 'pairs', 'spectrum'}
 """Panel kinds that cannot be split into one small plot per group."""
 
 SHARED_LIMIT_KINDS = {'scatter', 'line', 'density', 'hexbin', 'contour', 'histogram', 'box', 'violin',
-                      'strip', 'bar', 'ridgeline', 'ecdf', 'lollipop', 'timeline', 'combinations', 'pca'}
+                      'strip', 'bar', 'ridgeline', 'ecdf', 'lollipop', 'timeline', 'combinations', 'pca',
+                      'estimate'}
 """Kinds whose small multiples can share their axis ranges."""
 
 
@@ -331,6 +333,9 @@ def _category_axes(panel) -> tuple[bool, bool]:
     if kind == 'lollipop':
         vertical = bool(panel.get('lolli_vertical'))
         return vertical, not vertical
+    if kind == 'estimate':
+        vertical = bool(panel.get('est_vertical'))
+        return vertical, not vertical
     if kind == 'ridgeline':
         return False, True
     return False, False
@@ -395,6 +400,10 @@ def _render_panel(fig, index, panel, spec, table, report, style, fw, fh, bg, Rec
         if kind in SHAPE_KINDS:
             merge_legend(ax, panel, draw_shapes(ax, panel))
         annotate(ax, panel)
+        if kind not in ('text', 'code'):
+            tidy_log_ticks(ax)
+            if (panel.get('label_style') or style) == 'isotope':
+                raise_isotopes(ax, ptable.labels)
         textstyle.apply_panel(report.artists[panel['id']], panel, figcfg)
         hd = report.artists[panel['id']]
         if hd.get('cbar') is not None:

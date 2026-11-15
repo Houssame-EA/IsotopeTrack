@@ -54,6 +54,7 @@ from widget.theme_switch import ThemeSwitch
 from tools.signal_selector_dialog import SignalSelectorDialog
 import utils.isobaric_correction as isobaric
 from tools.logging_utils import logging_manager, log_user_action, set_current_window
+from results.shared_plot_utils import release_window
 import logging
 from widget.colors import element_colors
 from tools import window_glass
@@ -319,6 +320,7 @@ class MainWindow(QMainWindow):
         self.sample_tuning_info = {}
         self.sample_raw_spectrum = {}
         self._raw_spectrum_missing = set()
+        self._raw_spectrum_on_request = set()
         self._interference_by_sample = {}
         self.sample_mean_signal = {}
         self.session_reserve = {}
@@ -567,10 +569,24 @@ class MainWindow(QMainWindow):
         self.sample_tuning_info = {}
         self.sample_raw_spectrum = {}
         self._raw_spectrum_missing = set()
+        self._raw_spectrum_on_request = set()
         self._interference_by_sample = {}
         self.sample_mean_signal = {}
         self.session_reserve = {}
         self._view_fitted_samples = set()
+        self._isobaric_raw_backup = {}
+        self.multi_element_particles = []
+        self.saturation_filtered_peaks = {}
+        self.saturation_filtered_multi = {}
+        self.saturation_windows = {}
+        self.saturation_excluded_time_s = {}
+        self.detection_states = {}
+        self.sample_status = {}
+        self.needs_initial_detection = set()
+        self.clear_element_caches()
+        self._display_label_to_element.clear()
+        from results.insights.engine import invalidate_context_cache
+        invalidate_context_cache()
 
         self.mass_fraction_service.reset()
 
@@ -2325,6 +2341,7 @@ class MainWindow(QMainWindow):
                                            QMessageBox.ButtonRole.RejectRole)
                 msg.setDefaultButton(btn_cancel)
                 msg.exec()
+                release_window(msg)
                 clicked = msg.clickedButton()
                 if clicked is btn_ignore:
                     return True, True
@@ -2524,7 +2541,9 @@ class MainWindow(QMainWindow):
         ok_button.clicked.connect(dialog.accept)
         cancel_button.clicked.connect(dialog.reject)
 
-        if dialog.exec() == QDialog.DialogCode.Accepted:
+        result = dialog.exec()
+        release_window(dialog)
+        if result == QDialog.DialogCode.Accepted:
             if folder_radio.isChecked():
                 self.select_folders()
             elif csv_radio.isChecked():
@@ -2600,7 +2619,9 @@ class MainWindow(QMainWindow):
                 tree_view.setSelectionMode(
                     QAbstractItemView.SelectionMode.ExtendedSelection)
 
-            if file_dialog.exec() == QDialog.DialogCode.Accepted:
+            result = file_dialog.exec()
+            release_window(file_dialog)
+            if result == QDialog.DialogCode.Accepted:
                 selected_paths = file_dialog.selectedFiles()
 
                 if not selected_paths:
@@ -2725,7 +2746,9 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(cancel_button)
         layout.addLayout(button_layout)
 
-        return dialog.exec() == QDialog.DialogCode.Accepted
+        result = dialog.exec()
+        release_window(dialog)
+        return result == QDialog.DialogCode.Accepted
 
     def rebuild_isotope_dict_from_set(self, isotope_set):
         """Rebuild isotope dictionary from a set of (element, isotope) tuples.
@@ -2805,6 +2828,7 @@ class MainWindow(QMainWindow):
             self.time_array_by_sample.clear()
             self.sample_raw_spectrum.clear()
             self._raw_spectrum_missing.clear()
+            self._raw_spectrum_on_request.clear()
             self._interference_by_sample.clear()
             self.current_sample = None
             self.all_masses = None
@@ -3639,6 +3663,11 @@ class MainWindow(QMainWindow):
                 removed_count += 1
             if hasattr(self, 'needs_initial_detection'):
                 self.needs_initial_detection.discard(sample_name)
+            for store in (self._isobaric_raw_backup, self.sample_dilutions,
+                          self._exclusion_regions_by_sample):
+                store.pop(sample_name, None)
+            self._raw_spectrum_missing.discard(sample_name)
+            self._raw_spectrum_on_request.discard(sample_name)
 
             self.update_sample_table()
 
@@ -5021,7 +5050,9 @@ class MainWindow(QMainWindow):
             all_samples
         )
 
-        if dialog.exec() == QDialog.DialogCode.Accepted:
+        result = dialog.exec()
+        release_window(dialog)
+        if result == QDialog.DialogCode.Accepted:
             selected_elements = dialog.selected_elements
             parameters = dialog.get_parameters()
             selected_samples = dialog.get_selected_samples()
@@ -5957,6 +5988,7 @@ class MainWindow(QMainWindow):
             from PySide6.QtWidgets import QProgressDialog
             progress = QProgressDialog("Calculating mass data for all samples...", "Cancel",
                                        0, len(all_samples_with_data), self)
+            progress.setAttribute(Qt.WA_DeleteOnClose)
             progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.show()
 
@@ -5977,6 +6009,7 @@ class MainWindow(QMainWindow):
             if len(particles) > 1000:
                 from PySide6.QtWidgets import QProgressDialog
                 progress = QProgressDialog("Calculating mass data...", "Cancel", 0, len(particles), self)
+                progress.setAttribute(Qt.WA_DeleteOnClose)
                 progress.setWindowModality(Qt.WindowModality.WindowModal)
                 progress.show()
             else:
@@ -6260,11 +6293,18 @@ class MainWindow(QMainWindow):
         Args:
             sample_name (str): Sample name.
 
+        A sample from a project saved without its spectrum is not looked up
+        in its run folder until the user asks for it (see
+        :meth:`load_raw_spectrum_on_request`): the folder may be on a drive
+        that is gone, and reading every snapshot of a run takes a while.
+
         Returns:
             dict | None: ``{'spectrum', 'n_snapshots'}``, or None when the
             sample has no usable raw snapshots.
         """
         entry = self.sample_raw_spectrum.get(sample_name)
+        if entry is None and sample_name in self._raw_spectrum_on_request:
+            return None
         if entry is None and sample_name not in self._raw_spectrum_missing:
             folder = self.sample_to_folder_map.get(sample_name)
             entry = read_nu_raw_spectrum(folder)
@@ -6273,6 +6313,51 @@ class MainWindow(QMainWindow):
             elif folder and Path(str(folder)).exists():
                 self._raw_spectrum_missing.add(sample_name)
         return entry
+
+    def load_raw_spectrum_on_request(self, sample_name):
+        """Read the spectrum of a sample from an older project from its run folder, when asked.
+
+        Args:
+            sample_name (str): Sample name.
+
+        Returns:
+            bool: True when the spectrum was read.
+        """
+        self._raw_spectrum_on_request.discard(sample_name)
+        self._raw_spectrum_missing.discard(sample_name)
+        self._interference_by_sample.pop(sample_name, None)
+        folder = self.sample_to_folder_map.get(sample_name)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self.status_label.setText(f"Reading the spectrum of {sample_name}…")
+            QApplication.processEvents()
+            entry = self._raw_spectrum_for(sample_name)
+        except Exception:
+            self.logger.exception(f"Could not read the spectrum of {sample_name}")
+            entry = None
+        finally:
+            QApplication.restoreOverrideCursor()
+        if entry:
+            self.status_label.setText(f"Spectrum of {sample_name} loaded")
+        elif not folder or not Path(str(folder)).exists():
+            self._raw_spectrum_on_request.add(sample_name)
+            self.status_label.setText(f"Run folder of {sample_name} not found")
+        else:
+            self.status_label.setText(f"No spectrum in the run folder of {sample_name}")
+        self._refresh_spectrum_view()
+        return bool(entry)
+
+    def _spectrum_request_message(self, sample):
+        """The message and button the Spectrum view shows for a sample whose spectrum waits for the user."""
+        folder = self.sample_to_folder_map.get(sample)
+        found = bool(folder) and Path(str(folder)).exists()
+        text = ("This project was saved without the resolved spectrum.\n\n"
+                "It can be read from the sample's run folder:\n"
+                f"{folder or 'no folder recorded'}")
+        if not found and folder:
+            text += "\n\nThe folder is not reachable now; connect its drive, then try again."
+        return text, ("Load spectrum from the run folder",
+                      lambda s=sample: self.load_raw_spectrum_on_request(s))
 
     def _fit_plot_view(self):
         """Fit the time plot to its data now, not at the next repaint.
@@ -6304,6 +6389,10 @@ class MainWindow(QMainWindow):
         sample = self.current_sample
         entry = self._raw_spectrum_for(sample) if sample else None
         run_info = self.sample_run_info.get(sample) if sample else None
+        if (not entry and sample in self._raw_spectrum_on_request
+                and 'MassCalCoefficients' in (run_info or {})):
+            plot.show_message(*self._spectrum_request_message(sample))
+            return
         if not entry or 'MassCalCoefficients' not in (run_info or {}):
             plot.show_message(
                 "No resolved spectrum for this sample.\n\nIt needs the .raw snapshot files "
@@ -6544,6 +6633,7 @@ class MainWindow(QMainWindow):
         dlg_layout.addLayout(btn_row)
 
         dialog.exec()
+        release_window(dialog)
 
     # ------------------------------------------------------------------
     # Inline m/z view helpers
@@ -7071,6 +7161,7 @@ class MainWindow(QMainWindow):
 
         dialog = SignalSelectorDialog(self, self)
         dialog.exec()
+        release_window(dialog)
 
     def toggle_all_signals(self):
         """Toggle between single and multi-signal view."""
@@ -7191,7 +7282,9 @@ class MainWindow(QMainWindow):
             parent
         )
 
-        if dialog.exec() == QDialog.DialogCode.Accepted:
+        result = dialog.exec()
+        release_window(dialog)
+        if result == QDialog.DialogCode.Accepted:
             parent.selected_transport_rate_methods = dialog.selected_methods
             parent.average_transport_rate = dialog.average_transport_rate
             parent.update_calibration_display()
@@ -7705,7 +7798,9 @@ class MainWindow(QMainWindow):
         except (TypeError, ValueError):
             interval_ms = 120_000
         dlg = AutoSaveSettingsDialog(enabled, interval_ms, self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.DialogCode.Accepted:
             new_enabled, new_interval_ms = dlg.result_values()
             self._autosave.reconfigure(new_enabled, new_interval_ms)
 
@@ -8561,7 +8656,9 @@ class MainWindow(QMainWindow):
         buttons.addWidget(cancel_btn)
         layout.addLayout(buttons)
 
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        result = dialog.exec()
+        release_window(dialog)
+        if result != QDialog.DialogCode.Accepted:
             return
 
         self.saturation_filter_ms = float(spin.value())
@@ -8802,6 +8899,7 @@ class MainWindow(QMainWindow):
         from tools.help_dialogs import AboutDialog
         dialog = AboutDialog(self)
         dialog.exec()
+        release_window(dialog)
 
     def show_log_window(self):
         """Open the application log viewer window."""

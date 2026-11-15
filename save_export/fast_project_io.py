@@ -430,7 +430,8 @@ def save_project_v2(filepath, mw: MainWindow, progress_callback=None, include_re
             raw_spectra = {}
             for sample_name in sample_names:
                 entry = (getattr(mw, 'sample_raw_spectrum', None) or {}).get(sample_name)
-                if (not entry or entry.get('spectrum') is None) and include_reserve:
+                waiting = sample_name in (getattr(mw, '_raw_spectrum_on_request', None) or ())
+                if (not entry or entry.get('spectrum') is None) and include_reserve and not waiting:
                     _progress(54, f"Saving resolved spectrum: {sample_name}")
                     entry = _read_spectrum(mw.sample_to_folder_map.get(sample_name))
                 if not entry or entry.get('spectrum') is None:

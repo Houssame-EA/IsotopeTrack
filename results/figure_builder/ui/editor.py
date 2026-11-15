@@ -82,13 +82,15 @@ from results.figure_builder.core.expressions import (
     DATA_TYPES, QUANTITY_PREFIXES, split_list, validate)
 from results.figure_builder.ui.widgets import (
     ColorButton, ExpressionEdit, GroupsTable, RowTable, mono_font)
+from results.shared_plot_utils import release_window
 
 PLOTS = {'scatter', 'line', 'histogram', 'box', 'violin', 'bar', 'density', 'hexbin', 'contour', 'strip',
-         'ecdf', 'timeline', 'lollipop', 'spectrum'}
+         'ecdf', 'timeline', 'lollipop', 'spectrum', 'estimate'}
 XY = {'scatter', 'density', 'hexbin', 'contour'}
 XLINE = XY | {'line'}
 DIST = {'box', 'violin'}
-VALUED = {'histogram', 'box', 'violin', 'bar', 'pie', 'strip', 'ridgeline', 'ecdf', 'timeline'}
+VALUED = {'histogram', 'box', 'violin', 'bar', 'pie', 'strip', 'ridgeline', 'ecdf', 'timeline',
+          'estimate'}
 SUMMARISED = {'histogram', 'box', 'violin', 'strip', 'ridgeline'}
 MATRIX = {'corr_matrix', 'heatmap', 'cooccurrence'}
 CBAR = {'scatter', 'density', 'hexbin', 'ternary'} | MATRIX
@@ -101,7 +103,7 @@ COMBOS = {'combinations', 'treemap'}
 SHARES = {'treemap'}
 TESTABLE = {'histogram', 'box', 'violin', 'bar', 'strip', 'ridgeline'}
 GROUPING = {'scatter', 'line', 'histogram', 'box', 'violin', 'bar', 'pie', 'ternary', 'code',
-            'strip', 'ridgeline', 'contour', 'hexbin', 'ecdf', 'timeline'} | ITEMS
+            'strip', 'ridgeline', 'contour', 'hexbin', 'ecdf', 'timeline', 'estimate'} | ITEMS
 ALL = set(E.PANEL_KINDS)
 STORED = {'text', 'spectrum'}
 """Kinds drawn from what the panel itself stores, not from the particles."""
@@ -162,7 +164,7 @@ ANNOTATION_COLUMNS = [
 ]
 
 MASS_BIAS = {'scatter', 'histogram', 'box', 'violin', 'strip', 'bar', 'line', 'ecdf', 'ridgeline',
-             'lollipop'}
+             'lollipop', 'estimate'}
 """Panel kinds whose isotope ratios can be mass-bias corrected."""
 
 FIELDS = [
@@ -209,6 +211,8 @@ FIELDS = [
     ('Data', 'What to plot', 'node_size', 'Node size shows', 'combo', {'network'}, NODE_SIZES),
     ('Data', 'What to plot', 'pca_transform', 'Prepare values', 'combo', {'pca'}, PCA_TRANSFORMS),
     ('Data', 'What to plot', 'per_ml', 'Count as particles per mL', 'check', PER_ML, None),
+    ('Data', 'What to plot', 'net_method', 'Correlation', 'combo', {'network'},
+     {'pearson': 'Pearson r', 'spearman': 'Spearman rank ρ'}),
     ('Data', 'What to plot', 'corr_method', 'Correlation', 'combo', {'corr_matrix', 'pairs'},
      {'pearson': 'Pearson', 'spearman': 'Spearman (rank)', 'kendall': 'Kendall'}),
     ('Data', 'What to plot', 'log_values', 'Log-transform values first', 'check',
@@ -275,6 +279,9 @@ FIELDS = [
     ('Style', 'Markers', 'size_by', 'Size by value', 'expr', {'scatter'}, 'optional, e.g. total'),
     ('Style', 'Around the groups', 'ellipse', 'Ellipse', 'combo', {'scatter'}, ELLIPSES),
     ('Style', 'Around the groups', 'hull', 'Outline (convex hull)', 'check', {'scatter'}, None),
+    ('Style', 'Chart options', 'est_vertical', 'Groups along the bottom', 'check', {'estimate'}, None),
+    ('Style', 'Chart options', 'est_median', 'Mark the median of particles', 'check', {'estimate'}, None),
+    ('Style', 'Chart options', 'est_replicates', 'Mark each replicate', 'check', {'estimate'}, None),
     ('Style', 'Around the groups', 'trend', 'Trend curve', 'combo', {'scatter'}, TRENDS),
     ('Style', 'Around the groups', 'trend_bins', 'Trend points', 'int', {'scatter'}, (4, 60)),
     ('Style', 'Around the groups', 'marginals', 'Along the edges', 'combo', {'scatter'}, MARGINALS),
@@ -301,10 +308,11 @@ FIELDS = [
     ('Style', 'Colour bar', 'c_max', 'Colour range to', 'text', CBAR, 'auto'),
     ('Style', 'Colour scale', 'y2_color', 'Right axis colour', 'color', {'scatter'}, None),
     ('Style', 'Lines', 'line_width', 'Line width', 'float',
-     {'scatter', 'line', 'histogram', 'radar', 'ecdf', 'lollipop', 'timeline', 'spectrum'}, (0.2, 8, 0.2)),
+     {'scatter', 'line', 'histogram', 'radar', 'ecdf', 'lollipop', 'timeline', 'spectrum',
+      'estimate'}, (0.2, 8, 0.2)),
     ('Style', 'Lines', 'line_style', 'Line style', 'combo', {'scatter', 'line', 'histogram'}, S.LINE_STYLES),
     ('Style', 'Chart options', 'annotate', 'Show values', 'check',
-     MATRIX | {'composition', 'combinations', 'lollipop'}, None),
+     MATRIX | {'composition', 'combinations', 'lollipop', 'estimate'}, None),
     ('Style', 'Chart options', 'lolli_vertical', 'Vertical', 'check', {'lollipop'}, None),
     ('Style', 'Chart options', 'lolli_sort', 'Sort by value', 'check', {'lollipop'}, None),
     ('Style', 'Chart options', 'show_sig', 'Significance stars', 'check', {'corr_matrix'}, None),
@@ -341,7 +349,8 @@ FIELDS = [
     ('Style', 'Chart options', 'pie_labels', 'Slice labels', 'combo', {'pie'}, PIE_LABELS),
     ('Style', 'Chart options', 'pie_label_pos', 'Labels', 'combo', {'pie'},
      {'inside': 'Inside the slices', 'outside': 'Outside, with lines'}),
-    ('Style', 'Chart options', 'other_pct', 'Group slices below (%) as Others', 'float', {'pie'}, (0, 50, 0.5)),
+    ('Style', 'Chart options', 'other_pct', 'Group slices below (%) as Others', 'float',
+     {'pie', 'composition'}, (0, 50, 0.5)),
     ('Style', 'Chart options', 'sun_outer', 'Companion sets shown per element', 'int', {'pie'}, (1, 20)),
     ('Style', 'Chart options', 'start_angle', 'Start angle (°)', 'float', {'pie'}, (0, 360, 15)),
     ('Style', 'Chart options', 'pie_explode', 'Gap between slices', 'float', {'pie'}, (0, 0.3, 0.02)),
@@ -373,6 +382,8 @@ FIELDS = [
     ('Style', 'Chart options', 'hist_style', 'Bars', 'combo', {'histogram'},
      {'filled': 'Filled', 'step': 'Outline'}),
     ('Style', 'Chart options', 'density', 'Normalise (density)', 'check', {'histogram'}, None),
+    ('Style', 'Chart options', 'hist_percent', 'Show each group as % of its particles', 'check',
+     {'histogram'}, None),
     ('Style', 'Chart options', 'kde', 'Smooth curve (KDE)', 'check', {'histogram'}, None),
     ('Style', 'Chart options', 'cumulative', 'Cumulative', 'check', {'histogram'}, None),
     ('Style', 'Chart options', 'band', 'Shaded band', 'combo', {'line'},
@@ -441,6 +452,10 @@ FIELDS = [
     ('Stats', 'Fit', 'fit_band', '95% confidence band', 'check', {'scatter'}, None),
     ('Stats', 'Fit', 'sd_band', 'Fit ± SD of the residuals', 'check', {'scatter'}, None),
     ('Stats', 'Fit', 'show_r', "Show the line's equation", 'check', {'scatter'}, None),
+    ('Stats', 'Fit', 'fit_range', 'Shade the range of slopes (y on x to x on y)', 'check',
+     {'scatter'}, None),
+    ('Stats', 'Fit', 'ratio_lines', 'Fixed-ratio lines (y/x)', 'text', {'scatter'},
+     'median, or values, e.g. 2.9, 13'),
     ('Stats', 'Mass-bias correction', 'mb_method', 'Correction', 'combo', MASS_BIAS, MB.METHODS),
     ('Stats', 'Mass-bias correction', 'mb_source', 'Reference', 'combo', MASS_BIAS, MB.SOURCES),
     ('Stats', 'Mass-bias correction', 'mb_ref', 'Reference pair', 'text', MASS_BIAS,
@@ -457,6 +472,8 @@ FIELDS = [
     ('Stats', 'Isotope ratios', 'natural_color', 'Line colour', 'color', {'scatter'}, None),
     ('Stats', 'Isotope ratios', 'iso_refs', 'Isotope sources', 'text', {'scatter'},
      'all, or names, e.g. Broken Hill ore (both axes must be isotope ratios)'),
+    ('Stats', 'Isotope ratios', 'iso_ref_line', 'Join the sources with a mixing line', 'check',
+     {'scatter'}, None),
     ('Stats', 'Isotope ratios', 'refs_button_iso', '', 'button', {'scatter'}, 'Isotope sources…'),
     ('Axes', 'Zoom inset', 'inset_zoom', 'Zoom on', 'text', {'scatter'}, 'x from, x to, y from, y to'),
     ('Axes', 'Zoom inset', 'inset_loc', 'Inset position', 'combo', {'scatter'}, INSET_LOCS),
@@ -688,7 +705,12 @@ class PanelEditor(QWidget):
         elif kind == 'longtext':
             w = QPlainTextEdit()
             w.setMinimumHeight(120)
-            w.setPlaceholderText('Caption, method note, sample description…')
+            w.setPlaceholderText('Caption, method note, sample description…\n\n'
+                                 'A new line starts a paragraph, **words** are bold,\n'
+                                 'and a line starting with ✓, ✗ or – is drawn as a check.')
+            w.setToolTip('The text wraps to the panel\'s width. A new line starts a paragraph, '
+                         '**words** are set in bold, and a line starting with ✓, ✗ or – '
+                         'is drawn as a coloured check.')
             w.textChanged.connect(lambda ww=w: self._set('text', ww.toPlainText()))
         else:
             w = QPlainTextEdit()
@@ -704,14 +726,24 @@ class PanelEditor(QWidget):
     def _edit_references(self):
         """Open the reference values window and redraw when they changed."""
         from results.figure_builder.ui.references_dialog import ReferencesDialog
-        if ReferencesDialog(self).exec():
+        dialog = ReferencesDialog(self)
+        accepted = dialog.exec()
+        release_window(dialog)
+        if accepted:
             self.changed.emit()
 
     def _remember_expr(self, w):
         self._last_expr = w
 
     def _build_insert_menu(self, table):
+        """Fill the insert menu for *table*, deleting the submenus of the previous fill.
+
+        ``QMenu.clear()`` removes actions but keeps the submenus ``addMenu``
+        created as children of the menu, so each refill would add another set.
+        """
         m = self.insert_menu
+        for sub in m.findChildren(QMenu, options=Qt.FindChildOption.FindDirectChildrenOnly):
+            sub.deleteLater()
         m.clear()
         if table is None:
             return

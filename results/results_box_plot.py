@@ -26,8 +26,7 @@ from results.shared_plot_utils import (
     LABEL_MODES, Renderer, HtmlAxisItem,
     SHADE_TYPES,
     _apply_box, _add_hband, _add_det_limit_h, apply_plot_title_style,
-    apply_axis_label_style, get_font_config,
-)
+    apply_axis_label_style, get_font_config, release_window, clear_plot_layout)
 from results.utils_sort import (
     sort_elements_by_mass,
     element_alphabetical_key,
@@ -1399,7 +1398,9 @@ class BoxPlotDisplayDialog(QDialog):
 
         dlg.preview_requested.connect(lambda cfg: (
             self.node.config.update(cfg), self._refresh(), _maybe_warn_swallowed()))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
             _maybe_warn_swallowed()
@@ -1432,6 +1433,7 @@ class BoxPlotDisplayDialog(QDialog):
             )
             dlg.setWindowTitle("Box plot format settings")
             dlg.exec()
+            release_window(dlg)
 
     def _open_plot_format_settings(self):
         """Open Box Plot visual format settings in a config-driven route.
@@ -1766,7 +1768,7 @@ class BoxPlotDisplayDialog(QDialog):
             ``Subplots by sample`` / ``Subplots by isotope``.
         """
         try:
-            self.pw.clear()
+            clear_plot_layout(self.pw)
             self._subplot_context_by_plotitem = {}
             plot_data = self.node.extract_plot_data()
             if not plot_data:
