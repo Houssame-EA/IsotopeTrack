@@ -24,8 +24,7 @@ from results.shared_plot_utils import (
     SHADE_TYPES, apply_outlier_filter,
     _apply_box, _add_hband,
     _add_det_limit_h,
-    apply_plot_title_style, apply_axis_label_style,
-)
+    apply_plot_title_style, apply_axis_label_style, release_window, clear_plot_layout)
 from utils.unit import units
 from utils.signal_stats import mean_signal_ratio
 from widget.unit_combo import UnitComboBox
@@ -1343,7 +1342,9 @@ class IsotopeSettingsDialog(QDialog):
         dlg = SampleCorrectionDialog(
             sample_name, scfg, ref_elems,
             self._sample_names, node=self._node, parent=self)
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             new_cfg = dlg.collect()
             self._sample_corr_cfgs[sample_name] = new_cfg
             self.sample_corr_table.item(row, 1).setText(new_cfg.get('correction_method', 'None'))
@@ -2112,7 +2113,9 @@ class IsotopicRatioDisplayDialog(QDialog):
             self.parent_window, self,
             node=self.node, scope=scope, dialog_title=title)
         dlg.preview_requested.connect(_do_preview)
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._auto_calc_natural()
             self._auto_calc_standard()
@@ -2411,7 +2414,7 @@ class IsotopicRatioDisplayDialog(QDialog):
         This preserves existing scientific extraction/correction paths while
         updating only presentation and quantity selections from dialog routes.
         """
-        self.plot_widget.clear()
+        clear_plot_layout(self.plot_widget)
         plot_data = self.node.extract_plot_data()
 
         if not plot_data:

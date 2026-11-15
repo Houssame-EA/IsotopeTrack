@@ -28,6 +28,7 @@ from calibration_methods.te_common import (
 
 from tools.theme import theme
 from calibration_methods import sensitivity_checks
+from results.shared_plot_utils import release_window
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.calibration_methods.ionic_CAL")
 from tools.logging_utils import log_context
@@ -1395,6 +1396,7 @@ class IonicCalibrationWindow(QMainWindow):
         row_layout.addWidget(close)
         layout.addLayout(row_layout)
         dialog.exec()
+        release_window(dialog)
 
     def _fit_with_drift(self, x, y, y_std, included_mask, density):
         """
@@ -2543,6 +2545,7 @@ class IonicCalibrationWindow(QMainWindow):
         box.addButton(QMessageBox.StandardButton.Cancel)
         box.setDefaultButton(QMessageBox.StandardButton.Cancel)
         box.exec()
+        release_window(box)
         if box.clickedButton() is not remove_btn:
             return
 
@@ -3036,6 +3039,7 @@ class IonicCalibrationWindow(QMainWindow):
             )
             dlg.setDefaultButton(btn_add)
             dlg.exec()
+            release_window(dlg)
 
             if dlg.clickedButton() is btn_add:
                 return
@@ -3965,7 +3969,9 @@ class IonicCalibrationWindow(QMainWindow):
         ok_button.clicked.connect(dialog.accept)
         cancel_button.clicked.connect(dialog.reject)
 
-        if dialog.exec() == QDialog.Accepted:
+        result = dialog.exec()
+        release_window(dialog)
+        if result == QDialog.Accepted:
             if folder_radio.isChecked():
                 ual = _ual()
                 if ual:
@@ -4020,6 +4026,7 @@ class IonicCalibrationWindow(QMainWindow):
         """
         try:
             progress = QProgressDialog("Processing TOFWERK files...", "Cancel", 0, 100, self)
+            progress.setAttribute(Qt.WA_DeleteOnClose)
             progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setMinimumDuration(0)
             progress.show()
@@ -4125,7 +4132,9 @@ class IonicCalibrationWindow(QMainWindow):
             if tree_view:
                 tree_view.setSelectionMode(QAbstractItemView.ExtendedSelection)
             
-            if file_dialog.exec() == QDialog.Accepted:
+            result = file_dialog.exec()
+            release_window(file_dialog)
+            if result == QDialog.Accepted:
                 selected_paths = file_dialog.selectedFiles()
 
                 if not selected_paths:
@@ -4193,6 +4202,7 @@ class IonicCalibrationWindow(QMainWindow):
                 return
                 
             progress = QProgressDialog("Processing files...", "Cancel", 0, 100, self)
+            progress.setAttribute(Qt.WA_DeleteOnClose)
             progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setMinimumDuration(0)
             progress.show()
@@ -4270,6 +4280,7 @@ class IonicCalibrationWindow(QMainWindow):
         valid folders, and updates UI.
         """
         progress = QProgressDialog("Processing selected folders...", "Cancel", 0, 100, self)
+        progress.setAttribute(Qt.WA_DeleteOnClose)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)
         progress.show()
@@ -4354,8 +4365,10 @@ class IonicCalibrationWindow(QMainWindow):
                     btn_skip   = dlg.addButton("Skip Folder",         QMessageBox.ButtonRole.RejectRole)
                     dlg.setDefaultButton(btn_skip)
                     dlg.exec()
+                    release_window(dlg)
 
                     progress = QProgressDialog("Processing selected folders...", "Cancel", 0, 100, self)
+                    progress.setAttribute(Qt.WA_DeleteOnClose)
                     progress.setWindowModality(Qt.WindowModality.WindowModal)
                     progress.show()
 
@@ -4378,6 +4391,7 @@ class IonicCalibrationWindow(QMainWindow):
                     f"Error validating folder {folder}:\n{str(e)}\n\nThis folder will be skipped."
                 )
                 progress = QProgressDialog("Processing selected folders...", "Cancel", 0, 100, self)
+                progress.setAttribute(Qt.WA_DeleteOnClose)
                 progress.setWindowModality(Qt.WindowModality.WindowModal)
                 progress.show()
                 continue

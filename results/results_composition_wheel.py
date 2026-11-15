@@ -44,8 +44,7 @@ from results.shared_plot_utils import copy_figure_to_clipboard
 from results.shared_plot_utils import (
     FontSettingsGroup, Renderer, LABEL_MODES, build_element_matrix,
     format_element_label, get_display_name, get_sample_color,
-    DownloadConfigDialog, make_font_properties,
-)
+    DownloadConfigDialog, make_font_properties, release_window)
 from results.utils_sort import sort_elements_by_mass
 from utils.unit import units
 import logging
@@ -230,7 +229,9 @@ class CompositionWheelCanvas(QWidget):
     def export_figure(self, parent=None):
         """Reuse the standard download dialog (matplotlib path)."""
         dlg = DownloadConfigDialog('composition_wheel', parent=parent)
-        if dlg.exec() != QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result != QDialog.Accepted:
             return
         c = dlg.collect()
         from PySide6.QtWidgets import QFileDialog
@@ -589,7 +590,9 @@ class CompositionWheelDisplayDialog(QDialog):
         dlg = CompositionWheelSettingsDialog(
             self.node.config, None, elements, self)
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
         else:
@@ -692,7 +695,9 @@ class CompositionWheelPlotNode(QObject):
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        CompositionWheelDisplayDialog(self, parent_window).exec()
+        dialog = CompositionWheelDisplayDialog(self, parent_window)
+        dialog.exec()
+        release_window(dialog)
         return True
 
     def process_data(self, input_data):

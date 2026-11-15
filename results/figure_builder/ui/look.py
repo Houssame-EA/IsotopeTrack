@@ -38,10 +38,14 @@ def is_dark() -> bool:
 
 
 def connect(slot):
-    """Call ``slot`` whenever the application theme changes (no-op outside the app)."""
+    """Call ``slot`` whenever the application theme changes (no-op outside the app).
+
+    ``slot`` should be a method of a Qt object: the connection then ends
+    when that object is destroyed, instead of keeping it alive.
+    """
     try:
         from tools.theme import theme
-        theme.themeChanged.connect(lambda _name: slot())
+        theme.themeChanged.connect(slot)
     except Exception:
         pass
 
@@ -63,7 +67,17 @@ def window_qss(p=None) -> str:
 def style(widget):
     """Apply the window stylesheet to a dialog (and keep it in sync with the theme)."""
     widget.setStyleSheet(window_qss())
-    connect(lambda w=widget: _restyle(w))
+    try:
+        from PySide6.QtCore import QObject
+    except Exception:
+        return
+
+    class _Restyler(QObject):
+        def restyle(self, *_):
+            """Re-apply the window stylesheet to the dialog that owns this object."""
+            _restyle(self.parent())
+
+    connect(_Restyler(widget).restyle)
 
 
 def _restyle(widget):

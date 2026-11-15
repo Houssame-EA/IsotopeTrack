@@ -241,11 +241,15 @@ def combination_codes(values, mask):
 
 
 def combination_keys(table, exprs, mask):
-    """Per-particle combination labels (bare symbols joined by ' + ')."""
+    """Per-particle combination labels (bare symbols joined by ' + ').
+
+    An element listed through several isotopes is named once.
+    """
     values = [np.nan_to_num(evaluate(e, table), nan=0.0) for e in exprs]
     names = _symbol_names(exprs)
     codes, patterns, _counts = combination_codes(values, mask)
-    labels = [' + '.join(names[c] for c in np.flatnonzero(p)) or 'none' for p in patterns]
+    labels = [' + '.join(dict.fromkeys(names[c] for c in np.flatnonzero(p))) or 'none'
+              for p in patterns]
     lookup = np.empty(len(labels) + 1, dtype=object)
     lookup[:len(labels)] = labels
     lookup[-1] = ''

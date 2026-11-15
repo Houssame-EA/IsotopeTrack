@@ -113,8 +113,12 @@ def draw_scatter(fig, ax, panel, table, report, style):
             draw_lines(ax, trends, fx, g, panel, report, log_x, log_y, len(groups))
         elif panel.get('show_fit') or panel.get('show_r'):
             draw_fit(ax, x[m], y[m], g, panel, report, log_x, log_y)
+        if panel.get('fit_range'):
+            draw_slope_range(ax, x[m], y[m], g, panel, report, log_x, log_y)
+    draw_ratio_lines(ax, panel, drawn, report)
     draw_series(ax, panel, table, style, log_x, log_y)
-    draw_group_shapes(ax, panel, drawn, log_x, log_y)
+    draw_group_shapes(ax, panel, drawn, log_x, log_y, table,
+                      handles(report, panel).get('band_index'), report)
     draw_trends(ax, panel, drawn, log_x, log_y)
     poisson_band(ax, panel, drawn, report, table)
     natural_line(ax, panel, table, report)
@@ -303,6 +307,100 @@ def line_equation(slope: float, intercept: float, log_x: bool, log_y: bool) -> s
     if log_x:
         return f'y = {_num(slope)}·log x {sign} {_num(abs(intercept))}'
     return f'y = {_num(slope)}x {sign} {_num(abs(intercept))}'
+
+
+def slope_range(fx, fy) -> tuple[float, float, float, float] | None:
+    """The two slopes that bracket the true one when both variables are noisy.
+
+    Least squares of y on x is flattened by noise in x; least squares of x
+    on y, turned round, is steepened by noise in y. Whatever share of the
+    scatter belongs to each variable, the slope of the underlying relation
+    lies between the two.
+
+    Args:
+        fx: X values as plotted (log10 on a log axis).
+        fy: Y values as plotted.
+
+    Returns:
+        ``(low, high, mean_x, mean_y)``, the bracketing slopes and the point
+        both lines pass through, or ``None`` when no slope can be fitted.
+    """
+    fx, fy = np.asarray(fx, dtype=float), np.asarray(fy, dtype=float)
+    if fx.size < 3 or np.ptp(fx) == 0 or np.ptp(fy) == 0:
+        return None
+    sxx, syy = float(np.var(fx)), float(np.var(fy))
+    sxy = float(np.mean((fx - fx.mean()) * (fy - fy.mean())))
+    if sxy == 0:
+        return None
+    a, b = sxy / sxx, syy / sxy
+    return min(a, b), max(a, b), float(fx.mean()), float(fy.mean())
+
+
+def draw_slope_range(ax, x, y, g, panel, report, log_x, log_y):
+    """Shade the wedge between the y-on-x and x-on-y fits and report the two slopes.
+
+    On two log axes a slope of 1 means y is proportional to x, a fixed
+    ratio; the report says whether 1 lies inside the range.
+    """
+    fx = np.log10(x) if log_x else x
+    fy = np.log10(y) if log_y else y
+    found = slope_range(fx, fy)
+    if found is None:
+        return
+    lo, hi, cx, cy = found
+    xs = np.linspace(fx.min(), fx.max(), 100)
+    y1, y2 = cy + lo * (xs - cx), cy + hi * (xs - cx)
+    px = 10 ** xs if log_x else xs
+    ax.fill_between(px, 10 ** y1 if log_y else y1, 10 ** y2 if log_y else y2, color=g.color,
+                    alpha=0.22, lw=0, zorder=4, label=f'{g.label}: slope {lo:.2f} to {hi:.2f}')
+    note = ''
+    if log_x and log_y and lo > 0:
+        note = ('; 1 lies inside, so a fixed ratio is not ruled out' if lo <= 1 <= hi
+                else '; 1 lies outside, so y is not proportional to x')
+    report.stats.append(f'{g.label}: the slope lies between {lo:.3g} (y on x) and {hi:.3g} '
+                        f'(x on y){note}')
+    record = report.artists.setdefault(panel['id'], {})
+    record.setdefault('slope_range', []).append((g.label, lo, hi))
+
+
+RATIO_LINE_COLORS = ('#c2410c', '#7c3aed', '#0f766e', '#be123c')
+"""Colours of the fixed-ratio lines, in the order listed."""
+
+
+def draw_ratio_lines(ax, panel, data, report):
+    """Lines along which y/x is constant, for the ratios listed in ``ratio_lines``.
+
+    ``median`` draws the median y/x of the particles shown; numbers draw
+    those ratios. ``ratio_lines_label`` names the ratio in the legend in
+    place of ``y/x``. On two log axes each is a straight line of slope 1, so a
+    cloud lying along one has a fixed ratio.
+    """
+    wanted = str(panel.get('ratio_lines') or '').strip()
+    if not wanted or not data:
+        return
+    x = np.concatenate([d[1] for d in data])
+    y = np.concatenate([d[2] for d in data])
+    ok = np.isfinite(x) & np.isfinite(y) & (x > 0) & (y > 0)
+    if int(ok.sum()) < 2:
+        return
+    ratios = []
+    for part in wanted.replace(';', ',').split(','):
+        part = part.strip()
+        if part.lower() == 'median':
+            ratios.append(float(np.median(y[ok] / x[ok])))
+        else:
+            try:
+                value = float(part)
+            except ValueError:
+                continue
+            if value > 0:
+                ratios.append(value)
+    xs = np.array([x[ok].min(), x[ok].max()])
+    for k, r in enumerate(ratios):
+        ax.plot(xs, r * xs, color=RATIO_LINE_COLORS[k % len(RATIO_LINE_COLORS)], lw=1.5,
+                ls=(0, (5, 3)), zorder=6,
+                label=f"{panel.get('ratio_lines_label') or 'y/x'} = {r:.3g}")
+        report.stats.append(f'Fixed-ratio line: y/x = {r:.4g}')
 
 
 def draw_fit(ax, x, y, g, panel, report, log_x, log_y):

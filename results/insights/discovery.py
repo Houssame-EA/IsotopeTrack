@@ -920,10 +920,13 @@ def ratio_split_panel(a: str, b: str, c: str) -> dict:
 
     Each population gets its own counting-statistics envelope, so the plot
     shows at once whether the gap between the two ratios is more than
-    counting noise.
+    counting noise. Both axes are logarithmic: signals and ratios span
+    decades, and on linear axes a few large particles squeeze the rest
+    into a corner.
     """
     return {"kind": "scatter", "title": f"{a}/{b} against {b}, coloured by {c}",
             "x": b, "y": f"{a} / {b}", "color_by": f"log10({c})", "colormap": "jet",
+            "log_x": True, "log_y": True,
             "show_missing": True, "poisson_band": 2.0, "cbar_label": f"log10 {c} (counts)",
             "x_label": f"{b} (counts)", "y_label": f"{a}/{b}", "marker_size": 14,
             "legend_loc": "below", **ratio_split_rules(c)}

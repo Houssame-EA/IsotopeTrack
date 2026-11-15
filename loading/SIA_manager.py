@@ -22,6 +22,7 @@ from processing.peak_detection import erfinv
 import csv
 
 from tools.theme import theme, dialog_qss
+from results.shared_plot_utils import release_window
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.loading.SIA_manager")
 
@@ -515,7 +516,9 @@ class SingleIonDistributionManager(QObject):
             box.setStandardButtons(buttons)
         if default_button is not None:
             box.setDefaultButton(default_button)
-        return box.exec()
+        result = box.exec()
+        release_window(box)
+        return result
 
     # ── theme helpers ─────────────────────────────────────────────────────────
 
@@ -637,7 +640,9 @@ class SingleIonDistributionManager(QObject):
             _itk_log.exception("Handled exception in _restyle_plot_widget")
 
     def _register_dialog(self, dialog):
-        """Track a dialog so it gets restyled on theme change."""
+        """Track a dialog so it gets restyled on theme change, and free it once closed."""
+        from results.shared_plot_utils import delete_on_close
+        delete_on_close(dialog)
         self._live_dialogs.append(dialog)
         dialog.destroyed.connect(
             lambda _=None, d=dialog: self._live_dialogs.remove(d)
@@ -941,6 +946,7 @@ class SingleIonDistributionManager(QObject):
         tof_btn    = msg.addButton("TOFWERK .h5 File",  QMessageBox.ActionRole)
         cancel_btn = msg.addButton(QMessageBox.Cancel)
         msg.exec()
+        release_window(msg)
 
         clicked = msg.clickedButton()
         if clicked == cancel_btn:
@@ -986,6 +992,7 @@ class SingleIonDistributionManager(QObject):
         tof_btn    = msg.addButton("TOFWERK .h5 File",  QMessageBox.ActionRole)
         cancel_btn = msg.addButton(QMessageBox.Cancel)
         msg.exec()
+        release_window(msg)
 
         clicked = msg.clickedButton()
         if clicked == cancel_btn:
@@ -1360,6 +1367,7 @@ class SingleIonDistributionManager(QObject):
         self._plot_overall = self._create_sia_plot(info, None)
         self._plot_mass    = self._create_sia_plot(info, None)
         self._plot_sigma   = self._create_sigma_comparison_plot(info)
+        dialog.destroyed.connect(self._forget_info_plots)
 
         for pw in (self._plot_overall, self._plot_mass, self._plot_sigma):
             plot_container.addWidget(pw)
@@ -1452,6 +1460,12 @@ class SingleIonDistributionManager(QObject):
         dialog.show()
 
     # ── plot helpers ──────────────────────────────────────────────────────────
+
+    def _forget_info_plots(self, *_):
+        """Drop the information window's plots once that window is destroyed."""
+        self._plot_overall = None
+        self._plot_mass = None
+        self._plot_sigma = None
 
     def _create_info_html(self, info: dict) -> str:
         """
@@ -2450,6 +2464,7 @@ class SingleIonDistributionManager(QObject):
         msg.setIcon(QMessageBox.Information)
         msg.setStyleSheet(dialog_qss(theme.palette))
         msg.exec()
+        release_window(msg)
 
     # ── overlay helpers ───────────────────────────────────────────────────────
 

@@ -4,6 +4,7 @@ The unit definitions, ``ExportUnits`` value object, formatters, persistence
 and the app-wide ``units`` object live in ``utils/unit.py``. This module only
 builds the dialog.
 """
+from results.shared_plot_utils import release_window
 import logging
 
 from utils.unit import (
@@ -178,7 +179,9 @@ def show_advanced_dialog(parent, current: ExportUnits) -> ExportUnits | None:
         conc_dec.setValue(defaults.concentration_decimals)
     reset_btn.clicked.connect(_reset)
 
-    if dlg.exec() != QDialog.Accepted:
+    result = dlg.exec()
+    release_window(dlg)
+    if result != QDialog.Accepted:
         return None
 
     updated = _chosen()

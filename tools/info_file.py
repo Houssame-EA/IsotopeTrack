@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt
 import numpy as np
 
 from tools.theme import theme
+from results.shared_plot_utils import release_window
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.tools.info_file")
 
@@ -758,3 +759,4 @@ class FileInfoMenu:
         dialog = FileInfoDialog(sample_name, run_info, method_info, time_array, masses, parent,
                                 tuning_info=tuning_info, blanking=blanking)
         dialog.exec()
+        release_window(dialog)

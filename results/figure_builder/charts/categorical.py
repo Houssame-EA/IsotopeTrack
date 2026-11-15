@@ -16,6 +16,32 @@ BAR_SORTS = {'none': 'As listed', 'desc': 'Largest first', 'asc': 'Smallest firs
 """Orders for the items along a bar chart's axis."""
 
 
+FEW_BARS = 3
+"""A chart of this many single bars or fewer gets room at its sides, so the bars stay slim."""
+
+
+def wilson_interval(hits: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """Wilson score interval of a share, as fractions.
+
+    Unlike the plain normal interval it stays inside 0 to 1 and holds up for
+    shares near either end and for small counts.
+
+    Args:
+        hits: Particles counted in.
+        n: Particles in all.
+        z: Normal quantile; 1.96 gives a 95% interval.
+
+    Returns:
+        ``(low, high)``, or ``(nan, nan)`` without particles.
+    """
+    if n <= 0:
+        return float('nan'), float('nan')
+    share = hits / n
+    centre = (share + z * z / (2 * n)) / (1 + z * z / n)
+    half = z * np.sqrt(share * (1 - share) / n + z * z / (4 * n * n)) / (1 + z * z / n)
+    return max(0.0, centre - half), min(1.0, centre + half)
+
+
 def _bar_stat(vals, w, agg, err, drop_zeros, n_group, w_group):
     """Height and error of one bar."""
     if agg in ('detect', 'detect_pct'):
@@ -43,7 +69,8 @@ def draw_bar(fig, ax, panel, table, report, style):
 
     The value can be a mean, median or sum, a particle count or, as in the
     Bar Chart node, the number (or %) of particles in which each isotope is
-    detected. ``bar_swap`` puts the expressions on the axis with one bar per
+    detected. A share of particles drawn with the 95% CI error bars carries
+    its Wilson interval (see :func:`wilson_interval`). ``bar_swap`` puts the expressions on the axis with one bar per
     group (the node's "grouped bars" layout).
     """
     exprs = split_list(panel.get('value'))
@@ -62,6 +89,8 @@ def draw_bar(fig, ax, panel, table, report, style):
     w_all = particle_weights(panel, table) if (counted and panel.get('per_ml')) else None
     H = np.full((len(exprs), len(groups)), np.nan)
     ERR = np.zeros_like(H)
+    LOW, HIGH = np.zeros_like(H), np.zeros_like(H)
+    share_ci = agg == 'detect_pct' and err == 'ci95' and w_all is None
     per_group_values = [np.array([]) for _ in groups]
     for k, expr in enumerate(exprs):
         v = evaluate(expr, table)
@@ -76,6 +105,9 @@ def draw_bar(fig, ax, panel, table, report, style):
             w_group = float(np.sum(w_all[g.mask])) if w_all is not None else None
             H[k, gi], ERR[k, gi] = _bar_stat(vals, w, agg, err, panel.get('drop_zeros', True) and
                                              agg in ('mean', 'median'), n_group, w_group)
+            if share_ci and n_group:
+                lo, hi = wilson_interval(int(np.count_nonzero(vals > 0)), n_group)
+                LOW[k, gi], HIGH[k, gi] = H[k, gi] - 100.0 * lo, 100.0 * hi - H[k, gi]
     item_names = [pretty(e, table, style) for e in exprs]
     item_names = [(panel.get('item_labels') or {}).get(e) or n for e, n in zip(exprs, item_names)]
     min_n = float(panel.get('min_count') or 0)
@@ -89,7 +121,7 @@ def draw_bar(fig, ax, panel, table, report, style):
         keep_items.sort(key=lambda k: np.nansum(H[k]) * (-1 if how == 'desc' else 1))
     elif how == 'alpha':
         keep_items.sort(key=lambda k: str(item_names[k]).lower())
-    H, ERR = H[keep_items], ERR[keep_items]
+    H, ERR, LOW, HIGH = H[keep_items], ERR[keep_items], LOW[keep_items], HIGH[keep_items]
     exprs = [exprs[k] for k in keep_items]
     item_names = [item_names[k] for k in keep_items]
     if swap:
@@ -97,13 +129,14 @@ def draw_bar(fig, ax, panel, table, report, style):
     else:
         cats = [g.label for g in groups]
         series = [(name, pal[k % len(pal)]) for k, name in enumerate(item_names)]
-        H, ERR = H.T, ERR.T
+        H, ERR, LOW, HIGH = H.T, ERR.T, LOW.T, HIGH.T
     n_series = H.shape[1]
     stacked = bool(panel.get('stacked')) and n_series > 1
     width = 0.8 if stacked else 0.8 / n_series
     positions = np.arange(len(cats), dtype=float)
     bottoms = np.zeros(len(cats))
     show_err = agg in ('mean', 'median') and err != 'none' and not stacked
+    show_ci = share_ci and not stacked
     edge = float(panel.get('edge_width') or 0)
     for k in range(n_series):
         heights = H[:, k]
@@ -114,15 +147,27 @@ def draw_bar(fig, ax, panel, table, report, style):
             colors, label = series[k][1], series[k][0]
         kw = dict(color=colors, label=label, zorder=2,
                   edgecolor=panel.get('edge_color') if edge > 0 else None, linewidth=edge,
-                  error_kw={'elinewidth': 1, 'ecolor': '#333333'}, capsize=3 if show_err else 0)
+                  error_kw={'elinewidth': 1, 'ecolor': '#333333'},
+                  capsize=3 if (show_err or show_ci) else 0)
+        spread = ERR[:, k] if show_err else None
+        if show_ci:
+            spread = np.vstack([np.clip(LOW[:, k], 0, None), np.clip(HIGH[:, k], 0, None)])
         if horizontal:
             bars = ax.barh(offs, heights, height=width * 0.92, left=bottoms if stacked else None,
-                           xerr=ERR[:, k] if show_err else None, **kw)
+                           xerr=spread, **kw)
         else:
             bars = ax.bar(offs, heights, width=width * 0.92, bottom=bottoms if stacked else None,
-                          yerr=ERR[:, k] if show_err else None, **kw)
+                          yerr=spread, **kw)
         if panel.get('bar_values') and not stacked:
-            _label_bars(ax, bars, heights, horizontal, agg, bool(panel.get('per_ml')))
+            tops = heights + (HIGH[:, k] if show_ci else ERR[:, k] if show_err else 0.0)
+            _label_bars(ax, bars, heights, horizontal, agg, bool(panel.get('per_ml')), tops,
+                        gap=5 if (show_ci or show_err) else 2)
+            if show_ci and not log and np.any(np.isfinite(tops)):
+                reach = float(np.nanmax(tops)) * 1.12
+                if horizontal:
+                    ax.set_xlim(right=max(ax.get_xlim()[1], reach))
+                else:
+                    ax.set_ylim(top=max(ax.get_ylim()[1], reach))
         if stacked:
             bottoms = bottoms + np.nan_to_num(heights)
     if panel.get('bar_values') and stacked:
@@ -145,9 +190,13 @@ def draw_bar(fig, ax, panel, table, report, style):
             ax.set_xscale('log')
     else:
         ax.set_xticks(positions)
-        ax.set_xticklabels(cats)
+        ax.set_xticklabels(_stacked_labels(ax, cats))
         if log:
             ax.set_yscale('log')
+    if n_series == 1 and len(cats) <= FEW_BARS:
+        side = (-0.5 - 0.4 * (FEW_BARS + 1 - len(cats)) / 2, len(cats) - 0.5
+                + 0.4 * (FEW_BARS + 1 - len(cats)) / 2)
+        (ax.set_ylim(side[1], side[0]) if horizontal else ax.set_xlim(*side))
     report.counts[panel['id']] = int(sum(int(g.mask.sum()) for g in groups))
     vlab = {'count': count_label(panel), 'sum': 'Sum', 'median': 'Median', 'mean': 'Mean',
             'detect': count_label(panel, 'Particles detected'),
@@ -168,6 +217,23 @@ def draw_bar(fig, ax, panel, table, report, style):
     add_legend(ax, panel)
 
 
+CHAR_WIDTH = 0.085
+"""Width allowed for one character of a tick label, in inches."""
+
+
+def _stacked_labels(ax, cats) -> list:
+    """Category labels, with a bracketed ending moved to a second line when they would touch.
+
+    ``"Small (< 0.84 fg)"`` becomes two lines once the labels together are
+    wider than the panel; labels that fit are returned as they are.
+    """
+    cats = [str(c) for c in cats]
+    room = ax.get_position().width * ax.figure.get_figwidth()
+    if sum(len(c) + 2 for c in cats) * CHAR_WIDTH <= room:
+        return cats
+    return [c.replace(' (', '\n(', 1) if ' (' in c and '\n' not in c else c for c in cats]
+
+
 def _fmt_bar(v, agg) -> str:
     if not np.isfinite(v):
         return '–'
@@ -178,24 +244,27 @@ def _fmt_bar(v, agg) -> str:
     return f'{v:.3g}'
 
 
-def _value_text(ax, pos, value, horizontal, agg, per_ml):
+def _value_text(ax, pos, value, horizontal, agg, per_ml, at=None, gap=2):
+    """Write a bar's value at its end, or *gap* points past *at* when an error bar ends there."""
     if not np.isfinite(value) or value == 0:
         return
     txt = compact(value) if per_ml else _fmt_bar(value, agg)
+    end = value if at is None or not np.isfinite(at) else at
     if horizontal:
-        t = ax.annotate(txt, (value, pos), xytext=(3, 0), textcoords='offset points', ha='left',
+        t = ax.annotate(txt, (end, pos), xytext=(gap + 1, 0), textcoords='offset points', ha='left',
                         va='center', fontsize='x-small', color=ink('#374151'))
     else:
-        t = ax.annotate(txt, (pos, value), xytext=(0, 2), textcoords='offset points', ha='center',
+        t = ax.annotate(txt, (pos, end), xytext=(0, gap), textcoords='offset points', ha='center',
                         va='bottom', fontsize='x-small', color=ink('#374151'))
     t._fb_cell = True
 
 
-def _label_bars(ax, bars, heights, horizontal, agg, per_ml):
-    """Write each bar's value at its end."""
-    for b, h in zip(bars, heights):
+def _label_bars(ax, bars, heights, horizontal, agg, per_ml, tops=None, gap=2):
+    """Write each bar's value at its end, clear of its error bar."""
+    tops = heights if tops is None else tops
+    for b, h, top in zip(bars, heights, tops):
         pos = b.get_y() + b.get_height() / 2 if horizontal else b.get_x() + b.get_width() / 2
-        _value_text(ax, pos, h, horizontal, agg, per_ml)
+        _value_text(ax, pos, h, horizontal, agg, per_ml, top, gap)
 
 
 PIE_MODES = {
@@ -459,8 +528,35 @@ def draw_combinations(fig, ax, panel, table, report, style):
     add_legend(ax, panel)
 
 
+MAX_COMPOSITION_ITEMS = 10
+"""Most isotopes a composition chart names; the smallest beyond that become "Others"."""
+
+OTHERS_COLOR = '#c4c8cf'
+"""Colour of the merged remainder."""
+
+
+def _keep_items(shares: np.ndarray, other_pct: float) -> list[int]:
+    """Which items of a composition are named, as column indices in their listed order.
+
+    An item is merged into "Others" when its share stays below *other_pct*
+    in every group, and, beyond :data:`MAX_COMPOSITION_ITEMS`, when it is
+    among the smallest, so the legend never outgrows the chart.
+    """
+    top = shares.max(axis=0) if shares.size else np.zeros(0)
+    keep = [k for k in range(shares.shape[1]) if top[k] > 0 and top[k] >= other_pct]
+    if len(keep) > MAX_COMPOSITION_ITEMS:
+        largest = sorted(keep, key=lambda k: -top[k])[:MAX_COMPOSITION_ITEMS - 1]
+        keep = [k for k in keep if k in set(largest)]
+    return keep
+
+
 def draw_composition(fig, ax, panel, table, report, style):
-    """100% stacked bars: the share of each isotope in every group."""
+    """100% stacked bars: the share of each isotope in every group.
+
+    Isotopes holding less than ``other_pct`` in every group, and the
+    smallest ones once more than :data:`MAX_COMPOSITION_ITEMS` are listed,
+    are stacked together as a grey "Others", which the report itemises.
+    """
     exprs = item_exprs(panel, table)
     if not exprs:
         raise ExpressionError('List isotopes or expressions to share out')
@@ -487,9 +583,19 @@ def draw_composition(fig, ax, panel, table, report, style):
     horizontal = bool(panel.get('horizontal'))
     pos = np.arange(len(groups), dtype=float)
     left = np.zeros(len(groups))
-    for k, e in enumerate(exprs):
-        name = item_label(panel, e, table, style, short=True)
-        color = pal[k % len(pal)]
+    keep = _keep_items(S, float(panel.get('other_pct') or 0))
+    merged = [k for k in range(len(exprs)) if k not in set(keep)]
+    names = [item_label(panel, e, table, style, short=True) for e in exprs]
+    stack = [(names[k], S[:, k], pal[i % len(pal)]) for i, k in enumerate(keep)]
+    rest = S[:, merged].sum(axis=1) if merged else np.zeros(len(groups))
+    if np.any(rest > 0):
+        stack.append((f'Others ({len(merged)})', rest, OTHERS_COLOR))
+        listed = sorted(merged, key=lambda k: -S[:, k].max())[:8]
+        report.stats.append('Composition, merged as Others: ' + ', '.join(
+            f'{names[k]} {S[:, k].max():.2g}%' for k in listed if S[:, k].max() > 0)
+            + (' …' if len(merged) > len(listed) else ''))
+    S = np.column_stack([column for _n, column, _c in stack]) if stack else np.zeros((len(groups), 0))
+    for k, (name, _column, color) in enumerate(stack):
         if horizontal:
             bars = ax.barh(pos, S[:, k], left=left, height=0.75, color=color, label=name,
                            edgecolor='white', linewidth=0.6, zorder=2)

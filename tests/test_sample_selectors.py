@@ -26,16 +26,20 @@ def app():
     return QApplication.instance() or QApplication([])
 
 
+OPEN_WINDOWS = []
+
+
 class FakeWindow(QWidget):
     """A main window with particles for each sample."""
 
     selected_isotopes = {}
 
     def __init__(self):
-        """Give every sample a different number of particles."""
+        """Give every sample a different number of particles; stay open, as the app keeps its windows."""
         super().__init__()
         self.sample_particle_data = {s: [{'elements': {}}] * (k + 1) for k, s in enumerate(SAMPLES)}
         self.sample_to_folder_map = {s: s for s in SAMPLES}
+        OPEN_WINDOWS.append(self)
 
     def get_formatted_label(self, key):
         """Label for an isotope key."""

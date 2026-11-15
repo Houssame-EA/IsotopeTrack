@@ -276,7 +276,12 @@ def draw_hexbin(fig, ax, panel, table, report, style):
 
 
 def draw_contour(fig, ax, panel, table, report, style):
-    """2-D kernel density contours of X against Y, one set per group."""
+    """2-D kernel density contours of X against Y, one set per group.
+
+    With ``show_points`` the particles are drawn too; ``points_size``,
+    ``points_alpha`` and ``points_zorder`` set how large, how solid and
+    whether above the contours (zorder over 3) they are drawn.
+    """
     if not panel.get('x') or not panel.get('y'):
         raise ExpressionError('Set both X and Y expressions')
     from scipy import stats
@@ -313,8 +318,9 @@ def draw_contour(fig, ax, panel, table, report, style):
         X = 10 ** gx if log_x else gx
         Y = 10 ** gy if log_y else gy
         if panel.get('show_points'):
-            ax.scatter(x[m], y[m], s=3, color=g.color, alpha=0.25, linewidths=0, rasterized=True,
-                       zorder=1)
+            ax.scatter(x[m], y[m], s=float(panel.get('points_size') or 3), color=g.color,
+                       alpha=float(panel.get('points_alpha') or 0.25), linewidths=0,
+                       rasterized=True, zorder=float(panel.get('points_zorder') or 1))
         if filled:
             from matplotlib.colors import to_rgba
             colors = [to_rgba(g.color, a) for a in np.linspace(0.12, 0.55, levels - 1)]

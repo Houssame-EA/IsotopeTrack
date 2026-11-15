@@ -53,7 +53,7 @@ from tools.particle_classifier_expr import (
 )
 from tools.particle_classifier_relabel import (
     multi_definition_groups, count_matches_per_definition)
-from results.shared_plot_utils import pick_color_hex, DEFAULT_SAMPLE_COLORS
+from results.shared_plot_utils import pick_color_hex, DEFAULT_SAMPLE_COLORS, release_window
 
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.tools.particle_classifier_dialog")
@@ -153,8 +153,7 @@ class ParticleClassifierDialog(QDialog):
         self.resize(1040, 720)
         self.setMinimumSize(880, 600)
         self.setStyleSheet(self._style())
-        _app_theme.themeChanged.connect(
-            lambda _: self.setStyleSheet(self._style()))
+        _app_theme.themeChanged.connect(self._restyle)
 
         self.parent_window = parent
         if isinstance(upstreams, dict):
@@ -222,6 +221,11 @@ class ParticleClassifierDialog(QDialog):
     # ------------------------------------------------------------------ #
     # Styling
     # ------------------------------------------------------------------ #
+
+    def _restyle(self):
+        """Re-apply the dialog's stylesheet after a theme switch."""
+        self.setStyleSheet(self._style())
+
     @staticmethod
     def _style():
         """Build the dialog stylesheet for the current app theme.
@@ -906,6 +910,7 @@ class ParticleClassifierDialog(QDialog):
                                  QMessageBox.ButtonRole.RejectRole)
         dlg.setDefaultButton(btn_drop)
         dlg.exec()
+        release_window(dlg)
         clicked = dlg.clickedButton()
         if clicked is btn_keep:
             self._group_pooling_policies[group_name] = 'keep'
@@ -1089,6 +1094,7 @@ class ParticleClassifierDialog(QDialog):
                                  QMessageBox.ButtonRole.AcceptRole)
         dlg.setDefaultButton(btn_back)
         dlg.exec()
+        release_window(dlg)
         return dlg.clickedButton() is btn_save
 
     @staticmethod
@@ -1264,7 +1270,9 @@ class ParticleClassifierDialog(QDialog):
         bb.rejected.connect(dlg.reject)
         layout.addWidget(bb)
 
-        proceed = dlg.exec() == QDialog.Accepted
+        result = dlg.exec()
+        release_window(dlg)
+        proceed = result == QDialog.Accepted
 
         self._overlap_mode = 'priority' if rb_priority.isChecked() else 'double_count'
         self._rb_priority.setChecked(rb_priority.isChecked())

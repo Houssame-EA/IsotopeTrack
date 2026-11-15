@@ -14,7 +14,7 @@ from __future__ import annotations
 import copy
 import re
 
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
+from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QMenu, QProgressBar, QPushButton, QScrollArea,
     QSplitter, QToolButton, QVBoxLayout, QWidget,
@@ -34,6 +34,42 @@ from results.insights.engine import (
 )
 from tools.theme import theme as _theme
 from utils.unit import units as app_units
+
+
+class _WorkerKeeper(QObject):
+    """Holds every analysis worker until its thread has ended.
+
+    A panel can be freed while a search is still running, for example when
+    its window closes. The worker must outlive it: freeing a QThread whose
+    thread is still running makes Qt abort the application.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._workers = []
+
+    def keep(self, worker):
+        """Hold *worker* until it reports that its thread has finished."""
+        self._workers.append(worker)
+        worker.finished.connect(self._release)
+
+    def _release(self):
+        """Drop the worker that just finished, once its thread has fully exited."""
+        worker = self.sender()
+        if worker in self._workers:
+            worker.wait(2000)
+            self._workers.remove(worker)
+
+
+_worker_keeper = None
+
+
+def _keep_worker(worker):
+    """Hold *worker* on the GUI thread until its thread has ended (see :class:`_WorkerKeeper`)."""
+    global _worker_keeper
+    if _worker_keeper is None:
+        _worker_keeper = _WorkerKeeper()
+    _worker_keeper.keep(worker)
 
 
 def _find_source_node(scene) -> object | None:
@@ -1358,6 +1394,7 @@ class SmartInsightsPanel(QWidget):
             lambda found, detector, key=scope.key: self._on_partial(found, detector, key))
         self._worker.results_ready.connect(
             lambda _found, keys=frozenset(needed), key=scope.key: self._on_done(keys, key))
+        _keep_worker(self._worker)
         self._worker.start()
 
     def _refresh_clicked(self):

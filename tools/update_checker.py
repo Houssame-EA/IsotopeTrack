@@ -27,6 +27,7 @@ from PySide6.QtCore import (QThread, Signal, QObject, QSettings, QUrl,
                             QStandardPaths, QProcess, Qt)
 from PySide6.QtWidgets import QMessageBox, QProgressDialog
 from PySide6.QtGui import QDesktopServices
+from results.shared_plot_utils import release_window
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.tools.update_checker")
 
@@ -441,6 +442,7 @@ class UpdateChecker(QObject):
         box.addButton("Remind Me Later", QMessageBox.RejectRole)
         skip_btn = box.addButton("Skip This Version", QMessageBox.DestructiveRole)
         box.exec()
+        release_window(box)
 
         clicked = box.clickedButton()
         if clicked is download_btn:
@@ -523,6 +525,7 @@ class UpdateChecker(QObject):
         page_btn = box.addButton("Open Release Page", QMessageBox.AcceptRole)
         box.addButton("Close", QMessageBox.RejectRole)
         box.exec()
+        release_window(box)
         if box.clickedButton() is page_btn:
             self._open_release_page(self._info)
 
@@ -588,6 +591,7 @@ class UpdateChecker(QObject):
         reveal_btn = box.addButton("Show in Folder", QMessageBox.ActionRole)
         box.addButton("Close", QMessageBox.RejectRole)
         box.exec()
+        release_window(box)
 
         clicked = box.clickedButton()
         if clicked is open_btn:

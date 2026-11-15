@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QWidget,
     QPushButton, QDoubleSpinBox, QMessageBox, QCheckBox, QGraphicsOpacityEffect,
 )
+from results.shared_plot_utils import release_window
 import logging
 
 from utils.dilution import (
@@ -28,6 +29,7 @@ def open_dilution_factor_dialog(window):
         return
     dialog = DilutionFactorDialog(window, samples)
     dialog.exec()
+    release_window(dialog)
 
 
 def maybe_prompt_dilution(window):
@@ -60,6 +62,7 @@ def maybe_prompt_dilution(window):
     open_btn = box.addButton("Open Dilution Factor", QMessageBox.AcceptRole)
     box.addButton("Later", QMessageBox.RejectRole)
     box.exec()
+    release_window(box)
     if dont_show.isChecked():
         settings.setValue("hide_dilution_prompt", True)
     if box.clickedButton() is open_btn:

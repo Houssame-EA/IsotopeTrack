@@ -26,8 +26,7 @@ from results.shared_plot_utils import (
     get_font_config,
     FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
     LABEL_MODES, format_element_label, Renderer,
-    get_display_name, download_matplotlib_figure,
-)
+    get_display_name, download_matplotlib_figure, release_window)
 from results.utils_sort import sort_elements_by_mass
 from utils.unit import units
 from widget.unit_combo import UnitComboBox
@@ -992,7 +991,9 @@ class NetworkDisplayDialog(QDialog):
         dlg = NetworkSettingsDialog(
             self.node.config, self.node.input_data, self, scope='format')
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
         else:
@@ -1006,7 +1007,9 @@ class NetworkDisplayDialog(QDialog):
         dlg = NetworkSettingsDialog(
             self.node.config, self.node.input_data, self, scope='quantities')
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
         else:
@@ -1017,7 +1020,9 @@ class NetworkDisplayDialog(QDialog):
     def _open_settings(self):
         """Open the combined settings dialog and apply accepted changes."""
         dlg = NetworkSettingsDialog(self.node.config, self.node.input_data, self)
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
 
@@ -1492,6 +1497,7 @@ class NetworkDiagramNode(QObject):
     def configure(self, parent_window):
         dlg = NetworkDisplayDialog(self, parent_window)
         dlg.exec()
+        release_window(dlg)
         return True
 
     def process_data(self, input_data):

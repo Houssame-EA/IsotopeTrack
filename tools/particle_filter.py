@@ -34,6 +34,7 @@ from PySide6.QtGui import QPen, QColor
 
 from tools.theme import theme as _app_theme
 from results.results_periodic import IsotopeChipSelector
+from results.shared_plot_utils import release_window
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.tools.particle_filter")
 
@@ -1056,7 +1057,9 @@ def resolve_dilution_conflict(parent_window, group_label, members):
     if not dilution_factors_conflict(members):
         return None
     dlg = DilutionConflictDialog(parent_window, group_label, members)
-    if dlg.exec() != QDialog.Accepted:
+    result = dlg.exec()
+    release_window(dlg)
+    if result != QDialog.Accepted:
         return False
     return dlg.resolution()
 
@@ -1374,8 +1377,7 @@ class ParticleFilterDialog(QDialog):
         self.resize(980, 680)
         self.setMinimumSize(820, 560)
         self.setStyleSheet(self._style())
-        _app_theme.themeChanged.connect(
-            lambda _: self.setStyleSheet(self._style()))
+        _app_theme.themeChanged.connect(self._restyle)
 
         import copy as _copy
         self.parent_window = parent
@@ -1427,6 +1429,10 @@ class ParticleFilterDialog(QDialog):
             self._load_pane(None)
         self._update_select_all_label()
         self._update_preview()
+
+    def _restyle(self):
+        """Re-apply the dialog's stylesheet after a theme switch."""
+        self.setStyleSheet(self._style())
 
     @staticmethod
     def _load_elem_data():
@@ -2214,6 +2220,7 @@ class ParticleFilterDialog(QDialog):
         box.addButton("Cancel", QMessageBox.RejectRole)
         box.setDefaultButton(proceed)
         box.exec()
+        release_window(box)
         return box.clickedButton() is proceed
 
     def _toggle_select_all(self):
@@ -2593,6 +2600,7 @@ class ParticleFilterDialog(QDialog):
             box.addButton("Go back", QMessageBox.RejectRole)
             box.setDefaultButton(proceed)
             box.exec()
+            release_window(box)
             if box.clickedButton() is not proceed:
                 return
         from tools.render_settings import (stale_warning_suppressed,
@@ -2616,6 +2624,7 @@ class ParticleFilterDialog(QDialog):
             box.addButton("Go back", QMessageBox.RejectRole)
             box.setDefaultButton(proceed)
             box.exec()
+            release_window(box)
             self._suppress_stale_warning_now = dont_show.isChecked()
             if dont_show.isChecked():
                 set_stale_warning_suppressed(True)
@@ -2890,6 +2899,7 @@ class ParticleFilterNode(QObject):
         # data.
         box.setDefaultButton(keep_btn)
         box.exec()
+        release_window(box)
         clicked = box.clickedButton()
 
         if clicked is keep_btn:
@@ -2974,6 +2984,7 @@ class ParticleFilterNode(QObject):
                               QMessageBox.DestructiveRole)
         box.setDefaultButton(keep)
         box.exec()
+        release_window(box)
         if box.clickedButton() is clear:
             for n in missing:
                 self.sample_filters.pop(n, None)
@@ -3341,7 +3352,9 @@ class ParticleFilterNode(QObject):
             merge_singles=self.merge_singles, sample_groups=self.sample_groups,
             duplicate_resolutions=self.duplicate_resolutions,
             dilution_resolutions=self.dilution_resolutions)
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.sample_filters = dlg.get_sample_filters()
             self.selected_sources = dlg.get_selected_sources()
             self.merged_name = dlg.get_merged_name()

@@ -23,8 +23,11 @@ def draw_network(fig, ax, panel, table, report, style):
 
     An edge links two isotopes when at least ``min_n`` particles contain both
     and the Pearson r of their values in those particles reaches
-    ``r_threshold``. Edge width follows |r| and colour its sign; node size can
+    ``r_threshold`` (the Spearman rank correlation with ``net_method`` set
+    to ``spearman``, which matches a rank correlation matrix beside it). Edge width follows |r| and colour its sign; node size can
     follow the summed or mean amount or the number of particles detected.
+    Each name is written just outside its node, and the legend names only
+    the signs of correlation that occur.
     """
     from scipy import stats
     exprs = item_exprs(panel, table)
@@ -48,7 +51,10 @@ def draw_network(fig, ax, panel, table, report, style):
                 x, y = np.log10(x), np.log10(y)
             if np.ptp(x) == 0 or np.ptp(y) == 0:
                 continue
-            r = float(stats.pearsonr(x, y).statistic)
+            if panel.get('net_method') == 'spearman':
+                r = float(stats.spearmanr(x, y).statistic)
+            else:
+                r = float(stats.pearsonr(x, y).statistic)
             if abs(r) >= thr:
                 edges.append((i, j, r, int(m.sum())))
     angles = np.pi / 2 - 2 * np.pi * np.arange(k) / k
@@ -75,15 +81,21 @@ def draw_network(fig, ax, panel, table, report, style):
         sizes = base_size * np.minimum(scale, 4.0)
     color = panel.get('color') or panel_palette(panel)[0]
     ax.scatter(xy[:, 0], xy[:, 1], s=sizes, color=color, edgecolors='white', linewidths=1.5, zorder=3)
-    for (x, y), name in zip(xy, names):
-        t = ax.text(x * 1.2, y * 1.2, name, ha='center', va='center', fontsize='small', zorder=4,
-                    color=ink('#111827'))
+    for (x, y), name, size in zip(xy, names, sizes):
+        reach = np.sqrt(float(size)) / 2 + 5
+        t = ax.annotate(name, (x, y), xytext=(x * reach, y * reach), textcoords='offset points',
+                        ha='left' if x > 0.3 else 'right' if x < -0.3 else 'center',
+                        va='bottom' if y > 0.3 else 'top' if y < -0.3 else 'center',
+                        fontsize='small', zorder=4, color=ink('#111827'))
         t._fb_cell = True
     from matplotlib.lines import Line2D
-    proxies = [Line2D([], [], color=pos_color, lw=2.5, label='r > 0'),
-               Line2D([], [], color=neg_color, lw=2.5, label='r < 0')]
-    ax.set_xlim(-1.45, 1.45)
-    ax.set_ylim(-1.4, 1.4)
+    proxies = []
+    if any(e[2] > 0 for e in edges) or not edges:
+        proxies.append(Line2D([], [], color=pos_color, lw=2.5, label='r > 0'))
+    if any(e[2] < 0 for e in edges):
+        proxies.append(Line2D([], [], color=neg_color, lw=2.5, label='r < 0'))
+    ax.set_xlim(-1.7, 1.7)
+    ax.set_ylim(-1.65, 1.65)
     ax.set_aspect('equal')
     ax.axis('off')
     if panel.get('title'):

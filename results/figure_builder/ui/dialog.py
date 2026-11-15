@@ -43,6 +43,7 @@ from results.figure_builder.ui.widgets import ColorButton, RowTable
 
 from utils.unit import units
 from widget.unit_combo import UnitComboBox
+from results.shared_plot_utils import release_window
 import logging
 
 _log = logging.getLogger('IsotopeTrack.results.figure_builder')
@@ -153,6 +154,9 @@ def fill_panel_defaults(panel: dict | None, table: ParticleTable) -> dict | None
         panel['x'] = panel.get('x') or 'time'
     elif kind in ('histogram', 'box', 'violin', 'bar', 'strip', 'ridgeline', 'ecdf'):
         panel['value'] = panel.get('value') or labs[0]
+    elif kind == 'estimate':
+        panel['value'] = panel.get('value') or (f'{labs[0]} / {second}' if second != labs[0]
+                                                else labs[0])
     elif kind == 'pie' and panel.get('pie_mode') == 'values':
         panel['value'] = panel.get('value') or ', '.join(labs[:6])
     elif kind == 'ternary':
@@ -1190,6 +1194,9 @@ class FigureBuilderDialog(QDialog):
             panel['horizontal'] = True
         if kind == 'treemap':
             panel['legend'] = False
+        if kind == 'estimate' and panel.get('group_by', 'none') == 'none' and len(self.table) \
+                and len(set(self.table.column('sample'))) > 1:
+            panel['group_by'] = 'sample'
         if kind == 'timeline' and panel.get('group_by', 'none') == 'none' and len(self.table) \
                 and len(set(self.table.column('sample'))) > 1:
             panel['group_by'] = 'sample'
@@ -1647,7 +1654,9 @@ class FigureBuilderDialog(QDialog):
 
     def _figure_settings(self):
         dlg = FigureSettingsDialog(self.spec['figure'], self)
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             old_palette = self.spec['figure'].get('palette')
             self.spec['figure'] = dlg.collect()
             if self.spec['figure'].get('palette') != old_palette:
@@ -1668,6 +1677,7 @@ class FigureBuilderDialog(QDialog):
         bb.rejected.connect(dlg.reject)
         lay.addWidget(bb)
         dlg.exec()
+        release_window(dlg)
 
     def _settings(self):
         return QSettings(*SETTINGS)

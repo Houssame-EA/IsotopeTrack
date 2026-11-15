@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import collections
 import contextvars
 import json
 import logging
@@ -325,9 +326,9 @@ class JsonlFileHandler(logging.Handler):
 # ---------------------------------------------------------------------------
 
 class _BufferHandler(logging.Handler):
-    """Fills a shared list with entry dicts until the GUI window takes over."""
+    """Fills a shared buffer with entry dicts until the GUI window takes over."""
 
-    def __init__(self, buffer: list):
+    def __init__(self, buffer):
         super().__init__()
         self._buffer = buffer
 
@@ -1349,10 +1350,12 @@ class EnhancedLoggingManager:
     -----------------
     All log records emitted before ``create_log_window`` is called are
     stored in ``_pre_window_buffer``.  When the window is first opened the
-    buffer is replayed so no startup messages are ever lost.
+    buffer is replayed so no startup messages are ever lost. It keeps the
+    same number of entries the window shows, so a session that never opens
+    the window does not hold every log record in memory.
     """
 
-    _pre_window_buffer: list[dict] = []
+    _pre_window_buffer: collections.deque = collections.deque(maxlen=_MAX_GUI_ENTRIES)
 
     def __init__(self) -> None:
         self._log_window:         EnhancedLogWindow | None  = None
@@ -1520,6 +1523,7 @@ class EnhancedLoggingManager:
                 self._buffer_handler = None
                 for entry in self._pre_window_buffer:
                     self._log_window._receive_entry(entry)
+                self._pre_window_buffer.clear()
 
         return self._log_window
 

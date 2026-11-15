@@ -25,7 +25,6 @@ class UnitComboBox(QComboBox):
     def __init__(self, parent=None):
         super().__init__(parent)
         units.unitsChanged.connect(self._relabel)
-        self.destroyed.connect(lambda *_: _disconnect(self._relabel))
 
     def _key(self, index):
         key = self.itemData(index, KEY_ROLE)
@@ -97,5 +96,5 @@ class UnitComboBox(QComboBox):
 def _disconnect(slot):
     try:
         units.unitsChanged.disconnect(slot)
-    except (RuntimeError, TypeError):
+    except (RuntimeError, SystemError, TypeError):
         pass

@@ -51,8 +51,8 @@ from results.shared_plot_utils import (
     _apply_box, _add_shaded_region_hist, _add_stat_lines_hist,
     _add_det_limit_v, _add_det_limit_h, format_per_ml as _shared_format_per_ml, apply_sci_y_axis as _shared_apply_sci_y_axis,
     compute_bin_edges_fixed_geo as _compute_bin_edges,
-    compute_global_bin_edges_fixed_geo as _compute_global_bin_edges,
-)
+    compute_global_bin_edges_fixed_geo as _compute_global_bin_edges, release_window,
+    delete_on_close, clear_plot_layout)
 try:
     from widget.custom_plot_widget import (
         PlotSettingsDialog as _PlotSettingsDialog,
@@ -1249,7 +1249,9 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                     if legend.mapRectToScene(
                             legend.boundingRect()).contains(scene_pos):
                         adapter.legend = legend
-                        LegendEditorDialog(adapter, dlg_parent).exec()
+                        dialog = LegendEditorDialog(adapter, dlg_parent)
+                        dialog.exec()
+                        release_window(dialog)
                         self._persist_inline_edit(adapter)
                         event.accept(); return
                 except Exception:
@@ -1264,12 +1266,16 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                     if new_c.isValid():
                         self._persist_element_color(scat, new_c)
                 else:
-                    ScatterEditorDialog(scat, adapter, dlg_parent).exec()
+                    dialog = ScatterEditorDialog(scat, adapter, dlg_parent)
+                    dialog.exec()
+                    release_window(dialog)
                 event.accept(); return
 
             curve = self._closest_curve(pi, scene_pos)
             if curve is not None:
-                TraceEditorDialog(curve, adapter, dlg_parent).exec()
+                dialog = TraceEditorDialog(curve, adapter, dlg_parent)
+                dialog.exec()
+                release_window(dialog)
                 event.accept(); return
 
             bar_item = self._bar_at(pi, scene_pos)
@@ -1313,7 +1319,9 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                     self._persist_element_color(tagged, new_c)
                 event.accept(); return
 
-            BackgroundEditorDialog(adapter, dlg_parent).exec()
+            dialog = BackgroundEditorDialog(adapter, dlg_parent)
+            dialog.exec()
+            release_window(dialog)
             self._persist_inline_edit(adapter)
             event.accept()
 
@@ -3124,6 +3132,7 @@ class HistogramDisplayDialog(QDialog):
             y_scale=y_scale,
             parent=self,
         )
+        delete_on_close(child)
         child.destroyed.connect(
             lambda *_: self._decomposition_windows.remove(child)
             if child in self._decomposition_windows else None)
@@ -3254,7 +3263,9 @@ class HistogramDisplayDialog(QDialog):
             self.node.config.update(cfg), self._refresh(),
             warn_if_values_swallowed(
                 self.pw, _get_broken_cuts(self.node.config), self)))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
             warn_if_values_swallowed(
@@ -3282,7 +3293,9 @@ class HistogramDisplayDialog(QDialog):
             available_elements=self._get_available_elements(),
         )
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
         else:
@@ -3329,6 +3342,7 @@ class HistogramDisplayDialog(QDialog):
                 except Exception:
                     _itk_log.exception("Handled exception in _open_plot_settings")
             dlg.exec()
+            release_window(dlg)
 
     def _download_figure(self):
         """Export histogram figure and CSV via existing PyQtGraph helper."""
@@ -3427,7 +3441,7 @@ class HistogramDisplayDialog(QDialog):
             decomposition are rebuilt fresh on every redraw.
         """
         try:
-            self.pw.clear()
+            clear_plot_layout(self.pw)
             self.pw.setBackground('w')
             self._histogram_panel_contexts = {}
 
@@ -3936,7 +3950,9 @@ class HistogramDecompositionDialog(QDialog):
             self._cfg, False, [], self,
             available_elements=sorted(self._element_data.keys()))
         dlg.setWindowTitle("Histogram plot format settings")
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self._cfg.update(dlg.collect())
             self._refresh()
 
@@ -3959,7 +3975,9 @@ class HistogramDecompositionDialog(QDialog):
             ),
         )
         dlg.setWindowTitle("Histogram plot quantities configuration")
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self._cfg.update(dlg.collect())
             self._cfg['data_type_display'] = self._inherited_data_type
             self._refresh()
@@ -4151,7 +4169,7 @@ class HistogramDecompositionDialog(QDialog):
             is requested but unavailable for a panel, a small in-panel note is
             shown instead of modal warnings.
         """
-        self.pw.clear()
+        clear_plot_layout(self.pw)
         self.pw.setBackground('w')
         self._subplot_context_by_plotitem = {}
 
@@ -5847,7 +5865,9 @@ class ElementBarChartDisplayDialog(QDialog):
             te_available=_meta_te_available(self.node.input_data),
             available_elements=self._get_available_bar_elements(),
             input_data=self.node.input_data)
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
             warn_if_values_swallowed(
@@ -5870,7 +5890,9 @@ class ElementBarChartDisplayDialog(QDialog):
             te_available=_meta_te_available(self.node.input_data),
             available_elements=self._get_available_bar_elements())
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
         else:
@@ -5891,7 +5913,9 @@ class ElementBarChartDisplayDialog(QDialog):
             self.node.config.update(cfg), self._refresh(),
             warn_if_values_swallowed(
                 self.pw, _get_broken_cuts(self.node.config), self)))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
             warn_if_values_swallowed(
@@ -5958,6 +5982,7 @@ class ElementBarChartDisplayDialog(QDialog):
                     _itk_log.exception("Handled exception in _open_plot_settings")
             try:
                 result = dlg.exec()
+                release_window(dlg)
                 if result == QDialog.Accepted:
                     self._propagate_plot_format_text_settings(pi)
             finally:
@@ -6404,7 +6429,7 @@ class ElementBarChartDisplayDialog(QDialog):
             plot identifiers stored in node config.
         """
         try:
-            self.pw.clear()
+            clear_plot_layout(self.pw)
             self.pw.setBackground('w')
             self.pw.setContextMenuPolicy(Qt.CustomContextMenu)
             self.pw.customContextMenuRequested.connect(self._ctx_menu)

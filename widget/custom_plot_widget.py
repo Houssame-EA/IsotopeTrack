@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                                QFormLayout, QTabWidget, QWidget, QSlider,
                                QMessageBox, QMenu, QScrollArea,
                                QFrame)
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 import numpy as np
 
 from tools.theme import theme as _app_theme
@@ -16,6 +16,7 @@ from results.shared_plot_utils import (
     apply_plot_item_text_styling,
     apply_plot_title_style,
 )
+from results.shared_plot_utils import release_window
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.widget.custom_plot_widget")
 
@@ -303,21 +304,12 @@ def _install_theme_subscription(dialog):
     """
     dialog.setStyleSheet(_editor_dialog_qss())
 
-    def _reapply():
-        try:
-            dialog.setStyleSheet(_editor_dialog_qss())
-        except RuntimeError:
-            _itk_log.exception("Handled exception in _reapply")
+    class _Restyler(QObject):
+        def restyle(self, *_):
+            """Re-apply the editor stylesheet to the dialog that owns this object."""
+            self.parent().setStyleSheet(_editor_dialog_qss())
 
-    _app_theme.themeChanged.connect(_reapply)
-    original_close = dialog.closeEvent
-    def _close(event):
-        try:
-            _app_theme.themeChanged.disconnect(_reapply)
-        except (TypeError, RuntimeError):
-            _itk_log.exception("Handled exception in _close")
-        original_close(event)
-    dialog.closeEvent = _close
+    _app_theme.themeChanged.connect(_Restyler(dialog).restyle)
 
 
 # ── Line style mapping ────────────────────────────────────────────────────────
@@ -2219,7 +2211,9 @@ class EnhancedPlotWidget(pg.PlotWidget):
             self._suppress_exclusion_signal = False
 
     def open_plot_settings(self):
-        PlotSettingsDialog(self, self.parent()).exec()
+        dialog = PlotSettingsDialog(self, self.parent())
+        dialog.exec()
+        release_window(dialog)
 
     # ── Double-click editing ──────────────────────────────────────────────
 
@@ -2253,39 +2247,53 @@ class EnhancedPlotWidget(pg.PlotWidget):
             tl = pi.titleLabel
             if tl and tl.isVisible():
                 if tl.mapRectToScene(tl.boundingRect()).contains(scene_pos):
-                    TitleEditorDialog(self, self.parent()).exec()
+                    dialog = TitleEditorDialog(self, self.parent())
+                    dialog.exec()
+                    release_window(dialog)
                     event.accept(); return
 
             la = pi.getAxis('left')
             if la.mapRectToScene(la.boundingRect()).contains(scene_pos):
-                AxisLabelEditorDialog(self, 'left', self.parent()).exec()
+                dialog = AxisLabelEditorDialog(self, 'left', self.parent())
+                dialog.exec()
+                release_window(dialog)
                 event.accept(); return
 
             ba = pi.getAxis('bottom')
             if ba.mapRectToScene(ba.boundingRect()).contains(scene_pos):
-                AxisLabelEditorDialog(self, 'bottom', self.parent()).exec()
+                dialog = AxisLabelEditorDialog(self, 'bottom', self.parent())
+                dialog.exec()
+                release_window(dialog)
                 event.accept(); return
 
             legend = getattr(self, 'legend', None)
             if legend and legend.isVisible():
                 try:
                     if legend.mapRectToScene(legend.boundingRect()).contains(scene_pos):
-                        LegendEditorDialog(self, self.parent()).exec()
+                        dialog = LegendEditorDialog(self, self.parent())
+                        dialog.exec()
+                        release_window(dialog)
                         event.accept(); return
                 except Exception:
                     _itk_log.exception("Handled exception in mouseDoubleClickEvent")
 
             scat = self._find_closest_scatter(scene_pos)
             if scat is not None:
-                ScatterEditorDialog(scat, self, self.parent()).exec()
+                dialog = ScatterEditorDialog(scat, self, self.parent())
+                dialog.exec()
+                release_window(dialog)
                 event.accept(); return
 
             curve = self._find_closest_curve(scene_pos)
             if curve is not None:
-                TraceEditorDialog(curve, self, self.parent()).exec()
+                dialog = TraceEditorDialog(curve, self, self.parent())
+                dialog.exec()
+                release_window(dialog)
                 event.accept(); return
 
-            BackgroundEditorDialog(self, self.parent()).exec()
+            dialog = BackgroundEditorDialog(self, self.parent())
+            dialog.exec()
+            release_window(dialog)
             event.accept()
 
         except Exception as e:
@@ -2992,7 +3000,9 @@ class MzBarPlotWidget(pg.PlotWidget):
 
     # ── Required by CustomPlotItem.getContextMenus ────────────────────
     def open_plot_settings(self):
-        PlotSettingsDialog(self, self.parent()).exec()
+        dialog = PlotSettingsDialog(self, self.parent())
+        dialog.exec()
+        release_window(dialog)
 
     # ── Bar metadata (called by MainWindow after every redraw) ────────
     def set_bar_meta(self, meta):
@@ -3017,17 +3027,23 @@ class MzBarPlotWidget(pg.PlotWidget):
             tl = pi.titleLabel
             if tl and tl.isVisible():
                 if tl.mapRectToScene(tl.boundingRect()).contains(scene_pos):
-                    TitleEditorDialog(self, self.parent()).exec()
+                    dialog = TitleEditorDialog(self, self.parent())
+                    dialog.exec()
+                    release_window(dialog)
                     event.accept(); return
 
             la = pi.getAxis('left')
             if la.mapRectToScene(la.boundingRect()).contains(scene_pos):
-                AxisLabelEditorDialog(self, 'left', self.parent()).exec()
+                dialog = AxisLabelEditorDialog(self, 'left', self.parent())
+                dialog.exec()
+                release_window(dialog)
                 event.accept(); return
 
             ba = pi.getAxis('bottom')
             if ba.mapRectToScene(ba.boundingRect()).contains(scene_pos):
-                AxisLabelEditorDialog(self, 'bottom', self.parent()).exec()
+                dialog = AxisLabelEditorDialog(self, 'bottom', self.parent())
+                dialog.exec()
+                release_window(dialog)
                 event.accept(); return
 
             try:
@@ -3035,12 +3051,16 @@ class MzBarPlotWidget(pg.PlotWidget):
                 x_click  = float(data_pos.x())
                 for meta in self._bar_meta:
                     if abs(x_click - meta['x']) <= 0.33:
-                        BarEditorDialog(meta, self.parent()).exec()
+                        dialog = BarEditorDialog(meta, self.parent())
+                        dialog.exec()
+                        release_window(dialog)
                         event.accept(); return
             except Exception:
                 _itk_log.exception("Handled exception in mouseDoubleClickEvent")
 
-            BackgroundEditorDialog(self, self.parent()).exec()
+            dialog = BackgroundEditorDialog(self, self.parent())
+            dialog.exec()
+            release_window(dialog)
             event.accept()
 
         except Exception as exc:
@@ -3108,6 +3128,12 @@ class SpectrumPlotWidget(pg.PlotWidget):
         vb.menu.insertAction(first, self._full_action)
         vb.menu.insertSeparator(first)
 
+        self._action_btn = QPushButton(self)
+        self._action_btn.setCursor(Qt.PointingHandCursor)
+        self._action_btn.hide()
+        self._action_callback = None
+        self._action_btn.clicked.connect(self._on_action)
+
         self._setup_appearance()
         self._view_all_btn = add_view_all_button(self, self.show_full_spectrum,
                                                  "View All (full spectrum)")
@@ -3170,10 +3196,31 @@ class SpectrumPlotWidget(pg.PlotWidget):
         self._render_info()
         self._render_markers()
         self._message.setColor(QColor(p.text_secondary))
+        self._style_action_button()
+
+    def _style_action_button(self):
+        """Give the button under the message the theme's accent colour."""
+        btn = getattr(self, '_action_btn', None)
+        if btn is None:
+            return
+        p = _app_theme.palette
+        btn.setStyleSheet(
+            f"QPushButton{{background:{p.accent};color:#ffffff;border:none;"
+            f"border-radius:6px;padding:8px 18px;font-size:14px;font-weight:600;}}"
+            f"QPushButton:hover{{background:{QColor(p.accent).lighter(115).name()};}}"
+            f"QPushButton:pressed{{background:{QColor(p.accent).darker(115).name()};}}"
+            f"QPushButton:disabled{{background:{p.text_secondary};}}")
+
+    def _on_action(self):
+        """Run the callback of the button under the message."""
+        if self._action_callback is not None:
+            self._action_callback()
 
     def open_plot_settings(self):
         """Open the shared Plot Settings dialog (fonts, grid, traces)."""
-        PlotSettingsDialog(self, self.parent()).exec()
+        dialog = PlotSettingsDialog(self, self.parent())
+        dialog.exec()
+        release_window(dialog)
 
     def set_units(self, units):
         """Set the intensity units, unless the user renamed the left axis.
@@ -3196,6 +3243,8 @@ class SpectrumPlotWidget(pg.PlotWidget):
             intensity (np.ndarray): Intensity of every point.
         """
         self._message.hide()
+        self._action_btn.hide()
+        self._action_callback = None
         self.getPlotItem().showAxis('left')
         self.getPlotItem().showAxis('bottom')
         if key == self._sample_key and self._curve is not None:
@@ -3271,11 +3320,13 @@ class SpectrumPlotWidget(pg.PlotWidget):
         pi.setYRange(0, max(float(self._y.max()), 1e-2) * 1.05, padding=0)
         self._update_info_visibility()
 
-    def show_message(self, text):
+    def show_message(self, text, action=None):
         """Clear the plot and show a message in its centre.
 
         Args:
             text (str): Message to show.
+            action (tuple | None): ``(label, callback)`` for a button shown
+                under the message, or None for no button.
         """
         for region in self._regions:
             self.removeItem(region)
@@ -3299,6 +3350,18 @@ class SpectrumPlotWidget(pg.PlotWidget):
             "<div style=\"font-family:'Times New Roman'; font-size:16pt;\" align=\"center\">"
             + text.replace("\n", "<br>") + "</div>")
         self._message.show()
+        if action:
+            label, callback = action
+            self._action_btn.setText(label)
+            self._action_btn.setEnabled(True)
+            self._action_btn.adjustSize()
+            self._action_callback = callback
+            self._style_action_button()
+            self._action_btn.show()
+            self._action_btn.raise_()
+        else:
+            self._action_callback = None
+            self._action_btn.hide()
         self._place_overlays()
 
     def _render_info(self):
@@ -3381,6 +3444,11 @@ class SpectrumPlotWidget(pg.PlotWidget):
             top = max(top, below)
         self._info.setPos(rect.right() - 10, top)
         self._message.setPos(rect.center())
+        btn = getattr(self, '_action_btn', None)
+        if btn is not None and btn.isVisible():
+            centre = self.mapFromScene(vb.mapToScene(rect.center()))
+            text_h = self._message.boundingRect().height()
+            btn.move(int(centre.x() - btn.width() / 2), int(centre.y() + text_h / 2 + 18))
 
     def mouseDoubleClickEvent(self, event):
         """Open the editor for the title, an axis, the trace or the background."""
@@ -3390,18 +3458,26 @@ class SpectrumPlotWidget(pg.PlotWidget):
             pi = self.getPlotItem()
             tl = pi.titleLabel
             if tl and tl.isVisible() and tl.mapRectToScene(tl.boundingRect()).contains(scene_pos):
-                TitleEditorDialog(self, self.parent()).exec()
+                dialog = TitleEditorDialog(self, self.parent())
+                dialog.exec()
+                release_window(dialog)
                 event.accept(); return
             for name in ('left', 'bottom'):
                 ax = pi.getAxis(name)
                 if ax.mapRectToScene(ax.boundingRect()).contains(scene_pos):
-                    AxisLabelEditorDialog(self, name, self.parent()).exec()
+                    dialog = AxisLabelEditorDialog(self, name, self.parent())
+                    dialog.exec()
+                    release_window(dialog)
                     event.accept(); return
             curve = EnhancedPlotWidget._find_closest_curve(self, scene_pos)
             if curve is not None:
-                TraceEditorDialog(curve, self, self.parent()).exec()
+                dialog = TraceEditorDialog(curve, self, self.parent())
+                dialog.exec()
+                release_window(dialog)
                 event.accept(); return
-            BackgroundEditorDialog(self, self.parent()).exec()
+            dialog = BackgroundEditorDialog(self, self.parent())
+            dialog.exec()
+            release_window(dialog)
             event.accept()
         except Exception:
             _itk_log.exception("Handled exception in SpectrumPlotWidget.mouseDoubleClickEvent")

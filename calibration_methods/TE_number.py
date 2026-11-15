@@ -32,6 +32,7 @@ from calibration_methods.te_common import (
     show_data_source_dialog,
 )
 from tools.theme import theme
+from results.shared_plot_utils import release_window
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.calibration_methods.TE_number")
 
@@ -587,6 +588,7 @@ class NumberMethodWidget(QMainWindow):
             self.sample_name_to_folder = {}
             
             progress = QProgressDialog("Processing TOFWERK files...", "Cancel", 0, 100, self)
+            progress.setAttribute(Qt.WA_DeleteOnClose)
             progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setMinimumDuration(0)
             progress.show()
@@ -702,7 +704,9 @@ class NumberMethodWidget(QMainWindow):
             if tree_view:
                 tree_view.setSelectionMode(QAbstractItemView.ExtendedSelection)
             
-            if file_dialog.exec() == QDialog.Accepted:
+            result = file_dialog.exec()
+            release_window(file_dialog)
+            if result == QDialog.Accepted:
                 selected_paths = file_dialog.selectedFiles()
                 
                 if not selected_paths:
@@ -756,6 +760,7 @@ class NumberMethodWidget(QMainWindow):
             self.sample_name_to_folder = {}
             
             progress = QProgressDialog("Processing selected folders...", "Cancel", 0, 100, self)
+            progress.setAttribute(Qt.WA_DeleteOnClose)
             progress.setWindowModality(Qt.WindowModal)
             progress.setMinimumDuration(0)
             progress.show()
@@ -942,6 +947,7 @@ class NumberMethodWidget(QMainWindow):
             self.folder_paths = []
             
             progress = QProgressDialog("Processing CSV files...", "Cancel", 0, 100, self)
+            progress.setAttribute(Qt.WA_DeleteOnClose)
             progress.setWindowModality(Qt.WindowModal)
             progress.setMinimumDuration(0)
             progress.show()
@@ -958,6 +964,8 @@ class NumberMethodWidget(QMainWindow):
                     self.csv_thread.terminate()
                     break
             
+            self.csv_thread.wait()
+            self.csv_thread.deleteLater()
             progress.close()
             
         except Exception as e:

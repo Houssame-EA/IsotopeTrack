@@ -34,6 +34,7 @@ from calibration_methods.te_common import (
     run_all_fits_on_subset, compute_outlier_indices,
 )
 from tools.theme import theme
+from results.shared_plot_utils import release_window
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.calibration_methods.TE_mass")
 from tools.logging_utils import log_context
@@ -1778,6 +1779,7 @@ class MassMethodWidget(QMainWindow):
             return
 
         progress_dialog = QDialog(self)
+        progress_dialog.setAttribute(Qt.WA_DeleteOnClose)
         progress_dialog.setWindowTitle("Calculating Regression")
         progress_layout = QVBoxLayout(progress_dialog)
         progress_label = QLabel("Processing folder data...")
@@ -1932,7 +1934,9 @@ class MassMethodWidget(QMainWindow):
             if tree_view:
                 tree_view.setSelectionMode(QAbstractItemView.ExtendedSelection)
             
-            if file_dialog.exec() == QDialog.Accepted:
+            result = file_dialog.exec()
+            release_window(file_dialog)
+            if result == QDialog.Accepted:
                 selected_paths = file_dialog.selectedFiles()
                 
                 if not selected_paths:
@@ -2006,6 +2010,7 @@ class MassMethodWidget(QMainWindow):
         """
         try:
             progress = QProgressDialog("Processing TOFWERK calibration files...", "Cancel", 0, 100, self)
+            progress.setAttribute(Qt.WA_DeleteOnClose)
             progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setMinimumDuration(0)
             progress.show()
@@ -2116,6 +2121,7 @@ class MassMethodWidget(QMainWindow):
                 selected_paths = valid_folders
 
             progress = QProgressDialog("Processing calibration data folders...", "Cancel", 0, 100, self)
+            progress.setAttribute(Qt.WA_DeleteOnClose)
             progress.setWindowModality(Qt.WindowModal)
             progress.setMinimumDuration(0)
             progress.show()
@@ -2208,6 +2214,7 @@ class MassMethodWidget(QMainWindow):
         """
         try:
             progress = QProgressDialog("Importing calibration CSV data...", "Cancel", 0, 100, self)
+            progress.setAttribute(Qt.WA_DeleteOnClose)
             progress.setWindowModality(Qt.WindowModal)
             progress.show()
             
@@ -2342,7 +2349,9 @@ class MassMethodWidget(QMainWindow):
             if tree_view:
                 tree_view.setSelectionMode(QAbstractItemView.ExtendedSelection)
             
-            if file_dialog.exec() == QDialog.Accepted:
+            result = file_dialog.exec()
+            release_window(file_dialog)
+            if result == QDialog.Accepted:
                 selected_paths = file_dialog.selectedFiles()
                 
                 if not selected_paths:
@@ -2385,6 +2394,7 @@ class MassMethodWidget(QMainWindow):
         """
         try:
             progress = QProgressDialog("Processing TOFWERK files...", "Cancel", 0, 100, self)
+            progress.setAttribute(Qt.WA_DeleteOnClose)
             progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setMinimumDuration(0)
             progress.show()
@@ -2490,6 +2500,7 @@ class MassMethodWidget(QMainWindow):
         """
         try:
             progress = QProgressDialog("Processing particle data folders...", "Cancel", 0, 100, self)
+            progress.setAttribute(Qt.WA_DeleteOnClose)
             progress.setWindowModality(Qt.WindowModal)
             progress.setMinimumDuration(0)
             progress.show()
@@ -2602,7 +2613,11 @@ class MassMethodWidget(QMainWindow):
         Starts background thread to process CSV files and handle results.
         """
         try:
+            previous = getattr(self, '_csv_progress', None)
+            if previous is not None:
+                previous.deleteLater()
             progress = QProgressDialog("Importing CSV data...", "Cancel", 0, 100, self)
+            self._csv_progress = progress
             progress.setWindowModality(Qt.WindowModal)
             progress.show()
             
@@ -3283,6 +3298,7 @@ class MassMethodWidget(QMainWindow):
             return
 
         progress_dialog = QDialog(self)
+        progress_dialog.setAttribute(Qt.WA_DeleteOnClose)
         progress_dialog.setWindowTitle("Calculating Transport Rate")
         progress_layout = QVBoxLayout(progress_dialog)
         

@@ -68,6 +68,7 @@ from tools.theme import theme as _app_theme
 from tools import window_glass
 from widget import canvas_layout as _layout
 from utils.unit import units
+from results.shared_plot_utils import release_window
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.widget.canvas_widgets")
 
@@ -371,6 +372,7 @@ def _warn_before_apply_changes(parent, node):
     box.addButton("Go back", QMessageBox.RejectRole)
     box.setDefaultButton(proceed)
     box.exec()
+    release_window(box)
     if dont_show.isChecked():
         set_stale_warning_suppressed(True)
     return box.clickedButton() is proceed
@@ -717,6 +719,7 @@ class NodeItem(QGraphicsWidget):
         dlg = ManageConnectionsDialog(scene, self.workflow_node,
                                       views[0] if views else None)
         dlg.exec()
+        release_window(dlg)
 
     @staticmethod
     def _ctx_menu_style():
@@ -1415,7 +1418,7 @@ class SampleSelectorDialog(_RowHighlight, QDialog):
         self.resize(900, 580)
         self.setMinimumSize(700, 480)
         self.setStyleSheet(_dialog_base_style())
-        _app_theme.themeChanged.connect(lambda _: self.setStyleSheet(_dialog_base_style()))
+        _app_theme.themeChanged.connect(self._restyle_base)
 
         self.parent_window = parent
         self.samples = samples
@@ -1437,6 +1440,10 @@ class SampleSelectorDialog(_RowHighlight, QDialog):
             self.sample_config[s] = included
 
         self._build()
+
+    def _restyle_base(self):
+        """Re-apply the dialog's base stylesheet after a theme switch."""
+        self.setStyleSheet(_dialog_base_style())
 
     def _build(self):
         root = QVBoxLayout(self)
@@ -1740,7 +1747,7 @@ class MultipleSampleSelectorDialog(_RowHighlight, QDialog):
         self.resize(1000, 600)
         self.setMinimumSize(800, 480)
         self.setStyleSheet(_dialog_base_style())
-        _app_theme.themeChanged.connect(lambda _: self.setStyleSheet(_dialog_base_style()))
+        _app_theme.themeChanged.connect(self._restyle_base)
 
         self.parent_window = parent
         self.samples = samples
@@ -1769,6 +1776,10 @@ class MultipleSampleSelectorDialog(_RowHighlight, QDialog):
                     'included': s in cs, 'sum_group': '', 'custom_name': s}
 
         self._build()
+
+    def _restyle_base(self):
+        """Re-apply the dialog's base stylesheet after a theme switch."""
+        self.setStyleSheet(_dialog_base_style())
 
     def _build(self):
         root = QVBoxLayout(self)
@@ -2310,7 +2321,9 @@ class SampleSelectorNode(WorkflowNode):
             self.selected_isotopes, self.sum_replicates, self.replicate_samples,
             counts=sample_particle_counts(parent_window, samples, self.batch_particle_data),
             on_step=on_step)
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             if not live['warned'] and not _warn_before_apply_changes(parent_window, self):
                 self._restore(before, live['applied'])
                 return False
@@ -2576,7 +2589,9 @@ class MultipleSampleSelectorNode(WorkflowNode):
             parent_window, samples, self.selected_samples,
             self.selected_isotopes, self.sample_config,
             counts=sample_particle_counts(parent_window, samples, self.batch_particle_data))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             if not _warn_before_apply_changes(parent_window, self):
                 return False
             sel, iso, cfg = dlg.get_selection()
@@ -2686,7 +2701,9 @@ class BatchSampleSelectorNode(WorkflowNode):
             parent_window,
             previously_selected=self.selected_windows,
             saved_snapshot=self._saved_output_snapshot)
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             if not _warn_before_apply_changes(parent_window, self):
                 return False
             sel = dlg.get_selection()
@@ -2771,14 +2788,17 @@ class ManageConnectionsDialog(QDialog):
         self.setModal(True)
         self.resize(380, 420)
         self.setStyleSheet(_dialog_base_style())
-        _app_theme.themeChanged.connect(
-            lambda _: self.setStyleSheet(_dialog_base_style()))
+        _app_theme.themeChanged.connect(self._restyle_base)
 
         self._output_checks = {}   # WorkflowLink -> QCheckBox
         self._input_checks = {}    # WorkflowLink -> QCheckBox (multi-input only)
         self._single_input_disconnect = None  # QPushButton, if single-input
         self._single_input_link = None
         self._build()
+
+    def _restyle_base(self):
+        """Re-apply the dialog's base stylesheet after a theme switch."""
+        self.setStyleSheet(_dialog_base_style())
 
     def _current_output_links(self):
         return [lk for lk in self.scene.workflow_links
@@ -3046,9 +3066,7 @@ class BatchSampleSelectorDialog(QDialog):
         self.setModal(True)
         self.resize(900, 600)
         self.setStyleSheet(_dialog_base_style())
-        _app_theme.themeChanged.connect(
-            lambda _: self.setStyleSheet(_dialog_base_style())
-        )
+        _app_theme.themeChanged.connect(self._restyle_base)
 
         self.parent_window = parent_window
         self.previously_selected = previously_selected or []
@@ -3056,6 +3074,10 @@ class BatchSampleSelectorDialog(QDialog):
         self.all_windows = _collect_main_windows()
         self.window_checkboxes = []
         self._build()
+
+    def _restyle_base(self):
+        """Re-apply the dialog's base stylesheet after a theme switch."""
+        self.setStyleSheet(_dialog_base_style())
 
     def _build(self):
         layout = QVBoxLayout(self)
@@ -4491,7 +4513,7 @@ class DraggableNodeButton(QPushButton):
         self.setCursor(QCursor(Qt.OpenHandCursor))
         self.setToolTip(text)
         self._refresh_style()
-        _app_theme.themeChanged.connect(lambda _: self._refresh_style())
+        _app_theme.themeChanged.connect(self._refresh_style)
 
     def natural_width(self):
         """Width the button needs to show its whole name, icon and padding."""
@@ -4575,7 +4597,7 @@ class _CollapsibleGroup(QWidget):
         vl.addWidget(self._container)
 
         self._apply_theme()
-        _app_theme.themeChanged.connect(lambda _: self._apply_theme())
+        _app_theme.themeChanged.connect(self._apply_theme)
 
     def _apply_theme(self):
         p = _app_theme.palette
@@ -4711,7 +4733,7 @@ class NodePalette(QWidget):
         root.setSpacing(0)
 
         self._apply_palette_theme()
-        _app_theme.themeChanged.connect(lambda _: self._apply_palette_theme())
+        _app_theme.themeChanged.connect(self._apply_palette_theme)
 
         self.search = QLineEdit()
         self.search.setPlaceholderText("  🔍  Search nodes…")
@@ -4936,8 +4958,17 @@ class EnhancedCanvasScene(QGraphicsScene):
                 # Restore the node's links too, now that the node exists
                 # again in node_items — one delete = one undo, and the node
                 # comes back wired exactly as it was (see delete_node).
-                for src, sch, snk, snkch in data.get('links', []):
-                    self.add_link(src, sch, snk, snkch)
+                prev_suppress = self._suppress_data_flow
+                self._suppress_data_flow = True
+                try:
+                    for src, sch, snk, snkch in data.get('links', []):
+                        self.add_link(src, sch, snk, snkch)
+                finally:
+                    self._suppress_data_flow = prev_suppress
+                # The node let go of its data when it was deleted (see
+                # _release_node_data); one ordered pass sends it again, to
+                # the node first and then on to whatever it feeds.
+                self.flush_data_flow()
             elif action_type == 'add_link':
                 li = data.get('li')
                 if li and li.scene():
@@ -4999,6 +5030,67 @@ class EnhancedCanvasScene(QGraphicsScene):
         self.workflow_nodes.remove(wn) if wn in self.workflow_nodes else None
         self.node_items.pop(wn, None)
         self.removeItem(ni)
+        self._release_node_data(wn)
+        # What this node fed has lost its source, exactly as when the link
+        # alone is deleted: it forgets its data instead of showing, and
+        # holding, particles that no longer reach it.
+        if not self._suppress_data_flow:
+            for _src, _sch, snk, _snkch in touched:
+                if snk is not wn and snk in self.node_items:
+                    self._clear_if_orphaned(snk)
+
+    def clear_workflow(self):
+        """Remove every node, link and note, and let go of what they held.
+
+        Used by "Clear canvas" and before a project is loaded. Each node's
+        particle data and hidden figure windows are released as in
+        :meth:`delete_node`, the undo history is emptied (it would otherwise
+        keep the old nodes, and bring them back into a canvas they no longer
+        belong to), and Insights drops the particles its caches were built from.
+        """
+        for node in list(self.workflow_nodes):
+            self._release_node_data(node)
+        self._undo_stack.clear()
+        try:
+            from results.insights.engine import invalidate_context_cache
+            invalidate_context_cache()
+        except Exception:
+            _itk_log.exception("Handled exception releasing the Insights caches")
+        self.workflow_nodes.clear()
+        self.workflow_links.clear()
+        self.node_items.clear()
+        self.link_items.clear()
+        self.clear()
+
+    @staticmethod
+    def _release_node_data(node):
+        """Let go of the particle data a deleted node was holding.
+
+        The undo history keeps a deleted node so it can be brought back, and
+        with it everything the node holds: its own copy of every particle
+        that reached it, which is most of what a node costs in memory, and
+        the figure window it keeps hidden for quick reopening (see
+        :func:`results.shared_plot_utils.release_node_figures`). The node's
+        settings are all that undo needs; the data is sent to it again when
+        it is restored (see :meth:`undo`). Only what arrived through a link
+        and the windows built from it are dropped, never a node's own
+        settings.
+
+        Args:
+            node: The workflow node just removed from the canvas.
+        """
+        if getattr(node, 'input_data', None) is not None:
+            node.input_data = None
+        try:
+            from results.shared_plot_utils import release_node_figures
+            release_node_figures(node)
+        except Exception:
+            _itk_log.exception("Handled exception releasing a deleted node's figures")
+        for name in ('batch_samples', 'batch_particle_data', 'batch_sample_data',
+                     'batch_available_isotopes', 'batch_concentration_meta',
+                     'batch_mean_signal'):
+            if getattr(node, name, None) is not None:
+                setattr(node, name, None)
 
     def remove_and_reconnect_temp(self, ni):
         """Right-click "Remove and Reconnect" on a Temp Node: delete it and
@@ -5830,7 +5922,7 @@ class EnhancedCanvasView(QGraphicsView):
         self.setFocusPolicy(Qt.StrongFocus)
 
         self._apply_view_theme()
-        self._view_theme_handler = lambda _: self._safe_apply_view_theme()
+        self._view_theme_handler = self._safe_apply_view_theme
         _app_theme.themeChanged.connect(self._view_theme_handler)
         self.destroyed.connect(self._view_disconnect_theme)
 
@@ -6208,7 +6300,7 @@ class CanvasResultsDialog(QDialog):
         self.setObjectName("canvasResultsDialog")
         window_glass.attach(self, self._on_glass_active)
         self._apply_chrome_theme()
-        _app_theme.themeChanged.connect(lambda _: self._apply_chrome_theme())
+        _app_theme.themeChanged.connect(self._apply_chrome_theme)
         self._build()
         self._apply_chrome_theme()
         ual = _ual()
@@ -6589,14 +6681,11 @@ class CanvasResultsDialog(QDialog):
         """
 
     def clear_canvas(self):
-        self.canvas.scene.workflow_nodes.clear()
-        self.canvas.scene.workflow_links.clear()
-        self.canvas.scene.node_items.clear()
-        self.canvas.scene.link_items.clear()
-        self.canvas.scene.clear()
+        self.canvas.scene.clear_workflow()
         self.status_label.setText("Canvas cleared")
 
 
 def show_canvas_results(parent_window):
     dialog = CanvasResultsDialog(parent_window)
     dialog.exec_()
+    release_window(dialog)

@@ -27,8 +27,7 @@ from results.shared_plot_utils import (
     FontSettingsGroup, LegendGroup, ExportSettingsGroup,
     MplDraggableCanvas, get_display_name, download_matplotlib_figure, LABEL_MODES,
     format_combination_label, Renderer,
-    pick_color_hex,
-)
+    pick_color_hex, release_window)
 from widget.colors import default_colors, colorheatmap
 from utils.unit import units
 from widget.unit_combo import UnitComboBox
@@ -1092,7 +1091,9 @@ class SingleMultipleElementDisplayDialog(QDialog):
         """
         ad = self.node.extract_analysis_data()
         dlg = SingleMultipleSettingsDialog(self.node.config, self.node.input_data, ad, self)
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
 
@@ -1108,7 +1109,9 @@ class SingleMultipleElementDisplayDialog(QDialog):
         dlg = SingleMultipleSettingsDialog(
             self.node.config, self.node.input_data, ad, self, scope='format')
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
         else:
@@ -1128,7 +1131,9 @@ class SingleMultipleElementDisplayDialog(QDialog):
         dlg = SingleMultipleSettingsDialog(
             self.node.config, self.node.input_data, ad, self, scope='quantities')
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
         else:
@@ -1660,6 +1665,7 @@ class SingleMultipleElementPlotNode(QObject):
     def configure(self, parent_window):
         dlg = SingleMultipleElementDisplayDialog(self, parent_window)
         dlg.exec()
+        release_window(dlg)
         return True
 
     def process_data(self, input_data):

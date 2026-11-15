@@ -53,6 +53,7 @@ from tools.particle_classifier_rules import (
 )
 from tools.particle_classifier_expr import ExpressionSyntaxError
 
+from results.shared_plot_utils import release_window
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.tools.particle_classifier_simple_dialog")
 
@@ -1246,6 +1247,7 @@ class SimpleClassifierDialog(QDialog):
         btn_back = dlg.addButton("Go Back", QMessageBox.ButtonRole.RejectRole)
         dlg.setDefaultButton(btn_drop)
         dlg.exec()
+        release_window(dlg)
         clicked = dlg.clickedButton()
         if clicked is btn_back:
             return False
@@ -1441,7 +1443,9 @@ class SimpleClassifierDialog(QDialog):
             self._unmatched_mode, self._unclassified_color,
             self._selected_sources_out(), self._pooling,
             [confound_record(k) for k in self._dismissed])
-        if dlg.exec() != QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result != QDialog.Accepted:
             return
         self._overlap_mode = dlg.get_overlap_mode()
         self._unmatched_mode = dlg.get_unmatched_mode()
@@ -1519,7 +1523,9 @@ class SimpleClassifierDialog(QDialog):
         bb.rejected.connect(dlg.reject)
         layout.addWidget(bb)
 
-        proceed = dlg.exec() == QDialog.Accepted
+        result = dlg.exec()
+        release_window(dlg)
+        proceed = result == QDialog.Accepted
         self._overlap_mode = 'priority' if rb_priority.isChecked() else 'double_count'
         self._sync_advanced()
         if proceed:

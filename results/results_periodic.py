@@ -245,7 +245,7 @@ class CompactIsotopeDisplay(QFrame):
         """
         super().__init__(parent)
         self._apply_theme_style()
-        self._theme_handler = lambda _: self._safe_apply_theme()
+        self._theme_handler = self._safe_apply_theme
         _app_theme.themeChanged.connect(self._theme_handler)
         self.destroyed.connect(self._disconnect_theme)
 
@@ -696,7 +696,7 @@ class CompactPeriodicTableWidget(QWidget):
         
     def initUI(self):
         self._apply_theme_bg()
-        self._pt_theme_handler = lambda _: self._safe_apply_theme_bg()
+        self._pt_theme_handler = self._safe_apply_theme_bg
         _app_theme.themeChanged.connect(self._pt_theme_handler)
         self.destroyed.connect(self._pt_disconnect_theme)
 
@@ -1070,7 +1070,7 @@ class IsotopeChipSelector(QWidget):
         self._selected = set()
         self._chips = {}
         self._setup()
-        self._chip_theme_handler = lambda _: self._safe_restyle()
+        self._chip_theme_handler = self._safe_restyle
         _app_theme.themeChanged.connect(self._chip_theme_handler)
         self.destroyed.connect(self._chip_disconnect_theme)
 

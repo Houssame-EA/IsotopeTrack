@@ -22,8 +22,7 @@ from results.shared_plot_utils import (
     FontSettingsGroup, get_display_name, LABEL_MODES, declutter_pie_labels,
     format_element_label, format_combination_label, Renderer, per_ml_active,
     per_ml_factor, conc_meta_available, single_sample_name, format_per_ml,
-    pick_color_hex, seed_suggested_element_colors,
-)
+    pick_color_hex, seed_suggested_element_colors, release_window)
 from results.utils_sort import sort_elements_by_mass
 from utils.unit import units
 from widget.unit_combo import UnitComboBox
@@ -440,7 +439,9 @@ class MplPieCanvas(QWidget):
         bb.rejected.connect(dlg.reject)
         vlay.addWidget(bb)
 
-        if dlg.exec() != QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result != QDialog.Accepted:
             return
 
         fmt = fmt_box.currentText().lower()
@@ -1050,7 +1051,9 @@ class PieChartDisplayDialog(QDialog):
         """
         elems = self._get_available_elements()
         dlg = PieChartSettingsDialog(self.node.config, self.node.input_data, elems, self)
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
 
@@ -1063,7 +1066,9 @@ class PieChartDisplayDialog(QDialog):
         dlg = PieChartSettingsDialog(
             self.node.config, self.node.input_data, elems, self, scope='format')
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
         else:
@@ -1080,7 +1085,9 @@ class PieChartDisplayDialog(QDialog):
         dlg = PieChartSettingsDialog(
             self.node.config, self.node.input_data, elems, self, scope='quantities')
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
         else:
@@ -1828,7 +1835,9 @@ class ElementCompositionDisplayDialog(QDialog):
         combos = self._get_actual_combos()
         dlg = ElementCompositionSettingsDialog(
             self.node.config, self.node.input_data, combos, self)
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
 
@@ -1843,7 +1852,9 @@ class ElementCompositionDisplayDialog(QDialog):
         dlg = ElementCompositionSettingsDialog(
             self.node.config, self.node.input_data, combos, self, scope='format')
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
         else:
@@ -1862,7 +1873,9 @@ class ElementCompositionDisplayDialog(QDialog):
         dlg = ElementCompositionSettingsDialog(
             self.node.config, self.node.input_data, combos, self, scope='quantities')
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
         else:

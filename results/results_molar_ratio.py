@@ -21,8 +21,7 @@ from results.shared_plot_utils import (
     single_sample_name, apply_sci_y_axis, HtmlAxisItem, pick_color_hex,
     get_font_config,
     compute_bin_edges_width_geo as _mr_compute_bin_edges,
-    compute_global_bin_edges_width_geo as _mr_compute_global_bin_edges,
-)
+    compute_global_bin_edges_width_geo as _mr_compute_global_bin_edges, release_window, clear_plot_layout)
 from utils.unit import units
 from widget.unit_combo import UnitComboBox
 import logging
@@ -1280,7 +1279,9 @@ class MolarRatioDisplayDialog(QDialog):
 
         dlg.preview_requested.connect(lambda cfg: (
             self.node.config.update(cfg), self._refresh(), _maybe_warn_swallowed()))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
             _maybe_warn_swallowed()
@@ -1347,7 +1348,7 @@ class MolarRatioDisplayDialog(QDialog):
             Annotation shelf/attach behavior is intentionally removed.
         """
         try:
-            self.pw.clear()
+            clear_plot_layout(self.pw)
             self.pw.setBackground('w')
 
             cfg = self.node.config

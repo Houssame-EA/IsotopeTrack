@@ -193,11 +193,16 @@ def _draw_references(ax, panel, table, report):
 
 
 def draw_text(fig, ax, panel, table, report, style):
-    """A free text block, e.g. a caption or a method note."""
+    """A free text block, e.g. a caption or a method note.
+
+    The words wrap to the panel's width; see
+    :mod:`results.figure_builder.core.richtext` for the markup.
+    """
+    from results.figure_builder.core import richtext
     ax.axis('off')
     size = float_or_none(panel.get('text_size')) or None
-    ax.text(0.02, 0.98, panel.get('text') or '', transform=ax.transAxes,
-            ha='left', va='top', wrap=True, fontsize=size)
+    richtext.draw(ax, panel.get('text') or '', size, isotopes=style == 'isotope',
+                  known=getattr(table, 'labels', None) or None)
     if panel.get('title'):
         ax.set_title(panel['title'])
 

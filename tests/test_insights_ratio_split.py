@@ -109,7 +109,7 @@ def test_explained_figure_draws_and_reports_checks():
     spec = F.figure_for(s, ctx)
     assert spec is not None and len(spec["panels"]) == 6
     legend = spec["panels"][-1]["text"]
-    assert "Checks:" in legend and "✓ the two populations' ratios differ" in legend
+    assert "Checks:" in legend and "✓ The two populations' ratios differ" in legend
     assert render_problems(spec, table) == []
 
 

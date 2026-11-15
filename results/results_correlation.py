@@ -21,8 +21,7 @@ from results.shared_plot_utils import (
     CustomColorBar, make_viridis_colormap,
     get_sample_color, get_display_name,
     download_pyqtgraph_figure, pick_color_hex, _QT_LINE,
-    _apply_box, parse_element_label,
-)
+    _apply_box, parse_element_label, release_window, clear_plot_layout)
 from results import trend_selection as _sel
 from utils.unit import units
 from widget.unit_combo import UnitComboBox
@@ -826,6 +825,7 @@ class CorrelationSettingsDialog(QDialog):
         """Open the SampleCorrelationsDialog as a non-modal child window."""
         dlg = SampleCorrelationsDialog(self._config, self._plot_data, parent=self)
         dlg.exec()
+        release_window(dlg)
 
     def collect(self) -> dict:
         """Return scope-safe config updates for format/quantities routes.
@@ -1443,7 +1443,9 @@ class CorrelationPlotDisplayDialog(QDialog):
             self._is_multi(), self._sample_names(), scope="format", parent=self,
             input_data=self.node.input_data)
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
         else:
@@ -1463,7 +1465,9 @@ class CorrelationPlotDisplayDialog(QDialog):
             self._is_multi(), self._sample_names(), scope="quantities", parent=self,
             plot_data=_plot_data, input_data=self.node.input_data)
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
-        if dlg.exec() == QDialog.Accepted:
+        result = dlg.exec()
+        release_window(dlg)
+        if result == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
         else:
@@ -1796,6 +1800,7 @@ class CorrelationPlotDisplayDialog(QDialog):
         dlg = AutoCorrelationDialog(top, self)
         dlg.pair_selected.connect(self._apply_auto_pair)
         dlg.exec()
+        release_window(dlg)
 
     def _apply_auto_pair(self, x_elem, y_elem):
         self.node.config['mode'] = 'Simple Element Correlation'
@@ -1839,7 +1844,7 @@ class CorrelationPlotDisplayDialog(QDialog):
             self._stats_by_plot = {}
             self._lasso = None
 
-            self.plot_widget.clear()
+            clear_plot_layout(self.plot_widget)
             self.plot_widget.setBackground('w')
 
             plot_data = self.node.extract_plot_data()

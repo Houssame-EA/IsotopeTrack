@@ -25,13 +25,20 @@ def _darker(color, factor=0.72):
 
 
 def draw_histogram(fig, ax, panel, table, report, style):
-    """Overlaid histograms per group with log binning, KDE, cumulative and tests."""
+    """Overlaid histograms per group with log binning, KDE, cumulative and tests.
+
+    With ``hist_percent`` every group's bars add up to 100%, so groups of
+    very different size can be compared by shape.
+    """
     from scipy import stats
     triples = [t for t in value_groups(panel, table, with_weights=True) if t[1].size]
     if not triples:
         raise ExpressionError('No finite values to plot')
     groups = [(g, v) for g, v, _w in triples]
     weights = [w if panel.get('per_ml') else None for _g, _v, w in triples]
+    percent = bool(panel.get('hist_percent')) and not panel.get('per_ml') and not panel.get('density')
+    if percent:
+        weights = [np.full(v.size, 100.0 / v.size) for _g, v in groups]
     allv = np.concatenate([v for _, v in groups])
     bins = max(2, int(panel.get('bins') or 40))
     log_x = bool(panel.get('log_x'))
@@ -68,7 +75,7 @@ def draw_histogram(fig, ax, panel, table, report, style):
             if len(groups) > 1:
                 ax.hist(v, bins=edges, density=density, histtype='step', color=_darker(g.color),
                         linewidth=1.0, weights=w)
-            elif panel.get('bar_values') and not density:
+            elif panel.get('bar_values') and not density and not percent:
                 _bar_values(ax, edges, counts, log_x, bool(panel.get('per_ml')))
         else:
             ax.hist(v, bins=edges, density=density, histtype='step', color=g.color, weights=w,
@@ -95,7 +102,8 @@ def draw_histogram(fig, ax, panel, table, report, style):
     if cumulative:
         ylabel = 'Cumulative fraction' if density else 'Cumulative ' + count_label(panel).lower()
     else:
-        ylabel = 'Density' if density else count_label(panel)
+        ylabel = 'Density' if density else '% of each group' if percent and len(groups) > 1 \
+            else '% of particles' if percent else count_label(panel)
     style_axes(ax, panel, table, style, panel['value'], '')
     if not panel.get('y_label'):
         ax.set_ylabel(ylabel)

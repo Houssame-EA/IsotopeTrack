@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt
 
 from tools.theme import theme, LIGHT, app_qss
 from processing import detection_registry
+from results.shared_plot_utils import release_window
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.calibration_methods.te_common")
 
@@ -249,7 +250,9 @@ def show_data_source_dialog(parent=None):
     ok_btn.clicked.connect(dlg.accept)
     cancel_btn.clicked.connect(dlg.reject)
 
-    if dlg.exec() != QDialog.Accepted:
+    result = dlg.exec()
+    release_window(dlg)
+    if result != QDialog.Accepted:
         return None
 
     if folder_radio.isChecked():
@@ -642,6 +645,7 @@ def confirm_remove_samples(parent, names, consequence):
     box.addButton(QMessageBox.StandardButton.Cancel)
     box.setDefaultButton(QMessageBox.StandardButton.Cancel)
     box.exec()
+    release_window(box)
     return box.clickedButton() is remove_btn
 
 

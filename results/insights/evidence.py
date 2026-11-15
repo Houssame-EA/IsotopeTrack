@@ -41,7 +41,7 @@ COINCIDENCE_SHARE = 0.10
 
 @dataclass
 class Checks:
-    """The checks a figure ran, written as the legend's closing line."""
+    """The checks a figure ran, written as the legend's verdict."""
 
     items: list = field(default_factory=list)
 
@@ -50,11 +50,46 @@ class Checks:
         self.items.append((ok, text))
 
     def line(self) -> str:
-        """The verdict line, or an empty string when nothing was checked."""
+        """The verdict on one line, or an empty string when nothing was checked."""
         if not self.items:
             return ""
         marks = {True: "✓", False: "✗", None: "–"}
         return "Checks: " + "; ".join(f"{marks[ok]} {text}" for ok, text in self.items) + "."
+
+    def summary(self) -> str:
+        """How many checks passed, failed and stayed undecided, in a few words."""
+        total = len(self.items)
+        if not total:
+            return ""
+        passed = sum(1 for ok, _t in self.items if ok is True)
+        failed = sum(1 for ok, _t in self.items if ok is False)
+        open_ = total - passed - failed
+        if passed == total:
+            head = f"all {total} passed" if total > 1 else "passed"
+        else:
+            head = f"{passed} of {total} passed"
+        rest = []
+        if failed:
+            rest.append(f"{failed} to read with care")
+        if open_:
+            rest.append(f"{open_} undecided")
+        return ", ".join([head] + rest)
+
+    def block(self) -> str:
+        """The verdict as a headed list, one check per line, failed checks first.
+
+        Written in the markup of
+        :mod:`results.figure_builder.core.richtext`, which draws each mark
+        in its own colour. Empty when nothing was checked.
+        """
+        if not self.items:
+            return ""
+        marks = {True: "✓", False: "✗", None: "–"}
+        order = {False: 0, None: 1, True: 2}
+        rows = sorted(self.items, key=lambda item: order[item[0]])
+        lines = [f"**Checks: {self.summary()}.**"]
+        lines += [f"{marks[ok]} {text[:1].upper()}{text[1:]}" for ok, text in rows]
+        return "\n".join(lines)
 
 
 def table_from(units, pool) -> object | None:
@@ -215,6 +250,29 @@ def ratio_spread(table, num: str, den: str, rule: str = "", factor: float = 1.0,
             "excess": float(np.sqrt(np.mean(z ** 2)))}
 
 
+def pooled(table, expr: str, rule: str = "") -> list:
+    """Each sample's value of *expr* with its uncertainty, from its particles pooled.
+
+    A ratio is the ratio of its summed signals and anything else a mean (see
+    :mod:`results.figure_builder.core.estimates`), exactly as the Estimate
+    chart draws it.
+
+    Returns:
+        ``(sample, estimate)`` for every sample with enough particles, in the
+        table's order.
+    """
+    from results.figure_builder.charts.estimate import group_estimate
+    v = _eval(table, expr)
+    m = mask(table, rule) & np.isfinite(v) & (v > 0)
+    col = table.column("sample")
+    out = []
+    for s in table.samples():
+        est = group_estimate(table, expr, m & (col == s))
+        if est is not None:
+            out.append((s, est))
+    return out
+
+
 def ratio_drift(table, num: str, den: str, rule: str = "") -> tuple[float, float, int]:
     """Rank correlation of a particle's isotope ratio with its denominator counts."""
     a, b = _eval(table, num), _eval(table, den)
@@ -355,6 +413,100 @@ def independence(table, a: str, b: str, rule: str = "") -> dict | None:
         return None
     expected = float(va.sum()) * float(vb.sum()) / n
     return {"observed": int((va & vb).sum()), "expected": expected, "n": n}
+
+
+TWO_PEAKS_MIN = 60
+"""Particles needed before a ratio is searched for two populations."""
+
+TWO_PEAKS_SEPARATION = 2.0
+"""Ashman's D above which two populations stand apart as separate peaks."""
+
+TWO_PEAKS_SHARE = 0.10
+"""Smallest share of the particles the lesser population must hold."""
+
+
+def ratio_peaks(ratios) -> dict | None:
+    """Whether particle ratios form one population or two.
+
+    The log ratios are fitted with one normal distribution and with a
+    mixture of two. Two populations are reported only when the mixture is
+    clearly the better description (BIC lower by 10), its two centres stand
+    apart by more than their widths (Ashman's D above
+    :data:`TWO_PEAKS_SEPARATION`), and the lesser one holds at least
+    :data:`TWO_PEAKS_SHARE` of the particles. A single peak with long tails
+    is therefore not split.
+
+    Args:
+        ratios: One positive ratio per particle.
+
+    Returns:
+        ``two`` (bool), ``centres`` (the ratio at each centre, lower first),
+        ``shares`` and ``separation``; ``None`` with too few particles.
+    """
+    v = np.asarray(ratios, dtype=float)
+    v = np.log10(v[np.isfinite(v) & (v > 0)])
+    n = int(v.size)
+    if n < TWO_PEAKS_MIN or np.ptp(v) == 0:
+        return None
+    lo, hi = np.percentile(v, [0.5, 99.5])
+    v = v[(v >= lo) & (v <= hi)]
+    n = int(v.size)
+    mu0, sd0 = float(v.mean()), float(v.std())
+
+    def log_normal(x, mu, sd):
+        return -0.5 * ((x - mu) / sd) ** 2 - np.log(sd) - 0.5 * np.log(2 * np.pi)
+
+    one = float(np.sum(log_normal(v, mu0, sd0)))
+    mu = np.percentile(v, [25, 75]).astype(float)
+    sd = np.array([sd0 / 2, sd0 / 2])
+    w = np.array([0.5, 0.5])
+    floor = max(sd0 * 0.02, 1e-6)
+    two = one
+    for _ in range(300):
+        parts = np.vstack([np.log(w[k]) + log_normal(v, mu[k], sd[k]) for k in (0, 1)])
+        top = parts.max(axis=0)
+        total = top + np.log(np.exp(parts - top).sum(axis=0))
+        new = float(total.sum())
+        resp = np.exp(parts - total)
+        nk = resp.sum(axis=1)
+        if nk.min() < 1.0:
+            break
+        w = nk / n
+        mu = (resp * v).sum(axis=1) / nk
+        sd = np.maximum(np.sqrt((resp * (v - mu[:, None]) ** 2).sum(axis=1) / nk), floor)
+        if abs(new - two) < 1e-7 * max(1.0, abs(new)):
+            two = new
+            break
+        two = new
+    order = np.argsort(mu)
+    mu, sd, w = mu[order], sd[order], w[order]
+    bic_one = -2 * one + 2 * np.log(n)
+    bic_two = -2 * two + 5 * np.log(n)
+    separation = float(np.sqrt(2) * abs(mu[1] - mu[0]) / np.sqrt(sd[0] ** 2 + sd[1] ** 2))
+    found = bool(bic_two < bic_one - 10 and separation > TWO_PEAKS_SEPARATION
+                 and w.min() >= TWO_PEAKS_SHARE)
+    return {"two": found, "centres": (float(10 ** mu[0]), float(10 ** mu[1])),
+            "shares": (float(w[0]), float(w[1])), "separation": separation}
+
+
+def slope_bounds(table, x_expr: str, y_expr: str, rule: str = "") -> tuple[float, float, int] | None:
+    """The range the log-log slope of *y* against *x* lies in when both are noisy.
+
+    See :func:`results.figure_builder.charts.xy.slope_range`: the y-on-x fit
+    is too flat and the x-on-y fit too steep, and the truth is between.
+
+    Returns:
+        ``(low, high, n)``, or ``None`` when no slope can be fitted.
+    """
+    from results.figure_builder.charts.xy import slope_range
+    x, y = _eval(table, x_expr), _eval(table, y_expr)
+    m = mask(table, rule) & np.isfinite(x) & np.isfinite(y) & (x > 0) & (y > 0)
+    if int(m.sum()) < 10:
+        return None
+    found = slope_range(np.log10(x[m]), np.log10(y[m]))
+    if found is None:
+        return None
+    return found[0], found[1], int(m.sum())
 
 
 def near_limit(v: np.ndarray, limit: float | None, factor: float = 2.0) -> float | None:

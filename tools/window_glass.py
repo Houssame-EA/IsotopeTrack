@@ -266,7 +266,12 @@ def _apply_mac(widget):
     the sidebar runs up to the top edge with the traffic-light buttons on it,
     as one continuous column. The window title text is hidden. Only the parts
     of the Qt content that paint transparent (the sidebar) show the blur.
+    Does nothing unless Qt draws through the macOS window system ("cocoa"):
+    under the offscreen platform the tests use, ``winId()`` is not an NSView.
     """
+    from PySide6.QtGui import QGuiApplication
+    if QGuiApplication.platformName() != "cocoa":
+        return False
     view = int(widget.winId())
     window = _send(view, "window")
     if not window:
@@ -495,6 +500,10 @@ class _ShowWatcher:
                     QTimer.singleShot(0, watcher.activate)
                 return False
 
+            def refresh_theme(self, *_):
+                """Re-apply the backdrop to the window this filter belongs to."""
+                _refresh(self.parent())
+
         self.widget = widget
         self.on_active = on_active
         self.filter = _Filter(widget)
@@ -517,7 +526,7 @@ class _ShowWatcher:
             ignore_safe_area_tree(w)
             if self.on_active is not None:
                 self.on_active(titlebar_inset(w))
-            theme.themeChanged.connect(lambda *_: _refresh(w))
+            theme.themeChanged.connect(self.filter.refresh_theme)
 
 
 def _refresh(widget):

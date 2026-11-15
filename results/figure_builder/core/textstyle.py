@@ -52,6 +52,7 @@ KIND_ELEMENTS = {
     'radar': ['title', 'ticks', 'legend'],
     'parallel': ['title', 'y_label', 'ticks', 'legend'],
     'ecdf': ['title', 'x_label', 'y_label', 'ticks', 'legend'],
+    'estimate': ['title', 'x_label', 'y_label', 'ticks', 'legend', 'cells'],
     'lollipop': ['title', 'x_label', 'y_label', 'ticks', 'legend', 'cells'],
     'treemap': ['title', 'legend', 'cells'],
     'timeline': ['title', 'x_label', 'y_label', 'ticks', 'legend'],

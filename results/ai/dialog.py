@@ -11,6 +11,7 @@ Explore runs the same loop for several turns, keeping a plan and a ledger
 of findings outside the chat history so nothing is lost when old messages
 are trimmed, and writes its summary from that ledger.
 """
+from results.shared_plot_utils import release_window
 import logging
 import os
 import subprocess
@@ -1380,7 +1381,14 @@ class AIChatDialog(QDialog):
         QTimer.singleShot(0, self._fit_toolbar)
 
     def _fit_toolbar(self):
-        """Hide toolbar tools from the right when they do not fit, behind a » menu."""
+        """Hide toolbar tools from the right when they do not fit, behind a » menu.
+
+        Runs from a zero-delay timer, so the window may already be deleted when
+        it fires (a last resize as the window closes); it then does nothing.
+        """
+        import shiboken6
+        if not shiboken6.isValid(self):
+            return
         bar = getattr(self, '_toolbar_layout', None)
         if bar is None:
             return
@@ -1424,7 +1432,9 @@ class AIChatDialog(QDialog):
     def _open_settings(self):
         """Open the backend settings and apply the chosen model."""
         d = BackendDialog(self._cfg, self)
-        if d.exec() == QDialog.Accepted:
+        result = d.exec()
+        release_window(d)
+        if result == QDialog.Accepted:
             self._cfg = d.get_config()
             b = self._cfg['backend']
             if b == 'ollama' and self._cfg.get('model'):
@@ -1450,6 +1460,7 @@ class AIChatDialog(QDialog):
         d = CustomizeDialog(self)
         d.applied.connect(self._apply_theme) 
         d.exec()
+        release_window(d)
 
     def _update_counter(self, n_chars):
         """Show the composer's character count and token estimate.

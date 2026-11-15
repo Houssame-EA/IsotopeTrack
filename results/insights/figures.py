@@ -15,8 +15,9 @@ replicated.
 
 When the figure's particles are known (:attr:`FigureContext.table`), the
 legend reports what the panels show, measured on those same particles with
-:mod:`results.insights.evidence`, and closes with a line of checks, each
-passed or failed. Legends sit below their plot and reference lines are named
+:mod:`results.insights.evidence`. The legend opens with the conclusion and
+a list of the checks the figure ran, each passed, failed or undecided, before
+it describes the panels. Legends sit below their plot and reference lines are named
 there, so no writing covers the data.
 
 :func:`figure_for` builds the design; the panel adds it to the canvas as a
@@ -34,6 +35,12 @@ from results.insights import evidence as ev
 
 QUANTITY_NAMES = {"counts": "counts", "mass": "mass (fg)", "d": "size (nm)"}
 """Readable names for the quantities a panel can show."""
+
+SHARE_NOTE = " Each bar is labelled with its share and carries its 95% Wilson interval."
+"""Sentence closing the caption of a panel of shares."""
+
+DENSE_PARTICLES = 1500
+"""Particles per group from which a density map of counts per cell is worth drawing."""
 
 WITH_COLOR = "#c2410c"
 WITHOUT_COLOR = "#64748b"
@@ -535,20 +542,114 @@ def _three_isotope(ctx: FigureContext, s, num: str, den: str, **extra):
     cut = (getattr(s, "facts", None) or {}).get("ratio_cut")
     if cut:
         rule += f" and {cut[0]} >= {cut[1]:.6g}"
-    panel = _panel("scatter", "Three-isotope plot", x=_ratio(ctx, p7, p6), y=_ratio(ctx, p8, p6),
-                   filter=rule, iso_refs="all", x_label=_ratio_name(ctx, p7, p6),
-                   y_label=_ratio_name(ctx, p8, p6), marker_size=10, alpha=0.6, **extra)
-    caption = ("Each particle's ²⁰⁸Pb/²⁰⁶Pb against its ²⁰⁷Pb/²⁰⁶Pb, the standard plot for "
-               "tracing lead to its source. Open symbols are reference sources (average crust "
-               "after Stacey and Kramers 1975, Broken Hill ore, and any added under Reference "
-               "values); particles falling on a line between two sources are mixtures of them. "
-               "Add local sources, such as a smelter's ore, under Reference values.")
+    rx, ry = _ratio(ctx, p7, p6), _ratio(ctx, p8, p6)
+    from results.figure_builder.core.references import isotope_sources, source_ratio
+    sources = [(source_ratio(n, p7, p6), source_ratio(n, p8, p6)) for n in isotope_sources()]
+    sources = [(x, y) for x, y in sources if x is not None and y is not None]
+    panel = _panel("scatter", "Three-isotope plot", x=rx, y=ry,
+                   filter=rule, iso_refs="all", iso_ref_line=len(sources) == 2,
+                   ellipse="mean95", x_label=_ratio_name(ctx, p7, p6),
+                   y_label=_ratio_name(ctx, p8, p6), marker_size=6, alpha=0.15, **extra)
+    grouped = extra.get("group_by") == "sample"
+    whose = "each sample's" if grouped else "the sample's"
+    caption = ("²⁰⁸Pb/²⁰⁶Pb against ²⁰⁷Pb/²⁰⁶Pb, the standard plot for tracing lead to its "
+               f"source. The filled dot is {whose} own value, the ratio of its summed counts, "
+               "and the ellipse around it the 95% region of that value; the faint points are "
+               "the particles, whose scatter is mostly counting noise. Open symbols are "
+               "reference sources (average crust after Stacey and Kramers 1975, Broken Hill "
+               "ore, and any added under Reference values)"
+               + (", joined by a dotted mixing line" if len(sources) == 2 else "")
+               + "; a value on the line between two sources is a mixture of them, and an "
+                 "ellipse clear of a source rules that source out on its own. Add local "
+                 "sources, such as a smelter's ore, under Reference values.")
     if ctx.table is not None:
-        x = ev.values(ctx.table, _ratio(ctx, p7, p6), rule)
-        y = ev.values(ctx.table, _ratio(ctx, p8, p6), rule)
-        if x.size >= 10:
-            caption += (f" Measured: median ²⁰⁷Pb/²⁰⁶Pb {np.median(x):.4g}, ²⁰⁸Pb/²⁰⁶Pb "
-                        f"{np.median(y):.4g}, over {x.size:,} particles carrying all three isotopes.")
+        try:
+            xs, ys = dict(ev.pooled(ctx.table, rx, rule)), dict(ev.pooled(ctx.table, ry, rule))
+        except Exception:
+            xs, ys = {}, {}
+        rows = [(n, xs[n], ys[n]) for n in xs if n in ys]
+        if rows:
+            from results.figure_builder.core.estimates import fmt_pm
+            caption += (" Measured: " + "; ".join(
+                (f"{n}: " if grouped or len(rows) > 1 else "")
+                + f"²⁰⁷Pb/²⁰⁶Pb {fmt_pm(ex.value, ex.half)}, ²⁰⁸Pb/²⁰⁶Pb {fmt_pm(ey.value, ey.half)} "
+                  f"({ex.n:,} particles)" for n, ex, ey in rows) + ".")
+            window = _zoom([(ex.value, ex.half, ey.value, ey.half) for _n, ex, ey in rows], sources)
+            if window:
+                panel.update(window)
+                caption += (" The axes are zoomed to the sample values and the sources; "
+                            "particles further out are not shown.")
+    return panel, caption
+
+
+ZOOM_PAD = 0.3
+"""Margin left around the values and sources of a zoomed plot, as a share of their span."""
+
+
+def _zoom(values, sources) -> dict:
+    """Axis limits framing group values, their intervals and the reference sources.
+
+    Args:
+        values: ``(x, x_half, y, y_half)`` per group.
+        sources: ``(x, y)`` per reference source.
+
+    Returns:
+        ``x_min``, ``x_max``, ``y_min`` and ``y_max`` as panel settings, or
+        an empty dict when there is nothing to frame.
+    """
+    xs = [v for x, hx, _y, _hy in values for v in (x - 1.6 * hx, x + 1.6 * hx)] + [s[0] for s in sources]
+    ys = [v for _x, _hx, y, hy in values for v in (y - 1.6 * hy, y + 1.6 * hy)] + [s[1] for s in sources]
+    if len(xs) < 2 or not all(math.isfinite(v) for v in xs + ys):
+        return {}
+    out = {}
+    for axis, vals in (("x", xs), ("y", ys)):
+        lo, hi = min(vals), max(vals)
+        pad = max(hi - lo, abs(hi) * 0.01, 1e-9) * ZOOM_PAD
+        out[f"{axis}_min"], out[f"{axis}_max"] = f"{lo - pad:.5g}", f"{hi + pad:.5g}"
+    return out
+
+
+def _estimate(ctx: FigureContext, s, num: str, den: str, natural, check: bool = False):
+    """The ratio of each sample as one value with its 95% interval, and its caption.
+
+    Args:
+        check: Whether a difference between the samples is the finding, so
+            the largest difference is added to the figure's checks.
+    """
+    ratio = _ratio(ctx, num, den)
+    used = _used(s, num, den)
+    panel = _panel("estimate", f"{num}/{den} by sample", value=ratio, group_by="sample",
+                   filter=used, x_label=_ratio_name(ctx, num, den), **_ratio_lines(natural, "x"))
+    caption = (f"Each sample's {num}/{den} as the ratio of its summed counts, with its 95% "
+               "interval. Large, well-counted particles decide this value, so it is steadier "
+               "than the median of the particles' own ratios (open diamond), which many small, "
+               "noisy particles pull. Open circles are the replicates of a sample, each on its "
+               "own. Samples whose intervals stand clear of each other differ"
+               + (", and the dashed line is the natural abundance ratio." if natural else "."))
+    if ctx.table is None:
+        return panel, caption
+    try:
+        rows = ev.pooled(ctx.table, ratio, used)
+    except Exception:
+        rows = []
+    if not rows:
+        return panel, caption
+    from results.figure_builder.core.estimates import difference, fmt_pm
+    caption += (" Measured: " + "; ".join(f"{n} {fmt_pm(e.value, e.half)} ({e.n:,} particles)"
+                                           for n, e in rows) + ".")
+    if len(rows) >= 2:
+        (na, ea), (nb, eb) = max(((a, b) for i, a in enumerate(rows) for b in rows[i + 1:]),
+                                 key=lambda pair: abs(pair[0][1].value - pair[1][1].value))
+        z, p = difference(ea, eb)
+        if math.isfinite(z):
+            gap = ea.value / eb.value - 1 if eb.value else math.nan
+            caption += (f" The largest difference, {na} against {nb}, is {gap:+.1%} "
+                        f"(z = {z:.2f}, {ev.p_text(p)}).")
+            if check:
+                ctx.checks.add(p < 0.05, f"the samples' pooled ratios "
+                               + ("differ" if p < 0.05 else "do not differ")
+                               + f": {na} {fmt_pm(ea.value, ea.half)} against {nb} "
+                                 f"{fmt_pm(eb.value, eb.half)} ({ev.p_text(p)})")
     return panel, caption
 
 
@@ -574,6 +675,16 @@ def _isotope_pair(s, ctx, natural=None):
             m, lo, hi = ev.median_ci(v)
             found += (f" Measured on the {st['n']:,} particles shown: median {m:.4g} "
                       f"(95% CI {ev.fmt(lo, 4)}–{ev.fmt(hi, 4)}).")
+            try:
+                from results.figure_builder.charts.estimate import group_estimate
+                from results.figure_builder.core.estimates import fmt_pm
+                keep = ev.mask(ctx.table, used) & (ev._eval(ctx.table, ratio) > 0)
+                whole = group_estimate(ctx.table, ratio, keep)
+            except Exception:
+                whole = None
+            if whole is not None:
+                found += (f" The ratio of the summed counts, which large particles decide, is "
+                          f"{fmt_pm(whole.value, whole.half)} (95% interval).")
     story = [
         (_panel("histogram", f"{num}/{den} in each particle", value=ratio, bins=50,
                 filter=used, x_label=name, **_ratio_lines(natural, "x")),
@@ -584,19 +695,16 @@ def _isotope_pair(s, ctx, natural=None):
          + _band_sentence(den, natural) + _cut_line_sentence(s, den)
          + _spread_sentence(ctx, s, num, den) + _drift_check(ctx, s, num, den)),
     ]
-    three = _three_isotope(ctx, s, num, den)
+    three = _three_isotope(ctx, s, num, den, **({"group_by": "sample"} if ctx.multi_sample else {}))
     if three:
         story.append(three)
     story.append((_histogram(ctx, "counts", den, f"{den} counts and detection limit"),
                   f"{den} counts against the detection limit (dashed line): the closer most "
                   "particles sit to it, the wider their ratios scatter."))
     if ctx.multi_sample:
-        story.append((_panel("box", f"{num}/{den} by sample", value=ratio, group_by="sample",
-                             filter=used, y_label=name, **_ratio_lines(natural, "y"),
-                             **_test(ctx.groups, log_values=False)),
-                      f"The same ratio in each sample; a sample far from the others should be "
-                      "looked at before the samples are pooled."
-                      + _test_sentence(ctx.groups, "ratios", log_values=False)))
+        panel, caption = _estimate(ctx, s, num, den, natural)
+        story.insert(1, (panel, caption + " A sample far from the others should be looked at "
+                                          "before the samples are pooled."))
     _natural_check(ctx, s, num, den, natural)
     return story
 
@@ -680,15 +788,15 @@ def _isotope_groups(s, ctx, natural=None):
             ctx.checks.add(p < 0.05, f"{method}: {ev.p_text(p)}")
         else:
             ctx.checks.add(None, "samples not replicated, so the test counts particles")
+    est_panel, est_caption = _estimate(ctx, s, num, den, natural, check=True)
     story = [
-        (_panel("box", f"{num}/{den} by sample", value=ratio, group_by="sample", filter=used,
-                y_label=name, **_ratio_lines(natural, "y"),
-                **_test(ctx.groups, log_values=False)),
+        (est_panel,
          f"The samples differ in their {num}/{den} isotope ratio"
          + (f" by {diff}" if diff else "")
          + (f", while the replicates of each agree within {spread}" if spread and "%" in spread
-            else "") + "." + _test_sentence(ctx.groups, "ratios", log_values=False)
-         + measured + _cut_sentence(s) + _bias_sentence(ctx, num, den, natural)),
+            else "") + ". " + est_caption
+         + measured.replace(" Measured medians:", " Medians of the particles' ratios:")
+         + _cut_sentence(s) + _bias_sentence(ctx, num, den, natural)),
         (_panel("ecdf", f"{num}/{den} distribution by sample", value=ratio, group_by="sample",
                 filter=used, x_label=name, **_ratio_lines(natural, "x")),
          "The whole distribution of the ratio in each sample; curves shifted sideways mean "
@@ -761,6 +869,11 @@ def _size_caption(what: str) -> str:
             "their detection limit in small particles.")
 
 
+def _count(value: float) -> str:
+    """A number of particles as it is read: ``1,440`` or ``28.7``, never ``1.44e+03``."""
+    return f"{value:,.0f}" if value >= 100 else f"{value:.3g}"
+
+
 def _coincidence_sentence(ctx: FigureContext, a: str, b: str) -> str:
     """Co-detections against chance coincidence of two particles, adding a check."""
     if ctx.table is None:
@@ -770,11 +883,13 @@ def _coincidence_sentence(ctx: FigureContext, a: str, b: str) -> str:
         return ""
     share = c["expected"] / c["observed"]
     ok = share <= ev.COINCIDENCE_SHARE
+    expected = _count(c["expected"])
     ctx.checks.add(ok, f"{c['observed']:,} particles carry both {a} and {b}, against "
-                       f"{c['expected']:.3g} expected from two particles arriving together by chance"
-                       + ("" if ok else ", so many pairings may be coincidences"))
+                       f"{expected} expected from two particles arriving together by chance"
+                       + ("" if ok else
+                          f", so up to {min(share, 1.0):.0%} of the pairings may be coincidences"))
     return (f" From the particle rate and event duration, chance coincidence of a {a} and a {b} "
-            f"particle would give {c['expected']:.3g} co-detections; {c['observed']:,} are seen.")
+            f"particle would give {expected} co-detections; {c['observed']:,} are seen.")
 
 
 def _interference(s, ctx):
@@ -867,9 +982,9 @@ def _comparison(s, ctx):
          f"The full {el} distributions; a whole shift means the particles differ in size or "
          "composition, a change on one side only means one population was added or lost."),
         (_panel("bar", f"Share of particles with {el}", value=el, agg="detect_pct",
-                group_by="sample", y_label="Particles with it (%)", error="none"),
+                group_by="sample", y_label="Particles with it (%)", error="ci95", bar_values=True),
          f"How often {el} is detected at all in each sample; a sample can carry more "
-         f"{el} per particle and still have fewer particles with it."),
+         f"{el} per particle and still have fewer particles with it." + SHARE_NOTE),
         (_strip(ctx, el, f"Every {el} particle by sample"), _strip_caption(el)
          + " A shift carried by one colour points to one particle type changing."),
     ]
@@ -906,8 +1021,9 @@ def _replicates(s, ctx):
                 log_y=True, y_label=_amount_name(ctx, el), **_limit(ctx, unit, el)),
          f"{s.title}: the {el} {name} per particle in each replicate." + measured),
         (_panel("bar", f"Share of particles with {el}", value=el, agg="detect_pct",
-                group_by="sample", y_label="Particles with it (%)", error="none"),
-         f"How often each replicate detects {el}; replicates of one sample should agree."),
+                group_by="sample", y_label="Particles with it (%)", error="ci95", bar_values=True),
+         f"How often each replicate detects {el}; replicates of one sample should agree."
+         + SHARE_NOTE),
         (_panel("timeline", "Particles arriving over the run", time_mode="cumulative",
                 group_by="sample"),
          "Each line's slope is that replicate's particle rate; a different slope points to "
@@ -932,9 +1048,10 @@ def _signature(s, ctx):
             measured = " Measured: " + "; ".join(f"{smp} {sh:.1%} of {n:,}" for smp, sh, n in shares) + "."
     story = [
         (_panel("bar", f"Share of particles with {el}", value=el, agg="detect_pct",
-                group_by="sample", y_label="Particles with it (%)", error="none"),
+                group_by="sample", y_label="Particles with it (%)", error="ci95", bar_values=True),
          f"{el} is found in a much larger share of one sample's particles; Fisher's exact "
-         "test on these shares, with the replicates kept apart, made it stand out." + measured),
+         "test on these shares, with the replicates kept apart, made it stand out." + SHARE_NOTE
+         + measured),
         (_panel("combinations", "Most common element combinations", top_n=10,
                 group_by="sample"),
          f"The particle types in each sample, showing which combinations carry {el}."),
@@ -961,8 +1078,8 @@ def _signature(s, ctx):
                       _detect_caption(host, el) + f" A sample whose {host} particles mostly sit "
                       f"below the line cannot show whether they carry {el}."))
     story.append((_panel("bar", f"Share with {el} by particle size", value=el, agg="detect_pct",
-                         group_by="size", y_label="Particles with it (%)", error="none"),
-                  _size_caption(f"How often {el} is detected")
+                         group_by="size", y_label="Particles with it (%)", error="ci95", bar_values=True),
+                  _size_caption(f"How often {el} is detected") + SHARE_NOTE
                   + _share_size_sentence(ctx, el)))
     return story
 
@@ -1002,8 +1119,8 @@ def _stoichiometry(s, ctx):
                 log_x=True, log_y=True, show_fit=True, marker_size=10),
          f"{a} and {b} keep a fixed ratio in every particle that carries both"
          + (f", {value}" if value else "") + "." + measured + _coincidence_sentence(ctx, a, b)),
-        (_panel("histogram", f"{a}/{b} in each particle", value=ratio, log_x=True, bins=40,
-                x_label=f"{a}/{b} ({unit})"),
+        (_panel("histogram", f"{a}/{b} in each particle", value=ratio, log_x=True, bins=60,
+                filter=both, trim_pct=99.5, x_label=f"{a}/{b} ({unit})"),
          "The ratio of each particle; one narrow peak means a fixed composition, far narrower "
          "than if the two elements varied independently."),
         (_panel("scatter", "Ratio against particle amount", x=total, y=ratio, log_x=True,
@@ -1019,6 +1136,10 @@ def _stoichiometry(s, ctx):
          "close to it are the least precise."),
     ]
     return story
+
+
+SAME_RATIO = 1.5
+"""Largest factor between two samples' ratios for them to count as the same ratio."""
 
 
 def _ratio_split(s, ctx):
@@ -1062,12 +1183,19 @@ def _ratio_split(s, ctx):
                 if vals.size >= 5 and other is not None and other.size >= 5:
                     rows.append((name, float(np.median(other)), float(np.median(vals))))
             if len(rows) >= 2:
-                same = all((r_wo > r_w) == (mwo > mw)
-                           and max(r_w, r_wo) / max(min(r_w, r_wo), 1e-12) >= RATIO_SPLIT_MIN_FOLD
-                           for _n, r_wo, r_w in rows)
-                ctx.checks.add(same, "every sample shows the same two ratios ("
-                               + "; ".join(f"{n}: {r_wo:.3g} and {r_w:.3g}" for n, r_wo, r_w in rows)
-                               + ")")
+                splits = all((r_wo > r_w) == (mwo > mw)
+                            and max(r_w, r_wo) / max(min(r_w, r_wo), 1e-12) >= RATIO_SPLIT_MIN_FOLD
+                            for _n, r_wo, r_w in rows)
+                agree = all(max(col) / max(min(col), 1e-12) <= SAME_RATIO
+                            for col in ([r[1] for r in rows], [r[2] for r in rows]))
+                listed = "; ".join(f"{n}: {r_wo:.3g} and {r_w:.3g}" for n, r_wo, r_w in rows)
+                if splits and agree:
+                    ctx.checks.add(True, f"every sample shows the same two ratios ({listed})")
+                elif splits:
+                    ctx.checks.add(False, "every sample splits the same way, but the two ratios "
+                                          f"are not the same from sample to sample ({listed})")
+                else:
+                    ctx.checks.add(False, f"the split is not seen in every sample ({listed})")
             cw = ev.values(ctx.table, c, with_c)
             if cw.size >= 10 and cw.size == rw.size:
                 rho, _pp, k = ev.spearman(cw, rw)
@@ -1077,9 +1205,9 @@ def _ratio_split(s, ctx):
                 bw, bwo = float(np.median(nb_w)), float(np.median(nb_wo))
                 small = bw < 0.5 * bwo
                 ctx.checks.add(not small, f"particles with {c} are not much smaller in {b} "
-                               f"(median {bw:.3g} against {bwo:.3g} counts)")
-                size = (f" Measured: median {b} {bw:.3g} counts with {c} against {bwo:.3g} "
-                        "without it.")
+                               f"(median {_count(bw)} against {_count(bwo)} counts)")
+                size = (f" Measured: median {b} {_count(bw)} counts with {c} against "
+                        f"{_count(bwo)} without it.")
     shares = ""
     if ctx.table is not None:
         rows = [r for r in ev.detected_share_by_size(ctx.table, c, both) if r[2] >= 10]
@@ -1093,28 +1221,84 @@ def _ratio_split(s, ctx):
          f"around its ratio; two populations in separate envelopes are not counting noise."
          + first),
         (_panel("histogram", f"{a}/{b} with and without {c}", value=ratio, log_x=True, bins=50,
-                filter=both, x_label=f"{a}/{b} (counts)", **split),
-         f"The ratio of the particles with and without {c}. Two separate peaks point to two "
+                filter=both, x_label=f"{a}/{b} (counts)", hist_percent=True, **split),
+         f"The ratio of the particles with and without {c}, each as a share of its own "
+         "population so the smaller one stays visible. Two separate peaks point to two "
          "phases; one broad peak shifting with the third element would point to one phase of "
          "variable composition." + shape),
-        (_panel("scatter", f"{a}/{b} against {c}", x=c, y=ratio, log_x=True, filter=with_c,
-                show_fit=True, x_label=f"{c} (counts)", y_label=f"{a}/{b}",
+        (_panel("scatter", f"{a}/{b} against {c}", x=c, y=ratio, log_x=True, log_y=True,
+                filter=with_c, show_fit=True, x_label=f"{c} (counts)", y_label=f"{a}/{b}",
                 color=split["rules"][0]["color"], marker_size=12),
          f"Within the particles carrying {c}, {a}/{b} against the {c} signal. A ratio that "
          f"moves with {c} points to {c} substituting in one structure; a flat ratio points to "
          f"a separate {c}-bearing phase." + meaning),
         (_panel("bar", f"Particles carrying {c}, by size", value=c, agg="detect_pct",
-                group_by="size", filter=both, y_label=f"With {c} (%)", error="none",
+                group_by="size", filter=both, y_label=f"With {c} (%)", error="ci95", bar_values=True,
                 xtick_rotation=15),
-         _size_caption(f"How often particles carrying {a} and {b} also carry {c}") + shares),
+         _size_caption(f"How often particles carrying {a} and {b} also carry {c}") + SHARE_NOTE
+         + shares),
         (_panel("histogram", f"{b} signal with and without {c}", value=b, log_x=True, bins=40,
-                filter=both, x_label=f"{b} (counts)", **split),
+                filter=both, x_label=f"{b} (counts)", hist_percent=True, **split),
          f"The {b} signal of the two populations. If the particles with {c} sit much lower, "
          f"{c} may go undetected in small particles of the same phase, which would mix them "
          f"into the grey population." + size
          + " Ratios are in counts; calibrate both elements to moles before comparing them with "
            "a formula."),
     ]
+
+
+def _where_most(ctx: FigureContext, x: str, y: str, rule: str, x_label: str, y_label: str):
+    """The panel showing where most particles of an X–Y cloud sit, with its caption.
+
+    With :data:`DENSE_PARTICLES` particles per group or more, a map of
+    particles per cell. With fewer, most cells would hold one or two
+    particles and the map would only repeat the scatter, so the particles
+    are drawn with the contours of their density instead.
+    """
+    n = None
+    if ctx.table is not None:
+        try:
+            n = int(ev.mask(ctx.table, rule).sum()) / max(1, ctx.groups)
+        except Exception:
+            n = None
+    if n is not None and n < DENSE_PARTICLES:
+        return (_panel("contour", "Where most particles sit", x=x, y=y, log_x=True, log_y=True,
+                       filter=rule, show_points=True, levels=5, points_size=9,
+                       points_alpha=0.7, points_zorder=4,
+                       x_label=x_label, y_label=y_label),
+                "The same particles with the contours of their density: each contour encloses "
+                "a denser part of the cloud, so the innermost one is where most particles sit, "
+                "rather than the few at the edges.")
+    return (_panel("hexbin", "Where most particles sit", x=x, y=y, log_x=True, log_y=True,
+                   x_label=x_label, y_label=y_label),
+            "The same particles as a density map, showing where most of them sit rather than "
+            "the few at the edges.")
+
+
+CIRCULAR_SHARE = 0.5
+"""Share of a particle's amount two elements hold above which size classes slice along them."""
+
+
+def _size_is_circular(ctx: FigureContext, xa: str, xb: str, rule: str) -> float | None:
+    """Median share of the particle amount that two plotted elements make up, when it is large.
+
+    Size classes are thirds of each particle's total amount. When the two
+    elements of a plot are most of that amount, a size class is a band across
+    the plot itself, and a fit inside the band is flat whatever the relation.
+
+    Returns:
+        The median share when it reaches :data:`CIRCULAR_SHARE`, else ``None``.
+    """
+    try:
+        total, _unit_name = ev.amount(ctx.table)
+        part = ev._eval(ctx.table, xa) + ev._eval(ctx.table, xb)
+        m = ev.mask(ctx.table, rule) & np.isfinite(total) & (total > 0) & np.isfinite(part)
+        if int(m.sum()) < 10:
+            return None
+        share = float(np.median(np.clip(part[m] / total[m], 0, 1)))
+    except Exception:
+        return None
+    return share if share >= CIRCULAR_SHARE else None
 
 
 def _correlation(s, ctx):
@@ -1124,26 +1308,89 @@ def _correlation(s, ctx):
     xa, xb = _amount(ctx, a), _amount(ctx, b)
     name = _qname(_unit(ctx))
     both = f"{a} > 0 and {b} > 0"
-    holds = ""
+    ratio = f"{xa} / {xb}"
+    holds = slope = peaks_text = spread = ""
+    lines = "median"
+    marks = {}
+    peaks = None
     if ctx.table is not None:
+        bounds = ev.slope_bounds(ctx.table, xb, xa, both)
+        if bounds is not None:
+            lo, hi, _n = bounds
+            slope = (f" Measured: the slope lies between {lo:.2f} and {hi:.2f}; "
+                     + ("1 lies inside, so a fixed ratio is not ruled out." if lo <= 1 <= hi else
+                        f"1 lies outside, so {a} is not simply proportional to {b}."))
+        peaks = ev.ratio_peaks(ev.values(ctx.table, ratio, both))
+        if peaks is not None:
+            r1, r2 = peaks["centres"]
+            if peaks["two"]:
+                lines = f"{r1:.4g}, {r2:.4g}"
+                marks = {"vlines": lines}
+                peaks_text = (f" Measured: two populations, near {a}/{b} = {r1:.3g} "
+                              f"({ev.pct(peaks['shares'][0])} of the particles) and {r2:.3g} "
+                              f"({ev.pct(peaks['shares'][1])}), marked by the dashed lines.")
+                ctx.checks.add(False, f"the {a}/{b} ratio falls into two populations, near "
+                                      f"{r1:.3g} and {r2:.3g}, so one line and one ρ over all "
+                                      "particles describe neither")
+            else:
+                med = float(np.median(ev.values(ctx.table, ratio, both)))
+                peaks_text = f" Measured: one population, median {a}/{b} = {med:.3g}."
+                ctx.checks.add(True, f"the {a}/{b} ratio forms one population (median {med:.3g})")
+        if bounds is not None and peaks is not None and peaks["two"]:
+            slope = (f" Measured over all particles: the slope lies between {bounds[0]:.2f} and "
+                     f"{bounds[1]:.2f}, but with two populations in the cloud that range "
+                     "describes neither; each population follows its own dashed line.")
+        circular = _size_is_circular(ctx, xa, xb, both)
         rows = [r for r in ev.size_holds(ctx.table, xb, xa, both) if r[2] >= 10]
         if rows:
             holds = (" Measured within each size class: "
                      + "; ".join(f"{n} ρ = {r:+.2f} ({k:,})" for n, r, k in rows) + ".")
-            same_sign = all(np.sign(r) == np.sign(rows[0][1]) and abs(r) >= 0.2 for _n, r, _k in rows)
-            ctx.checks.add(same_sign, "the correlation "
-                           + ("holds within every size class" if same_sign else
-                              "weakens within size classes, so particle size may drive it"))
-    return [
-        (_panel("scatter", f"{a} against {b}", x=xb, y=xa, log_x=True, log_y=True, show_fit=True,
-                x_label=_amount_name(ctx, b), y_label=_amount_name(ctx, a),
-                marker_size=10),
+            if circular is not None:
+                holds += (f" {a} and {b} make up most of each particle's amount (median "
+                          f"{circular:.0%}), so a size class is a band across this plot and its "
+                          "fit is flattened by the slicing itself; it is not used as a check.")
+            else:
+                same_sign = all(np.sign(r) == np.sign(rows[0][1]) and abs(r) >= 0.2
+                                for _n, r, _k in rows)
+                ctx.checks.add(same_sign, "the correlation "
+                               + ("holds within every size class" if same_sign else
+                                  "weakens within size classes, so particle size may drive it"))
+        if "counts" in ctx.quantities and not (peaks and peaks["two"]):
+            st = ev.ratio_spread(ctx.table, a, b, both)
+            if st is not None:
+                spread = (f" Measured: {ev.pct(st['inside'])} of particles inside the band, "
+                          f"excess scatter {st['excess']:.2f}: "
+                          + ("the spread is what counting alone gives, so the particles share "
+                             "one composition." if st["excess"] <= ev.EXCESS_OK else
+                             "more than counting alone gives, so the composition itself "
+                             "varies from particle to particle."))
+    two = bool(peaks and peaks["two"])
+    story = [
+        (_panel("scatter", f"{a} against {b}", x=xb, y=xa, log_x=True, log_y=True,
+                fit_range=True, ratio_lines=lines, ratio_lines_label=f"{a}/{b}",
+                x_label=_amount_name(ctx, b), y_label=_amount_name(ctx, a), marker_size=10,
+                alpha=0.5),
          f"In particles carrying both, {a} rises with {b}" + (f" (ρ = {rho})" if rho else "")
-         + "." + _coincidence_sentence(ctx, a, b)),
-        (_panel("hexbin", "Where most particles sit", x=xb, y=xa, log_x=True, log_y=True,
-                x_label=_amount_name(ctx, b), y_label=_amount_name(ctx, a)),
-         "The same particles as a density map, showing where most of them sit rather than "
-         "the few at the edges."),
+         + ". The shaded wedge is the range the slope can lie in: its flatter edge is the "
+           f"usual fit, which noise in {b} flattens, and its steeper edge the fit the other "
+           "way round. Each dashed line is a fixed ratio, a slope of 1 on these axes."
+         + slope + _coincidence_sentence(ctx, a, b)),
+        (_panel("histogram", f"{a}/{b} in each particle", value=ratio, log_x=True,
+                bins=60, filter=both, x_label=f"{a}/{b} ({name})", **marks),
+         "The ratio of each particle. One peak means one kind of particle; two peaks mean two "
+         "kinds, each with its own ratio, which a single fit line would run between."
+         + peaks_text),
+    ]
+    if spread:
+        story.append((
+            _panel("scatter", f"{a}/{b} against {b} signal", x=b, y=f"{a} / {b}", log_x=True,
+                   log_y=True, trend="median", poisson_band=2.0, filter=both,
+                   x_label=f"{b} counts", y_label=f"{a}/{b} (counts)", marker_size=10),
+            f"Each particle's {a}/{b} in counts against its {b} counts. The shaded band is the "
+            "mean ratio ± 2σ that counting statistics alone would give, so it narrows as the "
+            "signal grows; the solid line is the running median." + spread))
+    story += [
+        _where_most(ctx, xb, xa, both, _amount_name(ctx, b), _amount_name(ctx, a)),
         (_panel("scatter", f"{a} against {b} by particle size", x=xb, y=xa, log_x=True,
                 log_y=True, group_by="size", show_other=False, show_fit=True, fit_band=False,
                 filter=both, x_label=_amount_name(ctx, b), y_label=_amount_name(ctx, a),
@@ -1151,28 +1398,60 @@ def _correlation(s, ctx):
          "The same particles split into small, medium and large thirds by total mass, each "
          "with its own fit; elements that only grow together with particle size correlate "
          "overall but not within a size class." + holds),
-        (_panel("scatter", "Ratio against particle size", x=f"{xa} + {xb}", y=f"{xa} / {xb}",
+        (_panel("scatter", "Ratio against particle size", x=f"{xa} + {xb}", y=ratio,
                 log_x=True, log_y=True, trend="median", x_label=f"{a} + {b} {name}",
                 y_label=f"{a}/{b}", marker_size=10),
          "A flat ratio means a fixed composition; a ratio that changes with size means the "
          "two only grow together"
          + (f" (proportionality ρp = {rho_p})" if rho_p and rho_p != "n/a" else "") + "."),
-        (_panel("histogram", f"{a}/{b} in each particle", value=f"{xa} / {xb}", log_x=True,
-                bins=40, x_label=f"{a}/{b} ({name})"),
-         "One tight peak supports a single particle type; a broad or split ratio suggests "
-         "several."),
     ]
+    if two:
+        story.insert(2, story.pop(-1))
+    return story
+
+
+MATRIX_ELEMENTS = 8
+"""Most elements shown in a matrix about two elements: the two and their closest company."""
+
+
+def _company(ctx: FigureContext, focus, limit: int = MATRIX_ELEMENTS) -> str:
+    """The elements most often found in the particles carrying the *focus* elements.
+
+    A matrix of every measured isotope is unreadable and mostly empty; the
+    ones that matter to a finding about two elements are those two and what
+    travels with them.
+
+    Returns:
+        A comma-separated list for a panel's ``isotopes``, the focus elements
+        first, or an empty string (every isotope) when the particles are
+        unknown or there are no more than *limit* isotopes anyway.
+    """
+    table = ctx.table
+    labels = list(getattr(table, "labels", None) or ())
+    if table is None or len(labels) <= limit:
+        return ""
+    focus = [f for f in focus if f in labels]
+    if not focus:
+        return ""
+    held = np.zeros(len(table), dtype=bool)
+    for f in focus:
+        held |= ev._eval(table, f) > 0
+    counts = {lab: int(np.sum(held & (ev._eval(table, lab) > 0))) for lab in labels
+              if lab not in focus}
+    ranked = sorted((lab for lab, n in counts.items() if n > 0), key=lambda lab: -counts[lab])
+    return ", ".join(focus + ranked[:max(0, limit - len(focus))])
 
 
 def _cooccurrence(s, ctx):
     rare, common = s.elements[0], s.elements[1]
     together = s.explain_key == "cooccurrence_with"
+    company = _company(ctx, (rare, common))
     measured = ""
     if ctx.table is not None:
         ind = ev.independence(ctx.table, rare, common)
         if ind is not None:
             measured = (f" Measured: {ind['observed']:,} particles carry both, against "
-                        f"{ind['expected']:.3g} if the two were found independently.")
+                        f"{_count(ind['expected'])} if the two were found independently.")
     story = [
         (_panel("combinations", f"Combinations in particles with {rare}", top_n=10,
                 filter=f"{rare} > 0"),
@@ -1181,17 +1460,21 @@ def _cooccurrence(s, ctx):
             if together else "are found in separate particles far more often than chance "
                              "would give.") + measured
          + (_coincidence_sentence(ctx, rare, common) if together else "")),
-        (_panel("cooccurrence", "How often elements share particles", cooc_mode="conditional"),
+        (_panel("cooccurrence", "How often elements share particles", cooc_mode="conditional",
+                **({"isotopes": company} if company else {})),
          "Each cell is the share of the row element's particles that also carry the column "
-         "element; only presence counts here, not amount."),
+         "element; only presence counts here, not amount."
+         + (f" Shown for {rare}, {common} and the elements most often found with them."
+            if company else "")),
         (_panel("histogram", f"{rare} with and without {common}", value=_amount(ctx, rare),
-                log_x=True, bins=40, x_label=_amount_name(ctx, rare),
+                log_x=True, bins=40, x_label=_amount_name(ctx, rare), hist_percent=True,
                 **_with_without(rare, common)),
-         f"{rare} particles with and without {common}, by {_qname(_unit(ctx))}."),
+         f"{rare} particles with and without {common}, by {_qname(_unit(ctx))}, each as a "
+         "share of its own group."),
         (_panel("bar", f"{rare} particles carrying {common}, by size", value=common,
                 agg="detect_pct", group_by="size", filter=f"{rare} > 0",
-                y_label=f"With {common} (%)", error="none"),
-         _size_caption(f"How often {rare} particles carry {common}")
+                y_label=f"With {common} (%)", error="ci95", bar_values=True),
+         _size_caption(f"How often {rare} particles carry {common}") + SHARE_NOTE
          + _share_size_sentence(ctx, common, f"{rare} > 0")),
         (_histogram(ctx, _unit(ctx), rare,
                     f"{rare} {_qname(_unit(ctx))} and detection limit"),
@@ -1203,6 +1486,9 @@ def _cooccurrence(s, ctx):
                                      **_with_without(common, rare)),
                          _detect_caption(common, rare) + f" If the {common} particles without "
                          f"{rare} sit mostly below the line, the two may not truly avoid each other."))
+    if not together:
+        by_size = next(i for i, (p, _c) in enumerate(story) if p.get("agg") == "detect_pct")
+        story.insert(1, story.pop(by_size))
     return story
 
 
@@ -1372,8 +1658,9 @@ def _composition(s, ctx):
         (_panel("combinations", "Most common element combinations", top_n=10),
          "The particle types that dominate, each defined by the set of elements detected in "
          "it." + measured),
-        (_panel("composition", "Average composition", **picked),
-         "The average make-up of the particles."),
+        (_panel("composition", "Average composition", other_pct=1.0, **picked),
+         "The average make-up of the particles; elements holding under 1% are stacked "
+         "together as Others."),
         (_panel("combinations", "Element combinations by particle size", top_n=6,
                 group_by="size", show_other=False),
          _size_caption("The particle types")),
@@ -1410,18 +1697,102 @@ def _composition(s, ctx):
 
 
 def _network(s, ctx):
-    els = ", ".join(_amount(ctx, e) for e in s.elements)
+    els = ", ".join(s.elements)
+    quantity = {"data_type": "Element Mass (fg)"} if _unit(ctx) == "mass" else {}
     return [
-        (_panel("network", "Correlated elements", isotopes=els, net_r_min=0.5),
+        (_panel("network", "Correlated elements", isotopes=els, net_r_min=0.5, log_values=True,
+                net_method="spearman", **quantity),
          "These elements form one connected group; each link is a significant correlation "
          "with |ρ| of at least 0.5."),
         (_panel("corr_matrix", "Correlation matrix", isotopes=els, corr_method="spearman",
-                log_values=True),
-         "The rank correlation of every pair."),
+                log_values=True, **quantity),
+         "The rank correlation of every pair"
+         + (", on element mass." if quantity else ", on counts.")),
         (_panel("cooccurrence", "How often they share particles", isotopes=els),
          "Elements that also share particles likely come from one source."),
-        (_panel("combinations", "Most common combinations", top_n=10),
-         "Links are pairwise, so two elements in the group need not correlate directly."),
+        (_panel("combinations", "Most common combinations", top_n=10, isotopes=els),
+         "The particle types these elements form. Links are pairwise, so two elements in the "
+         "group need not correlate directly."),
+    ]
+
+
+LINKED = 0.5
+"""Rank correlation from which two elements are called linked."""
+
+
+def _matrix_elements(s) -> list[str]:
+    """The elements of a correlation-matrix finding, from the finding itself or its details."""
+    if len(s.elements) >= 2:
+        return list(s.elements)
+    listed = _detail(s, "Elements")
+    return [e.strip() for e in listed.split(",") if e.strip()]
+
+
+def _pair_correlations(ctx: FigureContext, els, quantity: str) -> list[tuple[str, str, float, int]]:
+    """Rank correlation of every pair of *els* among the particles carrying both.
+
+    Returns:
+        ``(a, b, rho, n)`` for each pair with ten particles or more, strongest first.
+    """
+    rows = []
+    for i, a in enumerate(els):
+        for b in els[i + 1:]:
+            x, y = ev._eval(ctx.table, _expr(quantity, a)), ev._eval(ctx.table, _expr(quantity, b))
+            m = (x > 0) & (y > 0)
+            rho, _p, n = ev.spearman(np.log10(x[m]), np.log10(y[m])) if m.sum() else (math.nan, 0, 0)
+            if n >= 10 and math.isfinite(rho):
+                rows.append((a, b, float(rho), int(n)))
+    return sorted(rows, key=lambda r: -abs(r[2]))
+
+
+def _matrix(s, ctx):
+    els = _matrix_elements(s)
+    if len(els) < 2:
+        return _composition(s, ctx)
+    listed = ", ".join(els)
+    unit = _unit(ctx)
+    quantity = {"data_type": "Element Mass (fg)"} if unit == "mass" else {}
+    measured = ""
+    if ctx.table is not None:
+        try:
+            pairs = _pair_correlations(ctx, els, unit)
+        except Exception:
+            pairs = []
+        if pairs:
+            linked = [p for p in pairs if abs(p[2]) >= LINKED]
+            (a, b, rho, n), (wa, wb, wrho, wn) = pairs[0], pairs[-1]
+            measured = (f" Measured over all particles: {len(linked)} of {len(pairs)} pairs "
+                        f"reach |ρ| ≥ {LINKED:g}; the strongest is {a} with {b} (ρ = {rho:+.2f}, "
+                        f"{n:,} particles) and the weakest {wa} with {wb} (ρ = {wrho:+.2f}, "
+                        f"{wn:,}).")
+            ctx.checks.add(len(linked) == len(pairs),
+                           (f"every pair of the {len(els)} elements is linked (|ρ| ≥ {LINKED:g})"
+                            if len(linked) == len(pairs) else
+                            f"{len(pairs) - len(linked)} of {len(pairs)} pairs stay below "
+                            f"|ρ| = {LINKED:g}, so the elements do not all move as one block"))
+            few = [p for p in pairs if p[3] < 100]
+            ctx.checks.add(not few,
+                           ("every correlation rests on 100 particles or more" if not few else
+                            "; ".join(f"{x} with {y} rests on {k} particles" for x, y, _r, k in few[:3])
+                            + ", so those correlations are loosely known"))
+    return [
+        (_panel("corr_matrix", "Correlation matrix", isotopes=listed, corr_method="spearman",
+                log_values=True, **quantity),
+         "The rank correlation of every pair, among the particles carrying both"
+         + (", on element mass." if quantity else ", on counts.")
+         + " A block of high values is a set of elements that rise and fall together."
+         + measured),
+        (_panel("network", "Which elements are linked", isotopes=listed, net_r_min=LINKED,
+                log_values=True, net_method="spearman", **quantity),
+         f"The same correlations as links: a line joins two elements whose |ρ| reaches {LINKED:g}, "
+         "thicker for a stronger link, and a node grows with the element's summed amount."),
+        (_panel("cooccurrence", "How often they share particles", isotopes=listed),
+         "The share of all particles carrying both elements of a pair. A high correlation "
+         "between two elements that rarely share particles rests on few particles."),
+        (_panel("composition", "Average composition", isotopes=listed, other_pct=1.0, **quantity),
+         "The average make-up of the particles, counting only these elements."),
+        (_panel("combinations", "Most common combinations", top_n=10, isotopes=listed),
+         "The particle types these elements form, each defined by which of them are detected."),
     ]
 
 
@@ -1609,6 +1980,27 @@ MAX_PANELS = 6
 """Most panels a story uses, a to f."""
 
 
+CAPTION_SIZE = 9.5
+"""Font size of the legend under a story, in points."""
+
+CAPTION_MARGIN = 0.3
+"""Width a text panel keeps clear on its two sides together, in inches."""
+
+
+def caption_height(caption: str, width: float) -> float:
+    """Height in inches the legend needs under a figure *width* inches wide.
+
+    The legend is wrapped exactly as the text panel will draw it, with the
+    figure's default font, so the room set aside is the room it fills.
+    """
+    from results.figure_builder.core import richtext
+    from results.figure_builder.core.spec import FIGURE_DEFAULTS
+    from results.figure_builder.core.styles import font_stack
+    fonts, _math = font_stack(FIGURE_DEFAULTS.get("font_family"))
+    return 0.4 + richtext.height_in(caption, width - CAPTION_MARGIN, CAPTION_SIZE, fonts,
+                                    isotopes=True)
+
+
 def story_layout(n: int, caption: str = "") -> tuple[list[list[float]], list[float], float, float]:
     """Place *n* panels above a caption sized to its text.
 
@@ -1626,10 +2018,7 @@ def story_layout(n: int, caption: str = "") -> tuple[list[list[float]], list[flo
     rows = math.ceil(n / cols)
     width = 5.4 * cols
     plot_height = 3.9 * rows
-    chars_per_line = max(40, int(width * 15))
-    lines = max(1, math.ceil(len(caption) / chars_per_line))
-    caption_height = 0.35 + 0.19 * lines
-    height = plot_height + caption_height
+    height = plot_height + caption_height(caption, width)
     top = plot_height / height
     rects = []
     for i in range(n):
@@ -1640,11 +2029,40 @@ def story_layout(n: int, caption: str = "") -> tuple[list[list[float]], list[flo
     return rects, [0.0, top, 1.0, 1.0 - top], width, height
 
 
-def caption_text(title: str, captions: list[str]) -> str:
-    """Write the figure legend: the title, then one sentence per panel letter."""
+def caption_text(captions: list[str]) -> str:
+    """Write the panels' part of the legend: one paragraph per panel, its letter in bold."""
     from results.figure_builder.core.spec import panel_letter
-    parts = [f"{title}."] + [f"({panel_letter(i, 'a')}) {c}" for i, c in enumerate(captions)]
-    return " ".join(parts)
+    return "\n".join(f"**({panel_letter(i, 'a')})** {c}" for i, c in enumerate(captions))
+
+
+def conclusion(s) -> str:
+    """The legend's opening paragraph: the finding's title in bold, then what was found."""
+    title = (s.title or "").strip().rstrip(".")
+    found = " ".join((getattr(s, "reasoning", "") or "").split())
+    head = f"**{title}.**" if title else ""
+    return f"{head} {found}".strip()
+
+
+def legend_text(s, panels: str, notes: list[str], checks) -> str:
+    """Put the legend together: the conclusion, the checks, then the panels.
+
+    Args:
+        s: The finding.
+        panels: The panels' paragraphs from :func:`caption_text` or
+            :func:`rows_caption`.
+        notes: Sentences that apply to the whole figure, such as the
+            comparison between groups and the detection limits.
+        checks: The figure's :class:`~results.insights.evidence.Checks`.
+
+    Returns:
+        The legend in the markup of
+        :mod:`results.figure_builder.core.richtext`.
+    """
+    parts = [conclusion(s), checks.block() if checks is not None else "", panels]
+    notes = [n.strip() for n in notes if n and n.strip()]
+    if notes:
+        parts.append("**Notes.** " + " ".join(notes))
+    return "\n".join(p for p in parts if p)
 
 
 OVERLAY_KINDS = frozenset({"histogram", "ecdf", "box", "violin", "bar", "strip", "timeline",
@@ -1697,20 +2115,34 @@ def _axis_range(values: np.ndarray, log: bool) -> tuple[float, float] | None:
     return lo - pad, hi + pad
 
 
+RANGE_AXES = {"histogram": (("value", "x"),), "ecdf": (("value", "x"),),
+              "box": (("value", "y"),), "violin": (("value", "y"),)}
+"""For panels of one value, which setting holds it and the axis it is drawn along."""
+
+
 def same_ranges(ctx: FigureContext, panels: list[dict]) -> list[dict]:
-    """Give the per-group copies of an X–Y panel the same axis ranges.
+    """Give the per-group copies of a panel the same axis ranges.
 
     Each copy would otherwise fit its own group, and two panels side by side
     on different scales cannot be compared by eye. The range covers every
-    group's particles that the panels draw.
+    group's particles that the panels draw. X–Y panels share both axes;
+    histograms, cumulative curves, boxes and violins share the axis their
+    value runs along.
     """
-    if ctx.table is None or not panels or panels[0].get("kind") not in XY_KINDS:
+    if ctx.table is None or not panels:
         return panels
     first = panels[0]
+    kind = first.get("kind")
+    if kind in XY_KINDS:
+        axes = (("x", "x"), ("y", "y"))
+    elif kind in RANGE_AXES:
+        axes = RANGE_AXES[kind]
+    else:
+        return panels
     out = [dict(p) for p in panels]
-    for axis in ("x", "y"):
-        expr = first.get(axis)
-        if not expr:
+    for key, axis in axes:
+        expr = first.get(key)
+        if not expr or "," in str(expr):
             continue
         try:
             v = ev._eval(ctx.table, expr)
@@ -1719,11 +2151,33 @@ def same_ranges(ctx: FigureContext, panels: list[dict]) -> list[dict]:
                 m |= ev.mask(ctx.table, p.get("filter") or "")
         except Exception:
             continue
-        found = _axis_range(v[m], bool(first.get(f"log_{axis}")))
+        log = bool(first.get(f"log_{axis}"))
+        values = v[m]
+        if kind not in XY_KINDS:
+            values = values[np.isfinite(values) & (values > 0)]
+            if values.size >= 20:
+                lo, hi = np.percentile(values, [0.1, 99.9])
+                values = values[(values >= lo) & (values <= hi)]
+        found = _axis_range(values, log)
         if found is None:
             continue
         for p in out:
             p[f"{axis}_min"], p[f"{axis}_max"] = f"{found[0]:.6g}", f"{found[1]:.6g}"
+    return out
+
+
+MANY_GROUPS = 4
+"""Groups beyond which overlaid histograms are drawn as ridges instead."""
+
+
+def _ridges(panel: dict) -> dict:
+    """A histogram panel redrawn as one ridge per group.
+
+    Ten filled histograms on one axis hide each other; a ridgeline gives
+    every group its own baseline on a shared value axis.
+    """
+    out = {k: v for k, v in panel.items() if k not in ("bins", "hist_percent")}
+    out.update(kind="ridgeline", group_by="sample", mark_stats="median", overlap=0.5)
     return out
 
 
@@ -1736,7 +2190,11 @@ def by_groups(story: list, names: list[str], ctx: FigureContext | None = None
     panel that cannot without becoming unreadable (scatters, density maps,
     ternaries, pies, combinations, matrices), or one already split another
     way (with and without an element, by size), is drawn once per group,
-    side by side. A panel already comparing samples is kept as it is.
+    side by side. A panel already comparing samples is kept as it is. With
+    too many groups for side-by-side panels, a panel split another way is
+    drawn once for all groups together, never recoloured by group, since
+    its own split is what it is there to show; and overlaid histograms
+    become ridges (see :func:`_ridges`).
 
     Args:
         story: ``(panel, caption)`` pairs.
@@ -1748,11 +2206,26 @@ def by_groups(story: list, names: list[str], ctx: FigureContext | None = None
     """
     rows = []
     split_ok = len(names) <= MAX_SPLIT_GROUPS
+    many = len(names) > MANY_GROUPS
     for panel, caption in story:
         kind = panel.get("kind")
         grouping = panel.get("group_by") or "none"
-        if grouping == "sample":
+        if kind == "histogram" and grouping in ("none", "sample") and many:
+            rows.append(([_ridges(panel)],
+                         caption.replace(" Each colour is one group.", "")
+                         + " Each ridge is one group's distribution, scaled to its own peak, "
+                           "with a tick at its median, so many groups stay apart.", "wide"))
+        elif kind == "histogram" and grouping == "sample":
+            rows.append(([dict(panel, hist_percent=True)],
+                         caption + " Each group is drawn as a share of its own particles, so "
+                                   "groups of different size compare by shape.", "wide"))
+        elif grouping == "sample":
             rows.append(([panel], caption, "wide"))
+        elif kind == "histogram" and grouping == "none":
+            rows.append(([dict(panel, group_by="sample", hist_percent=True)],
+                         caption + " Each colour is one group, drawn as a share of its own "
+                                   "particles so groups of different size compare by shape.",
+                         "wide"))
         elif kind in OVERLAY_KINDS and grouping == "none":
             rows.append(([dict(panel, group_by="sample")], caption + " Each colour is one group.",
                           "wide"))
@@ -1760,9 +2233,10 @@ def by_groups(story: list, names: list[str], ctx: FigureContext | None = None
             copies = [_for_group(panel, n) for n in names]
             if ctx is not None:
                 copies = same_ranges(ctx, copies)
-            shared = " The panels share their axis ranges." if kind in XY_KINDS else ""
+            shared = (" The panels share their axis ranges." if kind in XY_KINDS
+                      or kind in RANGE_AXES else "")
             rows.append((copies, caption + shared, "split"))
-        elif kind in OVERLAY_KINDS or kind in ("scatter", "combinations"):
+        elif grouping == "none" and (kind in OVERLAY_KINDS or kind == "combinations"):
             rows.append(([dict(panel, group_by="sample")], caption + " Each colour is one group.",
                           "wide"))
         else:
@@ -1806,8 +2280,57 @@ def arrange(rows, names: list[str], between: bool):
     return out, "groups"
 
 
+PAIR_GROUPS = 4
+"""Most groups for which two full-width panels are set side by side."""
+
+
+def _lines(rows, n_groups: int) -> list[list[int]]:
+    """Which rows share a line of the page, as lists of row indices.
+
+    Two panels that each span the figure are set side by side while there
+    are few enough groups for each to stay readable at half the width;
+    this keeps a story of four such panels to two lines instead of four.
+    With more groups, only panels that do not draw the groups apart, such
+    as a matrix or a network of all particles, are paired. A row holding
+    one panel per group keeps a line of its own.
+    """
+    def pairs(i: int) -> bool:
+        panels, _caption, kind = rows[i]
+        if kind != "wide":
+            return False
+        return n_groups <= PAIR_GROUPS or (panels[0].get("group_by") or "none") != "sample"
+
+    lines: list[list[int]] = []
+    for i in range(len(rows)):
+        if pairs(i) and lines and len(lines[-1]) == 1 and pairs(lines[-1][0]):
+            lines[-1].append(i)
+        else:
+            lines.append([i])
+    return lines
+
+
+TALL_GROUPS = 6
+"""Groups beyond which a panel giving each group a row of its own gets a taller line."""
+
+TALL_KINDS = frozenset({"strip", "ridgeline", "estimate"})
+"""Panels that give every group its own row."""
+
+
+def _line_height(rows, members, n_groups: int) -> float:
+    """Height in inches of one line of the page."""
+    tall = any(rows[i][0][0].get("kind") in TALL_KINDS
+               and (rows[i][0][0].get("group_by") or "none") == "sample" for i in members)
+    if tall and n_groups > TALL_GROUPS:
+        return 3.9 * min(2.0, 1.0 + (n_groups - TALL_GROUPS) * 0.12)
+    return 3.9
+
+
 def rows_layout(rows, n_groups: int, caption: str = ""):
-    """Place grouped rows above the legend: a wide panel spans its row, the others share it equally.
+    """Place grouped rows above the legend.
+
+    A row with one panel per group shares its line equally between them. A
+    panel spanning the figure takes a whole line, or half of one beside the
+    next such panel (see :func:`_lines`).
 
     Returns:
         ``(panel_rects, caption_rect, width, height)`` as :func:`story_layout`.
@@ -1815,63 +2338,70 @@ def rows_layout(rows, n_groups: int, caption: str = ""):
     cells = [len(panels) for panels, _c, kind in rows if kind != "wide"]
     cols = max(2, min(max(cells) if cells else n_groups, max(MAX_SPLIT_GROUPS, GROUP_ROW_VIEWS)))
     width = 5.4 * cols
-    plot_height = 3.9 * len(rows)
-    chars_per_line = max(40, int(width * 15))
-    lines = max(1, math.ceil(len(caption) / chars_per_line))
-    caption_height = 0.35 + 0.19 * lines
-    height = plot_height + caption_height
+    lines = _lines(rows, n_groups)
+    heights = [_line_height(rows, members, n_groups) for members in lines]
+    plot_height = sum(heights)
+    height = plot_height + caption_height(caption, width)
     top = plot_height / height
-    row_h = top / len(rows)
     rects = []
-    for r, (panels, _caption, kind) in enumerate(rows):
-        if kind == "wide":
-            rects.append([0.0, r * row_h, 1.0, row_h])
+    y = 0.0
+    for members, inches in zip(lines, heights):
+        row_h = inches / height
+        if len(members) == 2:
+            rects.extend([k * 0.5, y, 0.5, row_h] for k in range(2))
         else:
-            w = 1.0 / len(panels)
-            rects.extend([k * w, r * row_h, w, row_h] for k in range(len(panels)))
+            panels, _caption, kind = rows[members[0]]
+            if kind == "wide":
+                rects.append([0.0, y, 1.0, row_h])
+            else:
+                w = 1.0 / len(panels)
+                rects.extend([k * w, y, w, row_h] for k in range(len(panels)))
+        y += row_h
     return rects, [0.0, top, 1.0, 1.0 - top], width, height
 
 
-def rows_caption(title: str, rows, names: list[str], views=None) -> str:
-    """The legend of a grouped figure, naming the panel of each group.
+def rows_caption(rows, names: list[str], views=None) -> str:
+    """The panels' part of a grouped figure's legend, naming the panel of each group.
 
     Args:
-        title: The finding's title.
         rows: The rows drawn.
         names: The groups.
         views: For a figure laid out one row per group, the split views in
-            order, as ``(panels, caption, kind)``; each gets one sentence
+            order, as ``(panels, caption, kind)``; each gets one paragraph
             listing its panel in every group.
+
+    Returns:
+        One paragraph per view, its panel letters in bold.
     """
     from results.figure_builder.core.spec import panel_letter
-    parts = [f"{title}."]
+    parts = []
     i = 0
     if views is not None:
         for panels, caption, kind in rows:
             if kind == "wide":
-                parts.append(f"({panel_letter(i, 'a')}) {caption}")
+                parts.append(f"**({panel_letter(i, 'a')})** {caption}")
                 i += 1
         first_group_row = i
         per_row = len(views)
         for v, (_panels, caption, _kind) in enumerate(views):
             letters = [panel_letter(first_group_row + g * per_row + v, 'a') for g in range(len(names))]
             which = ", ".join(f"({x}) {n}" for x, n in zip(letters, names))
-            parts.append(f"({', '.join(letters)}) {caption} One panel per group: {which}.")
+            parts.append(f"**({', '.join(letters)})** {caption} One panel per group: {which}.")
         parts.append("Each row is one group: " + "; ".join(
             f"{n} {panel_letter(first_group_row + g * per_row, 'a')}–"
             f"{panel_letter(first_group_row + g * per_row + per_row - 1, 'a')}"
             for g, n in enumerate(names)) + ".")
-        return " ".join(parts)
+        return "\n".join(parts)
     for panels, caption, kind in rows:
         if kind == "wide":
-            parts.append(f"({panel_letter(i, 'a')}) {caption}")
+            parts.append(f"**({panel_letter(i, 'a')})** {caption}")
             i += 1
             continue
         letters = [panel_letter(i + k, 'a') for k in range(len(panels))]
         which = ", ".join(f"({x}) {n}" for x, n in zip(letters, names))
-        parts.append(f"({letters[0]}–{letters[-1]}) {caption} One panel per group: {which}.")
+        parts.append(f"**({letters[0]}–{letters[-1]})** {caption} One panel per group: {which}.")
         i += len(panels)
-    return " ".join(parts)
+    return "\n".join(parts)
 
 
 def _group_values(ctx: FigureContext, expr: str, rule: str, names: list[str]):
@@ -1883,8 +2413,14 @@ def _group_values(ctx: FigureContext, expr: str, rule: str, names: list[str]):
 
 
 def _medians_between(ctx: FigureContext, expr: str, rule: str, what: str, names: list[str],
-                     tolerance: float = 0.10) -> str:
-    """Compare a value's median between groups, adding a check; return the sentence."""
+                     tolerance: float = 0.10, finding: bool = False) -> str:
+    """Compare a value's median between groups, adding a check; return the sentence.
+
+    Args:
+        finding: Whether a difference between the groups is what the figure
+            reports. The check then passes when the groups differ, instead
+            of when they agree.
+    """
     import warnings
     from scipy import stats
     groups = [(n, v) for n, v in _group_values(ctx, expr, rule, names) if v.size >= 5]
@@ -1900,9 +2436,16 @@ def _medians_between(ctx: FigureContext, expr: str, rule: str, what: str, names:
     lo, hi = min(m for _n, m, _k in meds), max(m for _n, m, _k in meds)
     gap = hi / lo - 1 if lo > 0 else math.nan
     same = not (p < 0.05 and gap > tolerance)
-    ctx.checks.add(same, f"{what} {'is alike in every group' if same else 'differs between groups'} "
-                         f"({', '.join(f'{n} {m:.3g}' for n, m, _k in meds)}; Kruskal-Wallis "
-                         f"{ev.p_text(p)})")
+    numbers = (f"({', '.join(f'{n} {m:.3g}' for n, m, _k in meds)}; Kruskal-Wallis "
+               f"{ev.p_text(p)})")
+    if finding:
+        ctx.checks.add(not same, f"{what} "
+                       + ("is alike in every group, so the particles' medians do not show the "
+                          "difference" if same else "differs between groups, as the finding says")
+                       + f" {numbers}")
+    else:
+        ctx.checks.add(same, f"{what} {'is alike in every group' if same else 'differs between groups'} "
+                             f"{numbers}")
     return (f"Between groups, median {what}: "
             + "; ".join(f"{n} {m:.3g} ({k:,} particles)" for n, m, k in meds)
             + (f", {gap:.0%} apart" if math.isfinite(gap) else "") + ".")
@@ -1949,7 +2492,8 @@ def between_groups(s, ctx: FigureContext, design, names: list[str]) -> str:
                                     f"{els[1]}/{els[0]} share", names, tolerance=0.2)
         if design in ISOTOPE_DESIGNS and len(els) >= 2:
             return _medians_between(ctx, _ratio(ctx, els[0], els[1]), _used(s, els[0], els[1]),
-                                    f"{els[0]}/{els[1]} ratio", names, tolerance=0.01)
+                                    f"{els[0]}/{els[1]} ratio", names, tolerance=0.01,
+                                    finding=design is _isotope_groups)
         if design is _cooccurrence and len(els) >= 2:
             col = ctx.table.column("sample")
             rare, common = ev._eval(ctx.table, els[0]) > 0, ev._eval(ctx.table, els[1]) > 0
@@ -1973,12 +2517,13 @@ def figure_for(s, ctx: FigureContext) -> dict | None:
     """Build the figure that tells a finding's story, panels a to f with a legend.
 
     The panels follow the finding's story in order: the pattern, the
-    evidence, the meaning, then the limits. A caption panel
-    under them, written like a journal figure legend, says what each panel
-    shows, with the finding's own numbers. When the figure's particles fall
-    into two or more groups, every view compares them (see
-    :func:`by_groups`) and the legend says whether the finding holds in
-    each group.
+    evidence, the meaning, then the limits. A caption panel under them
+    opens with the conclusion, the finding's title and what was found,
+    lists the checks the figure ran, each passed, failed or undecided, and
+    then says what each panel shows, with the finding's own numbers (see
+    :func:`legend_text`). When the figure's particles fall into two or
+    more groups, every view compares them (see :func:`by_groups`) and the
+    legend says whether the finding holds in each group.
 
     Args:
         s: The finding (:class:`~results.insights.engine.Suggestion`).
@@ -1996,8 +2541,8 @@ def figure_for(s, ctx: FigureContext) -> dict | None:
         return None
     ctx.checks = ev.Checks()
     if design is _correlation and len(s.elements) < 2:
-        design = _composition
-    elif design not in (_composition, _time, _size_trend, _network) and not s.elements:
+        design = _matrix
+    elif design not in (_composition, _time, _size_trend, _network, _matrix) and not s.elements:
         return None
     try:
         if design in ISOTOPE_DESIGNS:
@@ -2015,20 +2560,15 @@ def figure_for(s, ctx: FigureContext) -> dict | None:
         rows = by_groups(story, names, ctx)
         views = [r for r in rows if r[2] == "split"][:GROUP_ROW_VIEWS]
         rows, mode = arrange(rows, names, design in BETWEEN_DESIGNS)
-        legend = rows_caption(s.title, rows, names, views if mode == "groups" else None)
-        between = between_groups(s, ctx, design, names)
-        if between:
-            legend = f"{legend} {between}"
+        body = rows_caption(rows, names, views if mode == "groups" else None)
+        notes = [between_groups(s, ctx, design, names)]
         flat = [panel for panels, _c, _k in rows for panel in panels]
     else:
-        legend = caption_text(s.title, [c for _p, c in story])
+        body = caption_text([c for _p, c in story])
+        notes = []
         flat = [panel for panel, _c in story]
-    note = limits_sentence(ctx)
-    if note:
-        legend = f"{legend} {note}"
-    verdict = ctx.checks.line()
-    if verdict:
-        legend = f"{legend} {verdict}"
+    notes.append(limits_sentence(ctx))
+    legend = legend_text(s, body, notes, ctx.checks)
     if names:
         rects, caption_rect, width, height = rows_layout(rows, len(names), legend)
     else:
@@ -2040,7 +2580,7 @@ def figure_for(s, ctx: FigureContext) -> dict | None:
     panels = [make_panel(rect=list(rects[i]), **panel) for i, panel in enumerate(flat)]
     panels.append(make_panel(rect=list(caption_rect), kind="text", caption=True,
                              text=legend,
-                             text_size=9.5, panel_bg="#ffffff"))
+                             text_size=CAPTION_SIZE, panel_bg="#ffffff"))
     spec["panels"] = panels
     return normalise_spec(spec)
 
